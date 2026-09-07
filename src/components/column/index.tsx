@@ -2,6 +2,7 @@ import type { FixedColumnID } from "@shared/types"
 import { useTitle } from "react-use"
 import { NavBar } from "../navbar"
 import { Dnd } from "./dnd"
+import { HealthColumn } from "../health"
 import { currentColumnIDAtom } from "~/atoms"
 
 export function Column({ id }: { id: FixedColumnID }) {
@@ -17,7 +18,7 @@ export function Column({ id }: { id: FixedColumnID }) {
       <div className="flex justify-center md:hidden mb-6">
         <NavBar />
       </div>
-      {id === currentColumnID && <Dnd />}
+      {id === currentColumnID && (id === "health" ? <HealthColumn /> : <Dnd />)}
     </>
   )
 }
