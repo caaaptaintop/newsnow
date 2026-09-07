@@ -12,7 +12,6 @@ permissions:
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
-  ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
 
 jobs:
   build-and-deploy:
@@ -59,7 +58,7 @@ jobs:
           pnpm exec wrangler pages download config capx-newsnow --force
           test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
 
-      - name: Prepare Pages configuration
+      - name: Prepare Pages configuration and Workers AI binding
         shell: bash
         run: |
           python - <<'PY'
@@ -85,18 +84,13 @@ jobs:
               else:
                   text = text.rstrip() + f'\n{output_line}\n'
 
+          # Cloudflare-hosted Workers AI is exposed to the Pages Function as env.AI.
+          # No third-party model API key is required.
+          if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
+              text = text.rstrip() + '\n\n[ai]\nbinding = "AI"\n'
+
           path.write_text(text)
           PY
-
-      - name: Sync optional Z.AI API key to Pages
-        shell: bash
-        run: |
-          if [ -n "$ZAI_API_KEY" ]; then
-            printf '%s' "$ZAI_API_KEY" | pnpm exec wrangler pages secret put ZAI_API_KEY --project-name capx-newsnow
-            echo "Z.AI API key synced to Cloudflare Pages"
-          else
-            echo "::notice::ZAI_API_KEY is not configured; health topic will fall back to keyword-only filtering"
-          fi
 
       - name: Deploy to Cloudflare Pages
         run: pnpm exec wrangler pages deploy dist/output/public --branch main

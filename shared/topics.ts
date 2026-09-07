@@ -15,8 +15,9 @@ export const healthTopic = {
   aiCandidateLimit: 400,
   /** GLM 相关度达到此分数后进入健康管理主题。 */
   aiThreshold: 60,
-  /** 使用 Z.AI 官方免费模型。 */
-  aiModel: "glm-4.7-flash",
+  /** 直接通过 Cloudflare Workers AI binding 调用，无需第三方 API Key。 */
+  aiModel: "@cf/zai-org/glm-4.7-flash",
+  aiLabel: "GLM-4.7-Flash",
   /** 深扫描后允许展示更多命中结果。 */
   displayLimit: 80,
   sources: [
