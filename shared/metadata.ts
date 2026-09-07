@@ -1,4 +1,5 @@
 import { sources } from "./sources"
+import { healthTopic } from "./topics"
 import { typeSafeObjectEntries, typeSafeObjectFromEntries } from "./type.util"
 import { updatedSourceIds as _updatedSourceIds } from "./updated-sources"
 import type { ColumnID, HiddenColumnID, Metadata, SourceID } from "./types"
@@ -22,6 +23,9 @@ export const columns = {
   focus: {
     zh: "关注",
   },
+  health: {
+    zh: "健康管理",
+  },
   realtime: {
     zh: "实时",
   },
@@ -35,7 +39,7 @@ export const columns = {
 
 const updatedSourceIds = [..._updatedSourceIds] as SourceID[]
 
-export const fixedColumnIds = ["focus", "hottest", "realtime", "updated"] as const satisfies Partial<ColumnID>[]
+export const fixedColumnIds = ["focus", "health", "hottest", "realtime", "updated"] as const satisfies Partial<ColumnID>[]
 export const hiddenColumns = Object.keys(columns).filter(id => !fixedColumnIds.includes(id as any)) as HiddenColumnID[]
 
 function getSortedSourceIds(type: "hottest" | "realtime") {
@@ -51,6 +55,11 @@ export const metadata: Metadata = typeSafeObjectFromEntries(typeSafeObjectEntrie
       return [k, {
         name: v.zh,
         sources: [] as SourceID[],
+      }]
+    case "health":
+      return [k, {
+        name: v.zh,
+        sources: [...healthTopic.sources],
       }]
     case "hottest":
       return [k, {
