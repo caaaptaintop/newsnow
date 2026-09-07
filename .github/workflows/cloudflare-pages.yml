@@ -101,7 +101,7 @@ jobs:
         run: |
           body=""
           for attempt in 1 2 3 4 5 6; do
-            if body=$(curl -fsS "https://news.capx-ai.com/topics/health/status?ts=$(date +%s)"); then
+            if body=$(curl -fsS "https://news.capx-ai.com/api/topics/health/status?ts=$(date +%s)"); then
               echo "Workers AI status: $body"
               break
             fi
