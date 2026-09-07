@@ -58,7 +58,7 @@ jobs:
           pnpm exec wrangler pages download config capx-newsnow --force
           test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
 
-      - name: Enable Workers AI binding without losing existing bindings
+      - name: Prepare Pages configuration
         shell: bash
         run: |
           python - <<'PY'
@@ -67,11 +67,8 @@ jobs:
 
           path = Path("wrangler.toml")
           text = path.read_text()
-
-          # Keep the downloaded dashboard configuration as source of truth.
-          # pages_build_output_dir is a root-level key, so insert it before the
-          # first TOML table instead of appending it at the end of the file.
           output_line = 'pages_build_output_dir = "dist/output/public"'
+
           if re.search(r'^pages_build_output_dir\s*=', text, flags=re.M):
               text = re.sub(
                   r'^pages_build_output_dir\s*=.*$',
@@ -86,11 +83,6 @@ jobs:
                   text = text[:pos].rstrip() + f'\n{output_line}\n\n' + text[pos:]
               else:
                   text = text.rstrip() + f'\n{output_line}\n'
-
-          # Pages supports one Workers AI binding. A TOML table starts a new
-          # root section, so appending [ai] is valid even when env tables exist.
-          if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
-              text = text.rstrip() + '\n\n[ai]\nbinding = "AI"\n'
 
           path.write_text(text)
           PY
