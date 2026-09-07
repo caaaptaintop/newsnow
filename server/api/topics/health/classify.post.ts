@@ -104,6 +104,7 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
           content: `请筛选以下候选标题，每行是一个 JSON 对象：\n${lines}`,
         },
       ],
+      response_format: { type: "json_object" },
       temperature: 0.1,
       reasoning_effort: "low",
       max_completion_tokens: 4096,
