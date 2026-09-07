@@ -84,10 +84,15 @@ jobs:
               else:
                   text = text.rstrip() + f'\n{output_line}\n'
 
-          # Cloudflare-hosted Workers AI is exposed to the Pages Function as env.AI.
-          # No third-party model API key is required.
+          # Keep a top-level binding for preview/dev deployments.
           if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
               text = text.rstrip() + '\n\n[ai]\nbinding = "AI"\n'
+
+          # The downloaded Pages config has an env.production table. Wrangler
+          # does not inherit AI bindings into environments, so production must
+          # declare its own binding explicitly.
+          if not re.search(r'^\[env\.production\.ai\]\s*$', text, flags=re.M):
+              text = text.rstrip() + '\n\n[env.production.ai]\nbinding = "AI"\n'
 
           path.write_text(text)
           PY
