@@ -111,8 +111,8 @@ export function HealthColumn() {
     return [...deduped.values()]
   }, [queries])
 
-  // 关键词用于提高召回优先级，但 AI 可用时由 AI 做最终判断；
-  // AI 不可用时才回退到“标题关键词命中”。
+  // 关键词只承担“召回优先级”的作用；AI 可用时由 AI 做最终判断。
+  // 如果 AI 不可用，才回退到标题关键词筛选。
   const aiCandidates = useMemo(() => {
     const keywordHits = candidatePool
       .filter(item => item.keywordMatched)
@@ -134,6 +134,9 @@ export function HealthColumn() {
     queryFn: async () => {
       return await myFetch<SemanticResponse>("/topics/health/classify", {
         method: "POST",
+        // Workers AI 冷启动和较大批量分类可能超过全局 15 秒超时，
+        // 健康主题单独允许更长等待，避免模型已正常工作却被前端误判为不可用。
+        timeout: 75_000,
         body: {
           items: aiCandidates.map(item => ({
             key: item.key,
@@ -158,7 +161,7 @@ export function HealthColumn() {
       .map((item) => {
         const ai = aiMatches.get(item.key)
 
-        // AI 可用时，所有结果都必须经过 AI；AI 不可用时才用标题关键词兜底。
+        // AI 可用时，所有结果都必须经过 AI；AI 尚未返回或不可用时只展示标题关键词预览/兜底。
         if (aiEnabled) {
           if (!ai) return null
         } else if (!item.keywordMatched) {
@@ -187,9 +190,9 @@ export function HealthColumn() {
   }
 
   const aiStatus = semanticQuery.isFetching
-    ? `${healthTopic.aiLabel} 正在语义筛选`
+    ? `${healthTopic.aiLabel} 正在筛选 ${aiCandidates.length} 条候选`
     : semanticQuery.data?.enabled
-      ? `${healthTopic.aiLabel}（Cloudflare Workers AI）语义筛选已启用`
+      ? `${healthTopic.aiLabel}（Cloudflare Workers AI）已启用，本轮判断 ${aiCandidates.length} 条、保留 ${semanticQuery.data.matches.length} 条`
       : semanticQuery.data?.error?.includes("binding")
         ? "Workers AI 绑定暂不可用，已自动回退标题关键词筛选"
         : semanticQuery.isError || semanticQuery.data?.error
@@ -207,7 +210,7 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个来源最多扫描 {healthTopic.sourceLimit} 条；标题关键词用于召回，Cloudflare Workers AI 的 {healthTopic.aiLabel} 做最终相关性判断。{aiStatus}。
+              每个来源最多扫描 {healthTopic.sourceLimit} 条；标题关键词只用于召回，Cloudflare Workers AI 的 {healthTopic.aiLabel} 做最终相关性判断。{aiStatus}。
             </p>
           </div>
           <button
@@ -267,7 +270,9 @@ export function HealthColumn() {
                               <span>AI 相关度 {item.aiScore}</span>
                               {item.keywordMatched && <span>关键词召回</span>}
                             </>
-                          : <span>标题关键词命中（AI 回退）</span>}
+                          : semanticQuery.isFetching
+                            ? <span>关键词预览（AI 筛选中）</span>
+                            : <span>标题关键词命中（AI 回退）</span>}
                       </span>
                     </span>
                   </a>
