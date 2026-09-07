@@ -52,8 +52,5 @@ jobs:
             exit 1
           fi
 
-      - name: List Cloudflare Pages projects
-        run: pnpm exec wrangler pages project list
-
       - name: Deploy to Cloudflare Pages
-        run: pnpm exec wrangler pages deploy dist/output/public --project-name newsnow --branch main
+        run: pnpm exec wrangler pages deploy dist/output/public --project-name capx-newsnow --branch main
