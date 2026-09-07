@@ -11,7 +11,7 @@ export const healthTopic = {
   description: "聚合全网热榜中与运动、体重管理、营养、睡眠和代谢健康相关的内容",
   /** 健康主题单独做更深扫描；普通 NewsNow 页面仍保持原来的 30 条。 */
   sourceLimit: 100,
-  /** 送入 GLM 做语义判断的跨源候选上限。关键词命中的结果不受此上限影响。 */
+  /** 跨源去重后送入 GLM 做最终相关性判断的候选上限。关键词命中项优先进入候选。 */
   aiCandidateLimit: 400,
   /** GLM 相关度达到此分数后进入健康管理主题。 */
   aiThreshold: 60,
