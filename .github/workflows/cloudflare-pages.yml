@@ -52,5 +52,40 @@ jobs:
             exit 1
           fi
 
+      - name: Download current Pages configuration
+        run: |
+          rm -f wrangler.toml wrangler.json wrangler.jsonc
+          pnpm exec wrangler pages download config capx-newsnow --force
+          test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
+
+      - name: Enable Workers AI binding without losing existing bindings
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("wrangler.toml")
+          text = path.read_text()
+
+          # Keep the downloaded dashboard configuration as source of truth, but
+          # make sure this repository's actual build output directory is used.
+          if re.search(r'^pages_build_output_dir\s*=', text, flags=re.M):
+              text = re.sub(
+                  r'^pages_build_output_dir\s*=.*$',
+                  'pages_build_output_dir = "dist/output/public"',
+                  text,
+                  flags=re.M,
+              )
+          else:
+              text += '\npages_build_output_dir = "dist/output/public"\n'
+
+          # Pages supports a single Workers AI binding. Add it only when missing.
+          if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
+              text += '\n[ai]\nbinding = "AI"\n'
+
+          path.write_text(text)
+          PY
+
       - name: Deploy to Cloudflare Pages
-        run: pnpm exec wrangler pages deploy dist/output/public --project-name capx-newsnow --branch main
+        run: pnpm exec wrangler pages deploy --branch main
