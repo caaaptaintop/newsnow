@@ -115,7 +115,7 @@ export function HealthColumn() {
     return [...deduped.values()]
   }, [queries])
 
-  // 关键词已命中的内容直接保留；GLM 专门判断未命中的标题，扩大召回范围。
+  // 关键词已命中的内容直接保留；Workers AI 专门判断未命中的标题，扩大召回范围。
   const aiCandidates = useMemo(() => {
     return candidatePool
       .filter(item => !item.keywordMatched)
@@ -175,14 +175,15 @@ export function HealthColumn() {
 
   const handleRefresh = () => {
     queries.forEach(query => query.refetch())
+    semanticQuery.refetch()
   }
 
   const aiStatus = semanticQuery.isFetching
-    ? `${healthTopic.aiModel} 正在语义筛选`
+    ? `${healthTopic.aiLabel} 正在语义筛选`
     : semanticQuery.data?.enabled
-      ? `${healthTopic.aiModel} 语义筛选已启用`
-      : semanticQuery.data?.error?.includes("ZAI_API_KEY")
-        ? "当前仅关键词筛选；等待配置 Z.AI API Key"
+      ? `${healthTopic.aiLabel}（Cloudflare Workers AI）语义筛选已启用`
+      : semanticQuery.data?.error?.includes("binding")
+        ? "Workers AI 绑定暂不可用，已自动回退关键词筛选"
         : semanticQuery.isError || semanticQuery.data?.error
           ? "AI 暂不可用，已自动回退关键词筛选"
           : "准备进行 AI 语义筛选"
@@ -198,14 +199,14 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个来源最多扫描 {healthTopic.sourceLimit} 条；关键词命中直接保留，未命中的候选再由 {healthTopic.aiModel} 判断。{aiStatus}。
+              每个来源最多扫描 {healthTopic.sourceLimit} 条；关键词命中直接保留，未命中的候选再由 Cloudflare Workers AI 的 {healthTopic.aiLabel} 判断。{aiStatus}。
             </p>
           </div>
           <button
             type="button"
             className={$(
               "btn i-ph:arrow-counter-clockwise-duotone text-xl text-green-600 dark:text-green-400",
-              isFetchingSources && "animate-spin i-ph:circle-dashed-duotone",
+              (isFetchingSources || semanticQuery.isFetching) && "animate-spin i-ph:circle-dashed-duotone",
             )}
             title="刷新健康管理主题"
             onClick={handleRefresh}
@@ -220,7 +221,7 @@ export function HealthColumn() {
           )}
 
           {!isFetchingSources && semanticQuery.isFetching && !items.length && (
-            <div className="py-12 text-center text-sm op-60">深度扫描完成，正在用 {healthTopic.aiModel} 筛选...</div>
+            <div className="py-12 text-center text-sm op-60">深度扫描完成，正在用 {healthTopic.aiLabel} 筛选...</div>
           )}
 
           {!isFetchingSources && !semanticQuery.isFetching && !items.length && !hasError && (
