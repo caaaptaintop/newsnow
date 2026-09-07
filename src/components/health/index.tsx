@@ -1,15 +1,45 @@
 import type { NewsItem, SourceID, SourceResponse } from "@shared/types"
 import { healthTopic } from "@shared/topics"
 import { sources } from "@shared/sources"
-import { useQueries } from "@tanstack/react-query"
+import { useQueries, useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { myFetch } from "~/utils"
 
 interface HealthItem extends NewsItem {
+  key: string
   sourceId: SourceID
   sourceName: string
   sourceRank: number
-  score: number
+  rankScore: number
+  keywordMatched: boolean
+  aiScore?: number
+  category?: string
+  finalScore?: number
+}
+
+interface SemanticResponse {
+  enabled: boolean
+  model: string
+  matches: Array<{
+    key: string
+    score: number
+    category: string
+  }>
+  error?: string
+}
+
+const categoryNames: Record<string, string> = {
+  exercise: "运动",
+  weight: "体重管理",
+  nutrition: "营养",
+  sleep: "睡眠",
+  metabolic: "代谢健康",
+  cardiovascular: "心血管",
+  preventive: "预防健康",
+  medical_research: "健康研究",
+  public_health: "公共健康",
+  mental_health: "心理健康",
+  other_health: "健康",
 }
 
 function normalizeTitle(title: string) {
@@ -24,6 +54,18 @@ function matchesHealth(item: NewsItem) {
   ].filter(Boolean).join(" ").toLowerCase()
 
   return healthTopic.keywords.some(keyword => text.includes(keyword.toLowerCase()))
+}
+
+function candidateSignature(items: HealthItem[]) {
+  let hash = 2166136261
+  for (const item of items) {
+    const text = `${item.key}|${item.title}`
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+  }
+  return (hash >>> 0).toString(36)
 }
 
 async function fetchSource(id: SourceID): Promise<SourceResponse> {
@@ -43,41 +85,107 @@ export function HealthColumn() {
     })),
   })
 
-  const items = useMemo(() => {
+  const candidatePool = useMemo(() => {
     const all: HealthItem[] = []
 
     queries.forEach((query, sourceIndex) => {
       const id = healthTopic.sources[sourceIndex]
       query.data?.items.forEach((item, rank) => {
-        if (!matchesHealth(item)) return
         all.push({
           ...item,
+          key: `${id}:${String(item.id)}`,
           sourceId: id,
           sourceName: sources[id].name,
           sourceRank: rank + 1,
-          score: 100 - rank * 3 - sourceIndex,
+          rankScore: Math.max(0, 100 - rank * 0.75 - sourceIndex * 0.25),
+          keywordMatched: matchesHealth(item),
         })
       })
     })
 
-    const seen = new Set<string>()
-    return all
-      .sort((a, b) => b.score - a.score)
-      .filter((item) => {
-        const key = normalizeTitle(item.title)
-        if (!key || seen.has(key)) return false
-        seen.add(key)
-        return true
+    const deduped = new Map<string, HealthItem>()
+    all
+      .sort((a, b) => b.rankScore - a.rankScore)
+      .forEach((item) => {
+        const normalized = normalizeTitle(item.title)
+        if (!normalized || deduped.has(normalized)) return
+        deduped.set(normalized, item)
       })
-      .slice(0, healthTopic.displayLimit)
+
+    return [...deduped.values()]
   }, [queries])
 
-  const isFetching = queries.some(query => query.isFetching)
+  // 关键词已命中的内容直接保留；GLM 专门判断未命中的标题，扩大召回范围。
+  const aiCandidates = useMemo(() => {
+    return candidatePool
+      .filter(item => !item.keywordMatched)
+      .sort((a, b) => a.sourceRank - b.sourceRank || b.rankScore - a.rankScore)
+      .slice(0, healthTopic.aiCandidateLimit)
+  }, [candidatePool])
+
+  const signature = useMemo(() => candidateSignature(aiCandidates), [aiCandidates])
+  const isFetchingSources = queries.some(query => query.isFetching)
   const hasError = queries.every(query => query.isError)
+
+  const semanticQuery = useQuery({
+    queryKey: ["topic-semantic", "health", healthTopic.aiModel, signature],
+    enabled: !isFetchingSources && aiCandidates.length > 0,
+    queryFn: async () => {
+      return await myFetch<SemanticResponse>("/topics/health/classify", {
+        method: "POST",
+        body: {
+          items: aiCandidates.map(item => ({
+            key: item.key,
+            title: item.title,
+            source: item.sourceName,
+            rank: item.sourceRank,
+          })),
+        },
+      })
+    },
+    staleTime: 1000 * 60 * 10,
+    retry: false,
+  })
+
+  const items = useMemo(() => {
+    const aiMatches = new Map(
+      (semanticQuery.data?.matches ?? []).map(item => [item.key, item]),
+    )
+
+    return candidatePool
+      .map((item) => {
+        const ai = aiMatches.get(item.key)
+        if (!item.keywordMatched && !ai) return null
+
+        const finalScore = ai
+          ? ai.score * 0.78 + item.rankScore * 0.22
+          : 60 + item.rankScore * 0.35
+
+        return {
+          ...item,
+          aiScore: ai?.score,
+          category: ai?.category,
+          finalScore,
+        }
+      })
+      .filter((item): item is HealthItem & { finalScore: number } => !!item)
+      .sort((a, b) => b.finalScore - a.finalScore)
+      .slice(0, healthTopic.displayLimit)
+  }, [candidatePool, semanticQuery.data])
 
   const handleRefresh = () => {
     queries.forEach(query => query.refetch())
   }
+
+  const aiStatus = semanticQuery.isFetching
+    ? `${healthTopic.aiModel} 正在语义筛选`
+    : semanticQuery.data?.enabled
+      ? `${healthTopic.aiModel} 语义筛选已启用`
+      : semanticQuery.data?.error?.includes("ZAI_API_KEY")
+        ? "当前仅关键词筛选；等待配置 Z.AI API Key"
+        : semanticQuery.isError || semanticQuery.data?.error
+          ? "AI 暂不可用，已自动回退关键词筛选"
+          : "准备进行 AI 语义筛选"
 
   return (
     <section className="mx-auto w-full max-w-1100px">
@@ -90,14 +198,14 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              当前从百度、微博、知乎、头条、澎湃、B站、虎扑和值得买等来源按原有关键词筛选；每个来源最多扫描 {healthTopic.sourceLimit} 条。
+              每个来源最多扫描 {healthTopic.sourceLimit} 条；关键词命中直接保留，未命中的候选再由 {healthTopic.aiModel} 判断。{aiStatus}。
             </p>
           </div>
           <button
             type="button"
             className={$(
               "btn i-ph:arrow-counter-clockwise-duotone text-xl text-green-600 dark:text-green-400",
-              isFetching && "animate-spin i-ph:circle-dashed-duotone",
+              isFetchingSources && "animate-spin i-ph:circle-dashed-duotone",
             )}
             title="刷新健康管理主题"
             onClick={handleRefresh}
@@ -107,14 +215,18 @@ export function HealthColumn() {
 
       <div className="rounded-2xl bg-green-500/12 p-4 dark:bg-green-500/15">
         <div className="rounded-2xl bg-base bg-op-75! p-3">
-          {isFetching && !items.length && (
-            <div className="py-12 text-center text-sm op-60">正在深度扫描并整理健康管理热点...</div>
+          {isFetchingSources && !items.length && (
+            <div className="py-12 text-center text-sm op-60">正在深度扫描健康管理热点...</div>
           )}
 
-          {!isFetching && !items.length && !hasError && (
+          {!isFetchingSources && semanticQuery.isFetching && !items.length && (
+            <div className="py-12 text-center text-sm op-60">深度扫描完成，正在用 {healthTopic.aiModel} 筛选...</div>
+          )}
+
+          {!isFetchingSources && !semanticQuery.isFetching && !items.length && !hasError && (
             <div className="py-12 text-center">
               <p className="font-medium">当前未筛到明显的健康管理内容</p>
-              <p className="mt-2 text-sm op-60">现在已经扩大到每个来源最多 {healthTopic.sourceLimit} 条，筛选规则仍然是原来的关键词匹配。</p>
+              <p className="mt-2 text-sm op-60">每个来源已最多扫描 {healthTopic.sourceLimit} 条；AI 不可用时会自动保留关键词筛选结果。</p>
             </div>
           )}
 
@@ -125,7 +237,7 @@ export function HealthColumn() {
           {!!items.length && (
             <ol className="flex flex-col gap-1">
               {items.map((item, index) => (
-                <li key={`${item.sourceId}-${item.id}`}>
+                <li key={item.key}>
                   <a
                     href={item.url}
                     target="_blank"
@@ -140,6 +252,12 @@ export function HealthColumn() {
                       <span className="mt-1 flex flex-wrap items-center gap-2 text-xs op-55">
                         <span>{item.sourceName}</span>
                         <span>原榜第 {item.sourceRank} 名</span>
+                        {item.aiScore !== undefined
+                          ? <>
+                              <span>{categoryNames[item.category ?? ""] ?? "健康"}</span>
+                              <span>AI 相关度 {item.aiScore}</span>
+                            </>
+                          : <span>关键词命中</span>}
                       </span>
                     </span>
                   </a>
