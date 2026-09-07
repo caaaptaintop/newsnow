@@ -84,13 +84,9 @@ jobs:
               else:
                   text = text.rstrip() + f'\n{output_line}\n'
 
-          # Keep a top-level binding for preview/dev deployments.
           if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
               text = text.rstrip() + '\n\n[ai]\nbinding = "AI"\n'
 
-          # The downloaded Pages config has an env.production table. Wrangler
-          # does not inherit AI bindings into environments, so production must
-          # declare its own binding explicitly.
           if not re.search(r'^\[env\.production\.ai\]\s*$', text, flags=re.M):
               text = text.rstrip() + '\n\n[env.production.ai]\nbinding = "AI"\n'
 
@@ -99,3 +95,26 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         run: pnpm exec wrangler pages deploy dist/output/public --branch main
+
+      - name: Verify production Workers AI runtime
+        shell: bash
+        run: |
+          body=""
+          for attempt in 1 2 3 4 5 6; do
+            if body=$(curl -fsS "https://news.capx-ai.com/topics/health/status?ts=$(date +%s)"); then
+              echo "Workers AI status: $body"
+              break
+            fi
+            echo "Waiting for production alias to update (attempt $attempt/6)..."
+            sleep 5
+          done
+
+          if [ -z "$body" ]; then
+            echo "::error::Unable to reach production AI status endpoint"
+            exit 1
+          fi
+
+          if ! printf '%s' "$body" | grep -q '"enabled":true'; then
+            echo "::error::Workers AI runtime check failed: $body"
+            exit 1
+          fi
