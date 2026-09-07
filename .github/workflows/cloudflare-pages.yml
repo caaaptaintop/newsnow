@@ -12,6 +12,7 @@ permissions:
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+  WRANGLER_VERSION: 4.129.0
 
 jobs:
   build-and-deploy:
@@ -55,7 +56,7 @@ jobs:
       - name: Download current Pages configuration
         run: |
           rm -f wrangler.toml wrangler.json wrangler.jsonc
-          pnpm exec wrangler pages download config capx-newsnow --force
+          pnpm dlx wrangler@${WRANGLER_VERSION} pages download config capx-newsnow --force
           test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
 
       - name: Prepare Pages configuration and Workers AI binding
@@ -93,24 +94,30 @@ jobs:
           path.write_text(text)
           PY
 
+          echo "Workers AI binding prepared with Wrangler ${WRANGLER_VERSION}"
+
       - name: Deploy to Cloudflare Pages
-        run: pnpm exec wrangler pages deploy dist/output/public --branch main
+        run: pnpm dlx wrangler@${WRANGLER_VERSION} pages deploy dist/output/public --branch main
 
       - name: Verify production Workers AI runtime
         shell: bash
         run: |
-          body=""
+          body_file=$(mktemp)
+          status=""
           for attempt in 1 2 3 4 5 6; do
-            if body=$(curl -fsS "https://news.capx-ai.com/api/topics/health/status?ts=$(date +%s)"); then
-              echo "Workers AI status: $body"
+            status=$(curl -sS -o "$body_file" -w '%{http_code}' "https://news.capx-ai.com/api/topics/health/status?ts=$(date +%s)" || true)
+            body=$(cat "$body_file")
+            echo "Workers AI check attempt $attempt/6: HTTP $status"
+            echo "Workers AI response: $body"
+            if [ "$status" = "200" ]; then
               break
             fi
-            echo "Waiting for production alias to update (attempt $attempt/6)..."
             sleep 5
           done
 
-          if [ -z "$body" ]; then
-            echo "::error::Unable to reach production AI status endpoint"
+          body=$(cat "$body_file")
+          if [ "$status" != "200" ]; then
+            echo "::error::Workers AI status endpoint returned HTTP $status: $body"
             exit 1
           fi
 
