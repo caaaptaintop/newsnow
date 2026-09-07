@@ -6,7 +6,10 @@ export default defineEventHandler(async (event) => {
   if (!url.pathname.startsWith("/api")) return
   if (["JWT_SECRET", "G_CLIENT_ID", "G_CLIENT_SECRET"].find(k => !process.env[k])) {
     event.context.disabledLogin = true
-    if (["/api/s", "/api/proxy", "/api/latest"].every(p => !url.pathname.startsWith(p)))
+    // Public read-only/content APIs must remain available when optional login
+    // credentials are not configured. The health topic classifier only uses
+    // the server-side Cloudflare Workers AI binding and does not require a user.
+    if (["/api/s", "/api/proxy", "/api/latest", "/api/topics/health"].every(p => !url.pathname.startsWith(p)))
       throw createError({ statusCode: 506, message: "Server not configured, disable login" })
   } else {
     if (["/api/s", "/api/me"].find(p => url.pathname.startsWith(p))) {
