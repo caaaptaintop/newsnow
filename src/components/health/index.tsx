@@ -47,12 +47,8 @@ function normalizeTitle(title: string) {
 }
 
 function matchesHealth(item: NewsItem) {
-  const text = [
-    item.title,
-    item.extra?.hover,
-    item.extra?.info || "",
-  ].filter(Boolean).join(" ").toLowerCase()
-
+  // 关键词兜底只看标题，避免 hover/info 中的背景词把无关内容误判为健康。
+  const text = item.title.toLowerCase()
   return healthTopic.keywords.some(keyword => text.includes(keyword.toLowerCase()))
 }
 
@@ -115,12 +111,17 @@ export function HealthColumn() {
     return [...deduped.values()]
   }, [queries])
 
-  // 关键词已命中的内容直接保留；Workers AI 专门判断未命中的标题，扩大召回范围。
+  // 关键词用于提高召回优先级，但 AI 可用时由 AI 做最终判断；
+  // AI 不可用时才回退到“标题关键词命中”。
   const aiCandidates = useMemo(() => {
-    return candidatePool
+    const keywordHits = candidatePool
+      .filter(item => item.keywordMatched)
+      .sort((a, b) => b.rankScore - a.rankScore)
+    const others = candidatePool
       .filter(item => !item.keywordMatched)
       .sort((a, b) => a.sourceRank - b.sourceRank || b.rankScore - a.rankScore)
-      .slice(0, healthTopic.aiCandidateLimit)
+
+    return [...keywordHits, ...others].slice(0, healthTopic.aiCandidateLimit)
   }, [candidatePool])
 
   const signature = useMemo(() => candidateSignature(aiCandidates), [aiCandidates])
@@ -151,14 +152,21 @@ export function HealthColumn() {
     const aiMatches = new Map(
       (semanticQuery.data?.matches ?? []).map(item => [item.key, item]),
     )
+    const aiEnabled = semanticQuery.data?.enabled === true
 
     return candidatePool
       .map((item) => {
         const ai = aiMatches.get(item.key)
-        if (!item.keywordMatched && !ai) return null
+
+        // AI 可用时，所有结果都必须经过 AI；AI 不可用时才用标题关键词兜底。
+        if (aiEnabled) {
+          if (!ai) return null
+        } else if (!item.keywordMatched) {
+          return null
+        }
 
         const finalScore = ai
-          ? ai.score * 0.78 + item.rankScore * 0.22
+          ? ai.score * 0.78 + item.rankScore * 0.22 + (item.keywordMatched ? 2 : 0)
           : 60 + item.rankScore * 0.35
 
         return {
@@ -183,9 +191,9 @@ export function HealthColumn() {
     : semanticQuery.data?.enabled
       ? `${healthTopic.aiLabel}（Cloudflare Workers AI）语义筛选已启用`
       : semanticQuery.data?.error?.includes("binding")
-        ? "Workers AI 绑定暂不可用，已自动回退关键词筛选"
+        ? "Workers AI 绑定暂不可用，已自动回退标题关键词筛选"
         : semanticQuery.isError || semanticQuery.data?.error
-          ? "AI 暂不可用，已自动回退关键词筛选"
+          ? "AI 暂不可用，已自动回退标题关键词筛选"
           : "准备进行 AI 语义筛选"
 
   return (
@@ -199,7 +207,7 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个来源最多扫描 {healthTopic.sourceLimit} 条；关键词命中直接保留，未命中的候选再由 Cloudflare Workers AI 的 {healthTopic.aiLabel} 判断。{aiStatus}。
+              每个来源最多扫描 {healthTopic.sourceLimit} 条；标题关键词用于召回，Cloudflare Workers AI 的 {healthTopic.aiLabel} 做最终相关性判断。{aiStatus}。
             </p>
           </div>
           <button
@@ -227,7 +235,7 @@ export function HealthColumn() {
           {!isFetchingSources && !semanticQuery.isFetching && !items.length && !hasError && (
             <div className="py-12 text-center">
               <p className="font-medium">当前未筛到明显的健康管理内容</p>
-              <p className="mt-2 text-sm op-60">每个来源已最多扫描 {healthTopic.sourceLimit} 条；AI 不可用时会自动保留关键词筛选结果。</p>
+              <p className="mt-2 text-sm op-60">每个来源已最多扫描 {healthTopic.sourceLimit} 条；AI 不可用时会自动回退标题关键词筛选。</p>
             </div>
           )}
 
@@ -257,8 +265,9 @@ export function HealthColumn() {
                           ? <>
                               <span>{categoryNames[item.category ?? ""] ?? "健康"}</span>
                               <span>AI 相关度 {item.aiScore}</span>
+                              {item.keywordMatched && <span>关键词召回</span>}
                             </>
-                          : <span>关键词命中</span>}
+                          : <span>标题关键词命中（AI 回退）</span>}
                       </span>
                     </span>
                   </a>
