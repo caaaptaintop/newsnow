@@ -11,16 +11,16 @@
 | 变量 | 值 | 类型 |
 | --- | --- | --- |
 | PROMA_API_KEY | 在 Proma 为情报站创建的独立密钥 | Secret |
-| INTELLIGENCE_AI_PROVIDER | proma | 普通变量，验收时再开启 |
+| INTELLIGENCE_AI_PROVIDER | proma | 普通变量，生产已开启 |
 | PROMA_MODEL | glm-5.3-flash | 普通变量，可省略，代码默认此值 |
-| PROMA_API_PROTOCOL | chat-completions | 普通变量，可省略，代码默认此值 |
+| PROMA_API_PROTOCOL | messages | 普通变量，生产必须显式设置 |
 | PROMA_BASE_URL | https://api.proma.cool/v1 | 普通变量，可省略，代码默认此值 |
 
 先在 Proma 为密钥设置额度上限。密钥不进入 Git、浏览器或日志。保存变量后重新部署才生效。
 
 ## 行为
 
-- 所有情报主题和健宁分类共用服务端模型配置，GLM 使用 Chat Completions 和 temperature=0；Responses 保留给 GPT 系列，GLM 5.3 系列显式设置 reasoning_effort=low，单次调用超时 60 秒；其他模型 25 秒。
+- 所有情报主题和健宁分类共用服务端模型配置，GLM 生产使用 Messages 和 temperature=0；Responses 保留给 GPT 系列，GLM 5.3 系列单次调用超时 90 秒；若配置 Chat Completions 则显式设置 reasoning_effort=low；其他模型 25 秒。
 - 返回未完成、限流或无效 JSON 时保留错误并等待后续重试；付费调用不立即重复请求，不把失败结果入库。
 - Proma 启用但配置不全时报告不可用，不静默换模型。将 provider 改回 `cloudflare` 并重新部署可恢复原模型。
 - D1 已有或快照已有的同 URL、同标题文章不因换模型重新分析。仅标题变化能够在当前去重机制中触发重新分析；正文单独变化尚无检测机制。

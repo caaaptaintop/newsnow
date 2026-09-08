@@ -45,7 +45,7 @@ export function configuredAI(event: any) {
       try {
         response = await fetch(endpoint!, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}`, ...(protocol === "messages" ? { "anthropic-version": "2023-06-01" } : {}) },
-          body: JSON.stringify(body), signal: AbortSignal.timeout(isGLM53 ? 60000 : 25000), redirect: "manual",
+          body: JSON.stringify(body), signal: AbortSignal.timeout(isGLM53 ? 90000 : 25000), redirect: "manual",
         })
       } catch { throw new Error("Proma 请求超时或连接失败，本批未完成") }
       // Do not expose provider response bodies: they may echo input or credentials.
