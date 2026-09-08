@@ -1,3 +1,4 @@
+import { buildingRecallScore } from "@shared/building-recall"
 import { intelligenceSources } from "@shared/official-sources"
 import { intelligenceSnapshot } from "@shared/intelligence-snapshot"
 import { intelligenceVersion, intelligenceCanonicalUrl, intelligenceDate, intelligenceDedupe, type IntelligenceArticle, type IntelligenceSource, type IntelligenceSourceState, type IntelligenceTopic, type IntelligenceFeed } from "@shared/intelligence"
@@ -19,23 +20,6 @@ export interface IntelligenceRefreshOptions {
 
 const inFlight = new Map<string, Promise<RefreshOutcome>>()
 const interval = 6 * 3600000
-const buildingRecallStrong = [
-  "智能建造", "智能施工", "数字建造", "建筑机器人", "施工机器人", "智慧工地", "数字工地",
-  "bim", "建筑信息模型", "数字孪生", "智能生产", "数字设计", "数字化交付", "建筑产业互联网",
-  "好房子", "好住宅", "高品质住宅", "住宅品质", "住宅性能", "宜居住宅",
-  "智慧建筑", "建筑智能化", "智慧楼宇", "智慧运维", "全屋智能", "智能家居",
-  "绿色建筑", "绿色低碳", "低碳建筑", "建筑节能", "超低能耗", "近零能耗", "零碳建筑", "光储直柔", "绿色建材",
-  "城市更新", "城市体检", "老旧小区", "城中村改造", "既有建筑改造", "危旧房改造",
-  "装配式", "建筑工业化", "模块化建筑", "模块化建造", "预制构件", "部品部件", "工业化建造",
-]
-const buildingRecallSupporting = [
-  "人工智能", "机器视觉", "无人机", "3d打印", "三维打印", "智能装备", "自动化施工", "cim",
-  "住宅设计", "住宅建设", "住宅更新", "适老化", "无障碍", "完整社区",
-  "被动式建筑", "可再生能源", "建筑光伏", "绿色施工", "绿色建造", "建筑碳排放",
-  "更新改造", "有机更新", "历史建筑保护", "韧性城市",
-  "技术标准", "评价标准", "设计标准", "验收标准", "技术导则", "技术规程", "标准化",
-  "试点项目", "试点城市", "示范项目", "示范工程", "科技计划", "科技创新",
-]
 
 export async function intelligenceMapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const result: R[] = new Array(items.length)
@@ -50,13 +34,6 @@ async function digest(text: string) {
   return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, "0")).join("")
 }
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 240)
-function buildingRecallScore(item: OfficialCandidate) {
-  const text = `${item.title} ${item.column ?? ""}`.toLowerCase()
-  let score = 0
-  for (const keyword of buildingRecallStrong) if (text.includes(keyword)) score += 4
-  for (const keyword of buildingRecallSupporting) if (text.includes(keyword)) score += 2
-  return score
-}
 
 async function collect(source: IntelligenceSource) {
   const warnings: string[] = []
