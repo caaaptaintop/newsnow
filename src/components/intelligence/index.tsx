@@ -6,8 +6,8 @@ import "~/styles/intelligence.css"
 
 const topicIds = Object.keys(intelligenceTopics) as IntelligenceTopic[]
 const stateLabels: Record<IntelligenceSourceState["status"], string> = { pending: "待首次采集", running: "采集中", ok: "采集完成", partial: "部分完成", error: "采集失败" }
-function initialView() {
-  const params = new URLSearchParams(window.location.search)
+function initialView(search = "") {
+  const params = new URLSearchParams(search)
   const candidate = params.get("topic") as IntelligenceTopic
   const topic = topicIds.includes(candidate) ? candidate : "building"
   const filters = emptyIntelligenceFilters()
@@ -48,14 +48,16 @@ function MultiFilter({ title, options, value, onChange }: { title: string, optio
 function ArticleCard({ article, topic }: { article: IntelligenceArticle, topic: IntelligenceTopic }) {
   const categories: Record<string, string> = intelligenceTopics[topic].categories
   const url = intelligenceHttpUrl(article.url)
+  const tags = article.tags ?? []
+  const attachments = article.attachments ?? []
   return <article className="intel-card">
     <div className="intel-meta"><span className="intel-source-name">{article.sourceName}</span>{article.sourceGroup === "住建官方" && <span className="intel-official">官方</span>}<span>{[article.region, article.city && article.city !== article.region ? article.city : ""].filter(Boolean).join(" / ")}</span><time>{displayDate(article.publishedAt)}</time></div>
     <h2>{url ? <a href={url} target="_blank" rel="noreferrer">{article.title}<Icon kind="external" /></a> : article.title}</h2>
     <p className="intel-summary"><span>{topic === "health" ? "建议切入" : article.evidence === "body" ? "AI 摘要" : "标题概述"}</span>{article.summary}</p>
     {topic === "health" && article.reason && <p className="intel-reason">选题判断：{article.reason}</p>}
-    <div className="intel-card-labels"><span>{categories[article.category] ?? article.category}</span><span>{article.contentType}</span>{article.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
+    <div className="intel-card-labels"><span>{categories[article.category] ?? article.category}</span><span>{article.contentType}</span>{tags.map(tag => <span key={tag}>{tag}</span>)}</div>
     <div className="intel-card-foot"><span>{article.column}</span>{article.documentNo && <span>{article.documentNo}</span>}<span>{article.evidence === "title" ? "仅依据标题分析" : "依据已提取正文分析"}</span>{topic !== "health" && <span title="AI 编辑排序信号，不代表法定效力或客观评价">{article.importance >= 80 ? "重点关注" : article.importance >= 60 ? "值得关注" : "一般信息"}</span>}</div>
-    {article.attachments.length > 0 && <details className="intel-attachments"><summary>原文附件 {article.attachments.length} 份</summary>{article.attachments.map((a, index) => intelligenceHttpUrl(a.url) && <a key={`${a.url}:${index}`} href={a.url} target="_blank" rel="noreferrer">{a.title}</a>)}<small>附件保留原始链接；未解析的附件内容不纳入摘要。</small></details>}
+    {attachments.length > 0 && <details className="intel-attachments"><summary>原文附件 {attachments.length} 份</summary>{attachments.map((a, index) => intelligenceHttpUrl(a.url) && <a key={`${a.url}:${index}`} href={a.url} target="_blank" rel="noreferrer">{a.title}</a>)}<small>附件保留原始链接；未解析的附件内容不纳入摘要。</small></details>}
     {!!article.otherSources?.length && <details className="intel-attachments"><summary>其他转载来源 {article.otherSources.length} 个</summary>{article.otherSources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.name}</a>)}</details>}
   </article>
 }
@@ -76,7 +78,9 @@ function SourcePanel({ sources, states, busy, onSync }: { sources: IntelligenceS
 }
 export function IntelligenceWorkspace() {
   const queryClient = useQueryClient()
-  const [view, setView] = useState(initialView)
+  // Keep the first server render and the first hydration render identical.
+  // URL state is applied after mount, because `window` does not exist during SSR.
+  const [view, setView] = useState(() => initialView(""))
   const { topic, filters } = view
   const [showSources, setShowSources] = useState(false)
   const [syncProgress, setSyncProgress] = useState("")
@@ -112,6 +116,10 @@ export function IntelligenceWorkspace() {
     } finally { setBusy(false); syncLock.current = false }
   }, [queryClient])
   useEffect(() => {
+    const next = initialView(window.location.search)
+    setView(next)
+  }, [])
+  useEffect(() => {
     document.title = `${intelligenceTopics[topic].name} · 个人信息情报站`
     const params = new URLSearchParams(); params.set("topic", topic)
     if (filters.category) params.set("category", filters.category)
@@ -123,7 +131,7 @@ export function IntelligenceWorkspace() {
     window.history.replaceState(window.history.state, "", `${window.location.pathname}?${params}`)
   }, [topic, filters])
   useEffect(() => {
-    const onPopState = () => setView(initialView())
+    const onPopState = () => setView(initialView(window.location.search))
     window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState)
   }, [])
   useEffect(() => {
@@ -139,11 +147,11 @@ export function IntelligenceWorkspace() {
     setView({ topic: next, filters }); setVisible(40); setShowSources(false)
   }
   const filtered = useMemo(() => intelligenceFilter(articles, filters), [articles, filters])
-  const counts = useMemo(() => Object.fromEntries(Object.keys(categories).map(c => [c, articles.filter(a => a.category === c || a.relatedCategories.includes(c)).length])), [articles, categories])
+  const counts = useMemo(() => Object.fromEntries(Object.keys(categories).map(c => [c, articles.filter(a => a.category === c || (a.relatedCategories ?? []).includes(c)).length])), [articles, categories])
   const opts = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN")).map(v => ({ id: v, name: v }))
   const regionOptions = opts([...sourceList.map(s => s.region), ...articles.map(a => a.region)])
   const cityOptions = opts([...sourceList, ...articles].filter(s => !filters.regions.length || filters.regions.includes(s.region)).map(s => s.city))
-  const tags = opts(articles.flatMap(a => a.tags))
+  const tags = opts(articles.flatMap(a => a.tags ?? []))
   const sourceOptions = [...opts(sourceList.map(s => s.group)), ...sourceList.map(s => ({ id: s.id, name: s.name }))]
   const labelFor = (key: string, value: string) => key === "sources" ? sourceOptions.find(o => o.id === value)?.name ?? value : value
   const selected = (["regions", "cities", "types", "sources", "tags"] as const).flatMap(key => filters[key].map(value => ({ key, value, label: labelFor(key, value) })))
