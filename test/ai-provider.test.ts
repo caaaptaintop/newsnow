@@ -52,6 +52,7 @@ describe("AI provider", () => {
     expect(body.max_tokens).toBe(3000)
     expect(body.input).toBeUndefined()
     expect(body.reasoning).toBeUndefined()
+    expect(body.reasoning_effort).toBe("low")
   })
   it("rejects redirects without forwarding the credential", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { Location: "https://other.example" } }))

@@ -20,7 +20,7 @@
 
 ## 行为
 
-- 所有情报主题和健宁分类共用服务端模型配置，GLM 使用 Chat Completions 和 temperature=0；Responses 保留给 GPT 系列，单次连接超时 25 秒。
+- 所有情报主题和健宁分类共用服务端模型配置，GLM 使用 Chat Completions 和 temperature=0；Responses 保留给 GPT 系列，GLM 5.3 系列显式设置 reasoning_effort=low，单次调用超时 60 秒；其他模型 25 秒。
 - 返回未完成、限流或无效 JSON 时保留错误并等待后续重试；付费调用不立即重复请求，不把失败结果入库。
 - Proma 启用但配置不全时报告不可用，不静默换模型。将 provider 改回 `cloudflare` 并重新部署可恢复原模型。
 - D1 已有或快照已有的同 URL、同标题文章不因换模型重新分析。仅标题变化能够在当前去重机制中触发重新分析；正文单独变化尚无检测机制。
@@ -34,4 +34,4 @@
 3. 仍需真实分类请求验证接口、JSON、耗时和返回模型；查看 Proma 用量核实实际扣费，不按宣传折扣猜算费用。
 4. 存储状态必须继续为 D1 v2 可用且 R2 关闭。
 
-部署沿用现有 GitHub Actions。尚未完成真实 30 条情报质量对比。
+部署沿用现有 GitHub Actions。尚未完成真实 30 条情报质量对比。GLM 参数依据：https://docs.z.ai/api-reference/llm/chat-completion（5.3 系列推理不可关闭，默认 max，分类采用 low）。
