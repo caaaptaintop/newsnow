@@ -93,10 +93,6 @@ jobs:
                       return True
               return False
 
-          # Production is explicit because Pages bindings are non-inheritable once
-          # an env.production binding override exists. If Cloudflare already has a
-          # NEWSNOW_DB binding, keep its downloaded resource ID. Otherwise leave a
-          # draft binding and let current Wrangler provision/link D1 during deploy.
           if not has_newsnow_d1(text, "env.production.d1_databases"):
               text = text.rstrip() + '\n\n[[env.production.d1_databases]]\nbinding = "NEWSNOW_DB"\n'
 
@@ -106,7 +102,22 @@ jobs:
           echo "Workers AI and production NEWSNOW_DB binding prepared with Wrangler ${WRANGLER_VERSION}"
 
       - name: Deploy to Cloudflare Pages
-        run: pnpm dlx wrangler@${WRANGLER_VERSION} pages deploy dist/output/public --branch main --experimental-provision=true --experimental-auto-create=true
+        id: cloudflare_deploy
+        shell: bash
+        run: |
+          set +e
+          pnpm dlx wrangler@${WRANGLER_VERSION} pages deploy dist/output/public --branch main --experimental-provision=true --experimental-auto-create=true 2>&1 | tee wrangler-deploy.log
+          code=${PIPESTATUS[0]}
+          exit "$code"
+
+      - name: Preserve Cloudflare deploy diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-deploy-diagnostics
+          path: wrangler-deploy.log
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Verify production Workers AI runtime
         shell: bash
