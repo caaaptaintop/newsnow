@@ -50,13 +50,13 @@ export const healthTopic = {
   perSourceHotLimit: 30,
   /** 8 个来源理论最多 240 条，跨源去重后通常更少。 */
   aiCandidateLimit: 240,
-  /** 只返回内部选题潜力达到此门槛的候选；分数仅用于后台筛选和排序，前端不展示。 */
-  aiThreshold: 60,
+  /** Gemma 4 采用小批并行处理，避免单次长输出拖慢并降低串题概率。 */
+  aiChunkSize: 10,
   /** 单轮最多让模型返回的候选选题数量。 */
   aiResultLimit: 30,
-  /** Cloudflare-hosted Qwen3 MoE；无需第三方 API Key，适合中文结构化选题筛选。 */
-  aiModel: "@cf/qwen/qwen3-30b-a3b-fp8",
-  aiLabel: "Qwen3-30B-A3B",
+  /** Cloudflare-hosted Gemma 4 MoE；无需第三方 API Key。 */
+  aiModel: "@cf/google/gemma-4-26b-a4b-it",
+  aiLabel: "Gemma 4 26B A4B",
   /** 页面最多展示的候选选题数量。 */
   displayLimit: 30,
   sources: [
