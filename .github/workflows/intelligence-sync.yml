@@ -1,0 +1,60 @@
+name: Refresh intelligence sources
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Build and deploy Cloudflare Pages]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: intelligence-source-sync
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Read registry and refresh bounded batches
+        shell: bash
+        run: |
+          python - <<'PY'
+          import concurrent.futures, json, urllib.request, time
+          base = 'https://news.capx-ai.com/api/intelligence'
+          def call(url, body=None):
+              data = None if body is None else json.dumps(body).encode()
+              req = urllib.request.Request(url, data=data, headers={'Content-Type':'application/json', 'User-Agent':'CapxIntelligenceScheduledSync/1.0'})
+              with urllib.request.urlopen(req, timeout=210) as response:
+                  return json.load(response)
+          sources = []
+          for topic in ('building', 'ai', 'finance'):
+              feed = call(base + '?topic=' + topic)
+              if not feed.get('aiEnabled'):
+                  raise RuntimeError('Workers AI binding unavailable')
+              if not feed.get('persistent'):
+                  raise RuntimeError('D1 unavailable; refusing to claim persistent ingestion')
+              sources.extend(feed.get('sources', []))
+          def refresh(source):
+              try:
+                  result = call(base + '/refresh', {'sourceId':source['id']})
+              except Exception as error:
+                  result = {'id':source['id'], 'status':'error', 'error':str(error)}
+              print(json.dumps(result, ensure_ascii=False), flush=True)
+              return result
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+              results = list(pool.map(refresh, sorted(sources, key=lambda s:-s.get('priority', 0))))
+          with open('intelligence-source-status.json','w') as out:
+              json.dump({'checkedAt':int(time.time()*1000),'sources':results},out,ensure_ascii=False,indent=2)
+          good = sum(r.get('status') in ('ok','partial') and r.get('fetched',0)>0 for r in results)
+          print(f'Collected from {good}/{len(results)} configured sources. See artifact for per-source failures.')
+          if not good:
+              raise RuntimeError('No source yielded parseable articles')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: intelligence-source-status
+          path: intelligence-source-status.json
+          if-no-files-found: ignore
