@@ -53,8 +53,9 @@ function matchesPrioritySeed(item: NewsItem) {
 
 function candidateSignature(items: TopicItem[]) {
   let hash = 2166136261
-  for (const item of items) {
-    const text = `${item.key}|${item.title}`
+  // 同一批候选即使热榜内部名次有小幅调整，也保持同一签名，避免无意义地重新调用 AI。
+  const entries = items.map(item => `${item.key}|${item.title}`).sort()
+  for (const text of entries) {
     for (let i = 0; i < text.length; i++) {
       hash ^= text.charCodeAt(i)
       hash = Math.imul(hash, 16777619)
@@ -174,9 +175,10 @@ export function HealthColumn() {
       .slice(0, healthTopic.displayLimit)
   }, [candidatePool, semanticQuery.data])
 
-  const handleRefresh = () => {
-    queries.forEach(query => query.refetch())
-    semanticQuery.refetch()
+  const handleRefresh = async () => {
+    // 只刷新热榜源；如果候选集合没有变化，就继续复用当前 AI 结果。
+    // 候选真的变化后，signature 会自动变化并触发新的选题分析。
+    await Promise.all(queries.map(query => query.refetch()))
   }
 
   const aiStatus = semanticQuery.isFetching
@@ -205,7 +207,7 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个平台只取前 {healthTopic.sourceLimit} 条热点；去重后由 {healthTopic.aiLabel} 按健宁历史高表现选题逻辑筛选并排序。{aiStatus}。
+              每个平台只取前 {healthTopic.sourceLimit} 条热点；去重后由 {healthTopic.aiLabel} 按健宁历史高表现选题逻辑筛选并排序。同一批热点固定复用同一份分析结果，只有榜单内容变化后才重新分析。{aiStatus}。
             </p>
           </div>
           <button

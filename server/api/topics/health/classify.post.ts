@@ -33,6 +33,8 @@ interface ClassifyResponse {
 
 const lineCodes = Object.keys(healthTopicLines) as HealthTopicLine[]
 const triggerCodes = Object.keys(healthTopicTriggers) as HealthTopicTrigger[]
+const topicCacheVersion = "jianing-topic-v3"
+const topicCacheMaxAge = 1000 * 60 * 60 * 24
 
 function cleanText(value: unknown, max = 180) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max)
@@ -41,6 +43,72 @@ function cleanText(value: unknown, max = 180) {
 function getAI(event: any) {
   return event?.context?.cloudflare?.env?.AI
     || event?.context?.env?.AI
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function topicCacheKey(items: Array<{ key: string, title: string, source: string }>) {
+  // 分类判断与原榜位置解耦：同一批标题只是名次小幅变化时，继续复用同一份选题结果。
+  const snapshot = items
+    .map(item => `${item.key}|${item.title}|${item.source}`)
+    .sort()
+    .join("\n")
+  return `${topicCacheVersion}:${healthTopic.aiModel}:${stableHash(snapshot)}`
+}
+
+async function readTopicCache(cacheKey: string): Promise<ClassifyResponse | undefined> {
+  try {
+    const db = useDatabase()
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS topic_ai_cache (
+        id TEXT PRIMARY KEY,
+        updated INTEGER,
+        data TEXT
+      );
+    `).run()
+
+    const row = await db.prepare(
+      `SELECT data, updated FROM topic_ai_cache WHERE id = ?`,
+    ).get(cacheKey) as { data?: string, updated?: number } | undefined
+
+    if (!row?.data || !row.updated || Date.now() - row.updated > topicCacheMaxAge) return
+
+    const parsed = JSON.parse(row.data) as ClassifyResponse
+    if (parsed?.enabled === true && parsed.model === healthTopic.aiModel && Array.isArray(parsed.matches)) {
+      return parsed
+    }
+  } catch (error) {
+    logger.warn("read Jianing topic cache failed", error)
+  }
+}
+
+async function writeTopicCache(cacheKey: string, response: ClassifyResponse) {
+  try {
+    const db = useDatabase()
+    const now = Date.now()
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS topic_ai_cache (
+        id TEXT PRIMARY KEY,
+        updated INTEGER,
+        data TEXT
+      );
+    `).run()
+    await db.prepare(
+      `INSERT OR REPLACE INTO topic_ai_cache (id, updated, data) VALUES (?, ?, ?)`,
+    ).run(cacheKey, now, JSON.stringify(response))
+
+    // 只保留近期快照，避免长期积累无用的历史分类结果。
+    await db.prepare(`DELETE FROM topic_ai_cache WHERE updated < ?`).run(now - topicCacheMaxAge)
+  } catch (error) {
+    logger.warn("write Jianing topic cache failed", error)
+  }
 }
 
 function parseModelPayload(result: any) {
@@ -82,6 +150,10 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     return { enabled: false, model: healthTopic.aiModel, matches: [] }
   }
 
+  const cacheKey = topicCacheKey(items)
+  const cached = await readTopicCache(cacheKey)
+  if (cached) return cached
+
   const ai = getAI(event)
   if (!ai?.run) {
     return {
@@ -105,7 +177,7 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
         },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.1,
+      temperature: 0,
       max_tokens: 6000,
       stream: false,
     })
@@ -153,11 +225,13 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
           .slice(0, healthTopic.aiResultLimit)
       : []
 
-    return {
+    const response: ClassifyResponse = {
       enabled: true,
       model: healthTopic.aiModel,
       matches,
     }
+    await writeTopicCache(cacheKey, response)
+    return response
   } catch (error) {
     logger.error("Workers AI Jianing hot-topic classify failed", error)
     return {
