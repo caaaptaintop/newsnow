@@ -1,16 +1,15 @@
-import { healthTopic } from "@shared/topics"
+import { configuredAI } from "../../../utils/ai-provider"
 
 export default defineEventHandler(async (event) => {
-  const ai = event?.context?.cloudflare?.env?.AI
-    || (event?.context as any)?.env?.AI
-
-  const binding = !!ai?.run
+  const ai = configuredAI(event)
+  const env = event?.context?.cloudflare?.env || (event?.context as any)?.env
+  setHeader(event, "Cache-Control", "no-store")
   return {
-    enabled: binding,
-    binding,
-    model: healthTopic.aiModel,
-    probe: "binding-only",
-    note: binding ? "Workers AI binding is available; inference quota is checked by actual classification calls." : undefined,
-    error: binding ? undefined : "Workers AI binding is not available",
+    enabled: ai.enabled,
+    binding: !!env?.AI?.run,
+    provider: ai.provider,
+    model: ai.model,
+    probe: "configuration-only",
+    error: ai.enabled ? undefined : "AI provider configuration is not available",
   }
 })

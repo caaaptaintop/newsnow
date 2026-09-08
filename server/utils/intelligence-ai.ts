@@ -1,5 +1,5 @@
 import { intelligenceTopics, intelligenceContentTypes, type IntelligenceTopic } from "@shared/intelligence"
-import { healthTopic } from "@shared/topics"
+import { configuredAI } from "./ai-provider"
 
 export interface IntelligenceDecision {
   key: string
@@ -13,7 +13,7 @@ export interface IntelligenceDecision {
   reason: string
 }
 export function intelligenceAI(event: any) {
-  return event?.context?.cloudflare?.env?.AI || event?.context?.env?.AI
+  return configuredAI(event)
 }
 export function intelligenceParseAI(result: any): unknown[] {
   let raw = result?.choices?.[0]?.message?.content ?? result?.response ?? result
@@ -45,7 +45,7 @@ export async function intelligenceClassify(ai: any, topic: IntelligenceTopic, it
 类型只能从${JSON.stringify(intelligenceContentTypes)}中选。importance 0-100仅作排序，是编辑判断而非客观测量；先决定保留再评分。
 summary 用中文，最多120字。body 缺失时只能概括标题明示事项，不编造项目数、名单、条款、期限、政策效力或结论。正文被截断时不得假称读完附件。地区、日期、发布机构由采集器处理，不由你猜测。不得把征求意见稿写成正式生效。
 只输出 JSON {"items":[{"key":"原key","keep":true,"category":"编码","relatedCategories":[],"tags":["BIM"],"contentType":"通知公告","importance":75,"summary":"…","reason":"收录依据"},{"key":"另一key","keep":false,"reason":"无关"}]}。每个 key 恰好一次。`
-  const result = await ai.run(healthTopic.aiModel, {
+  const result = await ai.run(ai.model, {
     messages: [{ role: "system", content: prompt }, { role: "user", content: JSON.stringify(items) }],
     temperature: 0, seed: 20260908, max_completion_tokens: 3000,
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false }, stream: false,
