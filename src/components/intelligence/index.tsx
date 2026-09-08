@@ -12,7 +12,7 @@ function initialView() {
   const topic = topicIds.includes(candidate) ? candidate : "building"
   const filters = emptyIntelligenceFilters()
   const category = params.get("category") ?? ""
-  if (Object.hasOwn(intelligenceTopics[topic].categories, category)) filters.category = category
+  if (Object.prototype.hasOwnProperty.call(intelligenceTopics[topic].categories, category)) filters.category = category
   filters.q = (params.get("q") ?? "").slice(0, 200)
   for (const key of ["regions", "cities", "types", "sources", "tags"] as const) filters[key] = params.getAll(key).slice(0, 30)
   const days = Number(params.get("days")); if ([7, 30, 90, 365].includes(days)) filters.days = days
