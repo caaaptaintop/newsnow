@@ -1,0 +1,21 @@
+name: AI settings and subscription bridge checks
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run test/ai-settings.test.ts test/ai-provider.test.ts test/intelligence.test.ts
+      - run: node --test tools/ai-bridge/server.test.mjs

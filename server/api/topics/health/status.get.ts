@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   let catalogError: string | undefined
   if (getQuery(event).models === "true" && ai.models) {
     try { availableModels = await ai.models() } catch (error) {
-      catalogError = error instanceof Error ? error.message : "Proma 模型列表不可用"
+      catalogError = error instanceof Error ? error.message : "AI 模型列表不可用"
     }
   }
   return {
@@ -18,6 +18,7 @@ export default defineEventHandler(async (event) => {
     binding: !!env?.AI?.run,
     provider: ai.provider,
     model: ai.model,
+    cacheKey: JSON.stringify([ai.provider, ai.model, event.context.aiSettingsRevision ?? 0]),
     probe: "configuration-only",
     error: ai.enabled ? undefined : "AI provider configuration is not available",
   }

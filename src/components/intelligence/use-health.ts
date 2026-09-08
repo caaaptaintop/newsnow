@@ -12,6 +12,7 @@ interface SemanticResponse {
   model: string
   matches: { key: string, score: number, primaryLine: HealthTopicLine, auxiliaryLines: HealthTopicLine[], triggers: HealthTopicTrigger[], angle: string, reason: string }[]
   error?: string
+  cacheKey?: string
 }
 
 // SourceID is generated from the adapter registry and can temporarily drift from
@@ -23,10 +24,11 @@ const healthSourceIds = (healthTopic.sources as readonly HealthSourceId[])
 export function useHealthIntelligence(enabled: boolean) {
   const configuration = useQuery({
     queryKey: ["intelligence-ai-configuration"],
-    queryFn: () => myFetch<{ enabled: boolean, model: string }>("/topics/health/status"),
+    queryFn: () => myFetch<{ enabled: boolean, model: string, cacheKey?: string }>("/topics/health/status"),
     enabled, staleTime: 60000, retry: false,
   })
   const activeModel = configuration.data?.model
+  const activeCacheKey = configuration.data?.cacheKey ?? activeModel
   const queries = useQueries({ queries: healthSourceIds.map((id: HealthSourceId) => ({
     queryKey: ["jianing-topic-source", id, healthTopic.sourceLimit],
     queryFn: () => myFetch<SourceResponse>(`/s?id=${id}&limit=${healthTopic.sourceLimit}`),
@@ -59,10 +61,10 @@ export function useHealthIntelligence(enabled: boolean) {
   }, [candidates])
   const fetchingSources = enabled && queries.some(q => q.isFetching)
   const semantic = useQuery({
-    queryKey: ["jianing-hot-topic", "v2", activeModel, signature],
+    queryKey: ["jianing-hot-topic", "v3", activeCacheKey, signature],
     enabled: enabled && configuration.data?.enabled === true && !fetchingSources && candidates.length > 0,
     queryFn: async () => {
-      const key = `jianing-hot-topic:v2:${activeModel}:${signature}`
+      const key = `jianing-hot-topic:v3:${activeCacheKey}:${signature}`
       try {
         const raw = localStorage.getItem(key)
         if (raw) {
@@ -74,7 +76,7 @@ export function useHealthIntelligence(enabled: boolean) {
         method: "POST", timeout: 90000,
         body: { items: candidates.map(item => ({ key: item.key, title: item.title, source: item.sourceName, rank: item.sourceRank })) },
       })
-      if (data.enabled) try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data })) } catch { /* Optional cache. */ }
+      if (data.enabled && !data.error && data.cacheKey === activeCacheKey) try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data })) } catch { /* Optional cache. */ }
       return data
     },
     staleTime: 600000, retry: false, refetchOnWindowFocus: false,
@@ -111,8 +113,9 @@ export function useHealthIntelligence(enabled: boolean) {
     error: configuration.isError ? "AI 配置读取失败" : configuration.data?.enabled === false ? "AI 服务尚未配置" : queries.length > 0 && queries.every(q => q.isError) ? "全部平台热榜读取失败" : semantic.isError ? "健宁选题 AI 请求失败" : semantic.data?.error,
     progress: fetchingSources ? "正在读取各平台前 30 条热点" : semantic.isFetching ? `正在分析 ${candidates.length} 条去重热点` : "",
     refresh: async () => {
+      await configuration.refetch()
       await Promise.all(queries.map(q => q.refetch()))
-      if (semantic.isError || semantic.data?.enabled === false) await semantic.refetch()
+      if (semantic.isError || semantic.data?.enabled === false || semantic.data?.error) await semantic.refetch()
     },
   }
 }
