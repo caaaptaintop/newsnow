@@ -5,10 +5,16 @@ import { VitePWA } from "vite-plugin-pwa"
 const pwaOption: Partial<VitePWAOptions> = {
   includeAssets: ["icon.svg", "apple-touch-icon.png"],
   filename: "swx.js",
+  // The original NewsNow PWA cached the application shell. After the
+  // intelligence-workspace migration that can keep an old UI alive even
+  // after a hard refresh. Generate a one-way cleanup worker instead: it
+  // unregisters itself and removes old PWA caches, so production always
+  // loads the current Cloudflare Pages application shell.
+  selfDestroying: true,
   manifest: {
-    name: "NewsNow",
-    short_name: "NewsNow",
-    description: "Elegant reading of real-time and hottest news",
+    name: "个人信息情报站",
+    short_name: "信息情报站",
+    description: "CAPX 个人信息情报站",
     theme_color: "#F14D42",
     icons: [
       {
