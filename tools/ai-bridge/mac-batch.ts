@@ -12,13 +12,28 @@ import { localCodex } from "./local-codex.mjs"
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
 const source = intelligenceSources.find(s => s.id === option("--source", "official-shanghai") && s.enabled)
-const model = option("--model", "gpt-5.4-mini")
+const model = option("--model", "gpt-5.6-luna")
 const limit = Number(option("--limit", "3"))
 if (!source || !Number.isInteger(limit) || limit < 1 || limit > 30) throw new Error("Choose a configured source and limit 1–30")
 const root = resolve(import.meta.dirname, "../..")
 const outputDir = resolve(root, ".data/mac-batch")
 await mkdir(outputDir, { recursive: true })
-const lock = await import("node:fs/promises").then(fs => fs.open(resolve(outputDir, "running.lock"), "wx"))
+const lockPath = resolve(outputDir, "running.lock")
+try {
+  const pid = Number(await readFile(lockPath, "utf8"))
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error("Invalid batch lock; manual inspection needed")
+  try {
+    process.kill(pid, 0)
+    throw new Error("A batch is already running")
+  } catch (error: any) {
+    if (error.code !== "ESRCH") throw error
+    await import("node:fs/promises").then(fs => fs.unlink(lockPath))
+  }
+} catch (error: any) {
+  if (error.code !== "ENOENT") throw error
+}
+const lock = await import("node:fs/promises").then(fs => fs.open(lockPath, "wx"))
+await lock.writeFile(String(process.pid))
 try {
   const snapshot = JSON.parse(await readFile(resolve(root, "data/intelligence-snapshot.json"), "utf8"))
   let previous: any = { articles: [], decisions: [] }

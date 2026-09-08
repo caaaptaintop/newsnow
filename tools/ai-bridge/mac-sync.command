@@ -4,6 +4,12 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "${0:A:h}/../.."
 finish() { print '\n按回车关闭窗口。'; read -r reply; }
 trap finish EXIT
+service="gui/$(id -u)/com.capx.newsnow.mac-worker"
+if launchctl print "$service" >/dev/null 2>&1; then
+  launchctl kickstart "$service"
+  print '后台更新任务已启动，无需等待本窗口。'
+  exit 0
+fi
 if [[ "$(git branch --show-current)" != main || -n "$(git status --porcelain)" ]]; then
   print '源码有未提交改动或当前不在 main，已停止，避免覆盖其他工作。'
   exit 1
