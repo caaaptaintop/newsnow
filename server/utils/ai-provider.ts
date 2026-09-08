@@ -20,6 +20,7 @@ export function configuredAI(event: any) {
       endpoint = base
     }
   } catch { /* Invalid configuration remains unavailable, without exposing values. */ }
+  const isGLM53 = /^glm-5\.3(?:-flash)?$/i.test(model)
   const enabled = !!(endpoint && key && model)
   return {
     provider: "proma", model, enabled,
@@ -37,12 +38,12 @@ export function configuredAI(event: any) {
     run: enabled ? async (_model: string, params: any) => {
       const body = protocol === "responses"
         ? { model, input: params.messages, reasoning: { effort: "low" }, max_output_tokens: params.max_completion_tokens, stream: false, store: false }
-        : { model, messages: params.messages, max_tokens: params.max_completion_tokens, stream: false, temperature: 0 }
+        : { model, messages: params.messages, max_tokens: params.max_completion_tokens, stream: false, temperature: 0, ...(isGLM53 ? { reasoning_effort: "low" } : {}) }
       let response: Response
       try {
         response = await fetch(endpoint!, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-          body: JSON.stringify(body), signal: AbortSignal.timeout(25000), redirect: "manual",
+          body: JSON.stringify(body), signal: AbortSignal.timeout(isGLM53 ? 60000 : 25000), redirect: "manual",
         })
       } catch { throw new Error("Proma 请求超时或连接失败，本批未完成") }
       // Do not expose provider response bodies: they may echo input or credentials.
