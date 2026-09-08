@@ -39,7 +39,7 @@ export function configuredAI(event: any) {
       const body = protocol === "responses"
         ? { model, input: params.messages, reasoning: { effort: "low" }, max_output_tokens: params.max_completion_tokens, stream: false, store: false }
         : protocol === "messages"
-          ? { model, system: params.messages.filter((m: any) => m.role === "system").map((m: any) => m.content).join("\n"), messages: params.messages.filter((m: any) => m.role !== "system"), max_tokens: params.max_completion_tokens, stream: false, temperature: 0, ...(isGLM53 ? { thinking: { type: "adaptive" }, output_config: { effort: "low" } } : {}) }
+          ? { model, system: params.messages.filter((m: any) => m.role === "system").map((m: any) => m.content).join("\n"), messages: params.messages.filter((m: any) => m.role !== "system"), max_tokens: params.max_completion_tokens, stream: false, temperature: 0 }
           : { model, messages: params.messages, max_tokens: params.max_completion_tokens, stream: false, temperature: 0, ...(isGLM53 ? { reasoning_effort: "low" } : {}) }
       let response: Response
       try {
