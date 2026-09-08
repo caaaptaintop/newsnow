@@ -1,5 +1,6 @@
 import { healthTopic } from "@shared/topics"
 import { intelligenceSources } from "@shared/official-sources"
+import { intelligenceSnapshot } from "@shared/intelligence-snapshot"
 import { intelligenceVersion, intelligenceCanonicalUrl, intelligenceDate, intelligenceDedupe, type IntelligenceArticle, type IntelligenceSource, type IntelligenceSourceState, type IntelligenceTopic, type IntelligenceFeed } from "@shared/intelligence"
 import { getters } from "#/getters"
 import type { SourceID } from "@shared/types"
@@ -7,7 +8,17 @@ import { getIntelligenceStore } from "./intelligence-store"
 import { intelligenceAI, intelligenceClassify } from "./intelligence-ai"
 import { intelligenceFetchHtml, intelligenceDiscoverColumns, intelligenceParseList, intelligenceParseArticle, type OfficialCandidate } from "./intelligence-parser"
 
-const inFlight = new Map<string, Promise<IntelligenceSourceState>>()
+interface RefreshOutcome {
+  state: IntelligenceSourceState
+  articles: IntelligenceArticle[]
+  seenKeys: string[]
+}
+export interface IntelligenceRefreshOptions {
+  includeArticles?: boolean
+  knownKeys?: string[]
+}
+
+const inFlight = new Map<string, Promise<RefreshOutcome>>()
 const interval = 6 * 3600000
 export async function intelligenceMapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const result: R[] = new Array(items.length)
@@ -58,31 +69,60 @@ async function collect(source: IntelligenceSource) {
   return { items, columns, warnings }
 }
 
+function mergeStates(sources: IntelligenceSource[], runtime: IntelligenceSourceState[]) {
+  const allowed = new Set(sources.map(source => source.id))
+  const merged = new Map<string, IntelligenceSourceState>()
+  for (const state of intelligenceSnapshot.states) if (allowed.has(state.id)) merged.set(state.id, state)
+  for (const state of runtime) {
+    const previous = merged.get(state.id)
+    if (!previous || (state.checkedAt ?? 0) >= (previous.checkedAt ?? 0)) merged.set(state.id, state)
+  }
+  return sources.map(source => merged.get(source.id) ?? { id: source.id, status: "pending" as const })
+}
+
 export async function intelligenceFeed(event: any, topic: IntelligenceTopic): Promise<IntelligenceFeed> {
   const store = await getIntelligenceStore()
   const sources = intelligenceSources.filter(s => s.topic === topic && s.enabled)
-  const states = await Promise.all(sources.map(async s => await store.get<IntelligenceSourceState>(`source:${s.id}`) ?? { id: s.id, status: "pending" as const }))
-  const all = await store.articles(topic)
-  return { version: intelligenceVersion, model: healthTopic.aiModel, aiEnabled: !!intelligenceAI(event)?.run, persistent: store.persistent, sources, states, articles: intelligenceDedupe(all.slice(0, 5000)), truncated: all.length > 5000 }
+  const runtimeStates = await Promise.all(sources.map(async s => await store.get<IntelligenceSourceState>(`source:${s.id}`))).then(values => values.filter((value): value is IntelligenceSourceState => !!value))
+  const runtimeArticles = await store.articles(topic)
+  const snapshotArticles = intelligenceSnapshot.articles.filter(article => article.topic === topic)
+  const mergedArticles = intelligenceDedupe([...runtimeArticles, ...snapshotArticles])
+  return {
+    version: intelligenceVersion,
+    model: healthTopic.aiModel,
+    aiEnabled: !!intelligenceAI(event)?.run,
+    // Repository snapshots are durable across Workers/Pages deployments even when D1 is not bound.
+    persistent: true,
+    sources,
+    states: mergeStates(sources, runtimeStates),
+    articles: mergedArticles.slice(0, 5000),
+    truncated: mergedArticles.length > 5000,
+  }
 }
 
-async function updateSource(event: any, source: IntelligenceSource): Promise<IntelligenceSourceState> {
+async function updateSource(event: any, source: IntelligenceSource, externalKnownKeys: Set<string>): Promise<RefreshOutcome> {
   const store = await getIntelligenceStore()
   const previous = await store.get<IntelligenceSourceState>(`source:${source.id}`)
   const now = Date.now()
   const retryAfter = previous?.status === "error" || previous?.status === "partial" ? 30 * 60000 : interval
-  if (previous?.checkedAt && now - previous.checkedAt < (previous.status === "running" ? 180000 : retryAfter)) return previous
+  if (previous?.checkedAt && now - previous.checkedAt < (previous.status === "running" ? 180000 : retryAfter)) return { state: previous, articles: [], seenKeys: [] }
   const ai = intelligenceAI(event)
-  if (!ai?.run) return { id: source.id, status: "error", checkedAt: now, error: "Workers AI 绑定不可用；未用关键词结果替代 AI" }
+  if (!ai?.run) {
+    const state: IntelligenceSourceState = { id: source.id, status: "error", checkedAt: now, error: "Workers AI 绑定不可用；未用关键词结果替代 AI" }
+    await store.set(`source:${source.id}`, state)
+    return { state, articles: [], seenKeys: [] }
+  }
   await store.set(`source:${source.id}`, { ...previous, id: source.id, status: "running", checkedAt: now })
   let state: IntelligenceSourceState
+  const acceptedArticles: IntelligenceArticle[] = []
+  const seenKeys: string[] = []
   try {
     const { items, columns, warnings } = await collect(source)
     const prepared = await intelligenceMapLimit(items, 4, async item => {
       const key = `${source.topic}:${await digest(intelligenceCanonicalUrl(item.url))}`
       const signature = await digest(`${intelligenceVersion}|${healthTopic.aiModel}|${source.id}|${item.title}`)
       const seen = await store.get<{ signature: string, at: number }>(`seen:${source.id}:${key}`)
-      return { item, key, signature, seen: seen?.signature === signature && now - seen.at < 7 * 86400000 }
+      return { item, key, signature, seen: externalKnownKeys.has(key) || (seen?.signature === signature && now - seen.at < 7 * 86400000) }
     })
     const unseen = prepared.filter(x => !x.seen)
     const candidates = unseen.slice(0, 24)
@@ -104,6 +144,7 @@ async function updateSource(event: any, source: IntelligenceSource): Promise<Int
         for (const { item, key, signature } of chunk) {
           const decision = decisions.get(key)
           if (!decision) continue
+          seenKeys.push(key)
           if (decision.keep) {
             const article: IntelligenceArticle = {
               key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name,
@@ -115,6 +156,7 @@ async function updateSource(event: any, source: IntelligenceSource): Promise<Int
               evidence: item.text ? "body" : "title", model: healthTopic.aiModel, analysisVersion: intelligenceVersion,
             }
             await store.save(article)
+            acceptedArticles.push(article)
             accepted++
           } else await store.remove(key)
           await store.set(`seen:${source.id}:${key}`, { signature, at: now })
@@ -132,14 +174,17 @@ async function updateSource(event: any, source: IntelligenceSource): Promise<Int
     state = { ...previous, id: source.id, status: "error", checkedAt: now, error: message(error) }
   }
   await store.set(`source:${source.id}`, state)
-  return state
+  return { state, articles: acceptedArticles, seenKeys }
 }
-export async function intelligenceRefresh(event: any, sourceId: string) {
+
+export async function intelligenceRefresh(event: any, sourceId: string, options: IntelligenceRefreshOptions = {}) {
   const source = intelligenceSources.find(s => s.id === sourceId && s.enabled)
   if (!source) throw createError({ statusCode: 400, message: "未配置的信息源，不接受任意网址" })
-  const ongoing = inFlight.get(sourceId)
-  if (ongoing) return ongoing
-  const task = updateSource(event, source).finally(() => inFlight.delete(sourceId))
-  inFlight.set(sourceId, task)
-  return task
+  const knownKeys = new Set((options.knownKeys ?? []).filter(key => typeof key === "string").slice(0, 300))
+  const flightKey = `${sourceId}:${knownKeys.size ? "snapshot" : "interactive"}`
+  const ongoing = inFlight.get(flightKey)
+  const outcome = ongoing ?? updateSource(event, source, knownKeys).finally(() => inFlight.delete(flightKey))
+  if (!ongoing) inFlight.set(flightKey, outcome)
+  const result = await outcome
+  return options.includeArticles ? result : result.state
 }
