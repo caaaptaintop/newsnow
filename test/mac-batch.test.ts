@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { expect, it } from "vitest"
 import { mergeBatch } from "../tools/ai-bridge/merge-batch"
+import { classifyBatch } from "../tools/ai-bridge/classify-batch"
 import { buildingRecallScore } from "../shared/building-recall"
 import { intelligenceVersion } from "../shared/intelligence"
 
@@ -8,6 +9,17 @@ const url = "https://zjw.sh.gov.cn/test/urban-renewal.html"
 const key = `building:${createHash("sha256").update(url).digest("hex")}`
 const article = { key, url, title: "关于推进城市更新工作的通知", sourceId: "official-shanghai", topic: "building", analysisVersion: intelligenceVersion, collectedAt: 1000, evidence: "title", category: "urban_renewal", contentType: "通知公告", importance: 70, summary: "通知涉及推进城市更新工作。", attachments: [], relatedCategories: [], tags: [] }
 const batch = { articles: [article], decisions: [{ key, title: article.title, keep: true }] }
+it("short classification IDs map by ID even when output order changes, rejecting unknown IDs", async () => {
+  const items = [{ key: "long-key-one", title: "一", column: "栏目" }, { key: "long-key-two", title: "二", column: "栏目" }]
+  const ai = { model: "test", run: async (_model: string, params: any) => {
+    expect(JSON.parse(params.messages[1].content).map((i: any) => i.key)).toEqual(["item-1", "item-2"])
+    return { items: [{ key: "item-2", keep: false }, { key: "item-1", keep: false }] }
+  } }
+  const result = await classifyBatch(ai, "ai", items)
+  expect([...result.keys()]).toEqual(["long-key-one", "long-key-two"])
+  expect(result.get("long-key-two")?.key).toBe("long-key-two")
+  await expect(classifyBatch({ model: "test", run: async () => ({ items: [{ key: "item-9", keep: false }] }) }, "ai", items)).rejects.toThrow("Incomplete")
+})
 it("mac batch preserves existing articles/states/seen and is idempotent", () => {
   const existing = { key: "existing", title: "keep" }
   const snapshot = { articles: [existing], states: [{ id: "keep" }], seen: { keep: [] }, generatedAt: 1 }

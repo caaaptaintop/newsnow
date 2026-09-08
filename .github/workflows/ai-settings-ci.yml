@@ -17,5 +17,5 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec vitest run test/ai-settings.test.ts test/ai-provider.test.ts test/intelligence.test.ts
+      - run: pnpm exec vitest run test/ai-settings.test.ts test/ai-provider.test.ts test/intelligence.test.ts test/mac-batch.test.ts
       - run: node --test tools/ai-bridge/*.test.mjs
