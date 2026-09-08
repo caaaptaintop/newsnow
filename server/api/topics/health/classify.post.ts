@@ -33,8 +33,7 @@ interface ClassifyResponse {
 
 const lineCodes = Object.keys(healthTopicLines) as HealthTopicLine[]
 const triggerCodes = Object.keys(healthTopicTriggers) as HealthTopicTrigger[]
-const topicCacheVersion = "jianing-topic-v3"
-const topicCacheMaxAge = 1000 * 60 * 60 * 24
+const stableSeed = 20260908
 
 function cleanText(value: unknown, max = 180) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max)
@@ -43,72 +42,6 @@ function cleanText(value: unknown, max = 180) {
 function getAI(event: any) {
   return event?.context?.cloudflare?.env?.AI
     || event?.context?.env?.AI
-}
-
-function stableHash(value: string) {
-  let hash = 2166136261
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-  return (hash >>> 0).toString(36)
-}
-
-function topicCacheKey(items: Array<{ key: string, title: string, source: string }>) {
-  // 分类判断与原榜位置解耦：同一批标题只是名次小幅变化时，继续复用同一份选题结果。
-  const snapshot = items
-    .map(item => `${item.key}|${item.title}|${item.source}`)
-    .sort()
-    .join("\n")
-  return `${topicCacheVersion}:${healthTopic.aiModel}:${stableHash(snapshot)}`
-}
-
-async function readTopicCache(cacheKey: string): Promise<ClassifyResponse | undefined> {
-  try {
-    const db = useDatabase()
-    await db.prepare(`
-      CREATE TABLE IF NOT EXISTS topic_ai_cache (
-        id TEXT PRIMARY KEY,
-        updated INTEGER,
-        data TEXT
-      );
-    `).run()
-
-    const row = await db.prepare(
-      `SELECT data, updated FROM topic_ai_cache WHERE id = ?`,
-    ).get(cacheKey) as { data?: string, updated?: number } | undefined
-
-    if (!row?.data || !row.updated || Date.now() - row.updated > topicCacheMaxAge) return
-
-    const parsed = JSON.parse(row.data) as ClassifyResponse
-    if (parsed?.enabled === true && parsed.model === healthTopic.aiModel && Array.isArray(parsed.matches)) {
-      return parsed
-    }
-  } catch (error) {
-    logger.warn("read Jianing topic cache failed", error)
-  }
-}
-
-async function writeTopicCache(cacheKey: string, response: ClassifyResponse) {
-  try {
-    const db = useDatabase()
-    const now = Date.now()
-    await db.prepare(`
-      CREATE TABLE IF NOT EXISTS topic_ai_cache (
-        id TEXT PRIMARY KEY,
-        updated INTEGER,
-        data TEXT
-      );
-    `).run()
-    await db.prepare(
-      `INSERT OR REPLACE INTO topic_ai_cache (id, updated, data) VALUES (?, ?, ?)`,
-    ).run(cacheKey, now, JSON.stringify(response))
-
-    // 只保留近期快照，避免长期积累无用的历史分类结果。
-    await db.prepare(`DELETE FROM topic_ai_cache WHERE updated < ?`).run(now - topicCacheMaxAge)
-  } catch (error) {
-    logger.warn("write Jianing topic cache failed", error)
-  }
 }
 
 function parseModelPayload(result: any) {
@@ -150,10 +83,6 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     return { enabled: false, model: healthTopic.aiModel, matches: [] }
   }
 
-  const cacheKey = topicCacheKey(items)
-  const cached = await readTopicCache(cacheKey)
-  if (cached) return cached
-
   const ai = getAI(event)
   if (!ai?.run) {
     return {
@@ -164,7 +93,12 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     }
   }
 
-  const lines = items.map(item => JSON.stringify(item)).join("\n")
+  // AI 判断不依赖榜位：同一批标题即使名次小幅变化，也构造完全相同的模型输入。
+  const modelItems = items
+    .map(item => ({ key: item.key, title: item.title, source: item.source }))
+    .sort((a, b) => `${a.key}|${a.title}`.localeCompare(`${b.key}|${b.title}`))
+  const lines = modelItems.map(item => JSON.stringify(item)).join("\n")
+
   const systemPrompt = `你是微信公众号“好看健宁练”的热点选题编辑。不要做“健康新闻分类”，而要判断一个全网热点能否一步、自然地转成普通人愿意点开、且能给出实际答案的健宁选题。\n\n固定 8 条选题线，必须从中选 primaryLine，可再选最多 2 条 auxiliaryLines：\n- public_event：公众人物/热点事件健康转化\n- treatment_decision：减重药/治疗决策\n- symptom_signal：身体异常/症状判别\n- myth_correction：反常识/健康误区\n- stress_body：生活压力×身体结果\n- case_result：真实案例/结果型\n- guideline_policy：指南/研究/政策→个人决策\n- viral_lifestyle：爆火食品/生活方式→怎么吃、怎么做\n\n公众人物是高权重横向触发，但不能仅因“名人”而入选。优先考虑：他正在做，我能不能学；他身上发生了什么，我需要知道什么；这个人物热点背后真正的健康问题是什么。\n\n核心规则：\n1. 娱乐、科技、体育、社会、食品等非健康热点可以入选，但必须“一步”就能自然转成健康问题。\n2. 需要两层以上联想的硬蹭要排除，例如“公司裁员→焦虑→心理健康”。\n3. 纯八卦、劳动纠纷、比分转会、纯商业/资本新闻、只出现医院/医生/健康等词但没有个人决策价值的内容，排除。\n4. 优先能转成这些问题的热点：我该怎么办；这个身体信号意味着什么；大家都说 X 真的吗；名人的做法我能不能学；热点背后的身体真相；新研究/政策出来后我要改变什么；为什么努力了还没效果；我以为健康的做法是不是错了。\n5. 不编造原标题没有提供的事实；信息不足时，angle 用问题式表达。\n\n内部 score 只用于后台排序，前端绝不展示。评分重点：选题线匹配与转化质量30、普通人切身问题20、一步自然程度15、冲突/悬念15、可形成实用答案10、事实可支撑10。原榜 rank 由系统另行参与排序，不要因为排名高就给无关内容高分。\n\n只返回 score >= ${healthTopic.aiThreshold} 的项目，最多 ${healthTopic.aiResultLimit} 条，按 score 从高到低。triggers 最多2个，只能使用 public_figure、social_event、research_guideline、drug_product、viral_lifestyle、seasonal、online_debate、sports_event、tech_event。angle 不超过50个汉字；reason 不超过55个汉字，且不要写分数、等级或“强烈推荐”。\n\n严格返回 JSON：{"items":[{"key":"原key","score":88,"primaryLine":"treatment_decision","auxiliaryLines":["myth_correction"],"triggers":["public_figure"],"angle":"……","reason":"……"}]}。没有合适选题就返回 {"items":[]}。不要输出其他内容。`
 
   try {
@@ -178,6 +112,7 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
       ],
       response_format: { type: "json_object" },
       temperature: 0,
+      seed: stableSeed,
       max_tokens: 6000,
       stream: false,
     })
@@ -225,13 +160,11 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
           .slice(0, healthTopic.aiResultLimit)
       : []
 
-    const response: ClassifyResponse = {
+    return {
       enabled: true,
       model: healthTopic.aiModel,
       matches,
     }
-    await writeTopicCache(cacheKey, response)
-    return response
   } catch (error) {
     logger.error("Workers AI Jianing hot-topic classify failed", error)
     return {
