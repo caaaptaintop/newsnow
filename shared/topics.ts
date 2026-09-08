@@ -54,9 +54,9 @@ export const healthTopic = {
   aiThreshold: 60,
   /** 单轮最多让模型返回的候选选题数量。 */
   aiResultLimit: 30,
-  /** 直接通过 Cloudflare Workers AI binding 调用，无需第三方 API Key。 */
-  aiModel: "@cf/zai-org/glm-4.7-flash",
-  aiLabel: "GLM-4.7-Flash",
+  /** Cloudflare-hosted Qwen3 MoE；无需第三方 API Key，适合中文结构化选题筛选。 */
+  aiModel: "@cf/qwen/qwen3-30b-a3b-fp8",
+  aiLabel: "Qwen3-30B-A3B",
   /** 页面最多展示的候选选题数量。 */
   displayLimit: 30,
   sources: [
