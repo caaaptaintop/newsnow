@@ -54,6 +54,18 @@ describe("AI provider", () => {
     expect(body.reasoning).toBeUndefined()
     expect(body.reasoning_effort).toBe("low")
   })
+  it("supports Proma Messages and excludes thinking blocks from the answer", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "thinking", thinking: "internal" }, { type: "text", text: '{"items":[]}' }] })))
+    vi.stubGlobal("fetch", fetcher)
+    const ai = configuredAI(event({ INTELLIGENCE_AI_PROVIDER: "proma", PROMA_API_KEY: "test-only-key", PROMA_API_PROTOCOL: "messages" }))
+    const result = await ai.run!(ai.model, { ...params, messages: [{ role: "system", content: "rules" }, ...params.messages] })
+    expect(result.choices[0].message.content).toBe('{"items":[]}')
+    const [url, request] = fetcher.mock.calls[0]
+    expect(String(url)).toBe("https://api.proma.cool/v1/messages")
+    expect(JSON.parse(request.body).system).toBe("rules")
+    expect(JSON.parse(request.body).messages).toEqual(params.messages)
+    expect(request.headers["anthropic-version"]).toBe("2023-06-01")
+  })
   it("rejects redirects without forwarding the credential", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { Location: "https://other.example" } }))
     vi.stubGlobal("fetch", fetcher)
