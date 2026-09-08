@@ -59,6 +59,10 @@ export const healthTopic = {
   aiLabel: "Gemma 4 26B A4B",
   /** 页面最多展示的候选选题数量。 */
   displayLimit: 30,
+  /**
+   * 只引用 shared/sources.json 中实际存在且 Cloudflare 可用的热榜源。
+   * 原 smzdm 在当前来源注册表中不存在，改用贴吧热议补足第 8 个社会热点来源。
+   */
   sources: [
     "baidu",
     "weibo",
@@ -67,7 +71,7 @@ export const healthTopic = {
     "thepaper",
     "bilibili",
     "hupu",
-    "smzdm",
+    "tieba",
   ] as const satisfies readonly SourceID[],
   /**
    * 保留为后续候选优先级扩展使用；当前每源只取前 30 条，因此不会额外扫描长尾。
