@@ -21,10 +21,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Regression tests
         run: pnpm exec vitest run test/intelligence.test.ts
-      - name: Cloudflare production build
-        run: pnpm run build
-        env:
-          CF_PAGES: 1
       - name: Typecheck
         shell: bash
         run: |
@@ -37,3 +33,7 @@ jobs:
           name: intelligence-typecheck
           path: typecheck-output.txt
           if-no-files-found: ignore
+      - name: Cloudflare production build
+        run: pnpm run build
+        env:
+          CF_PAGES: 1
