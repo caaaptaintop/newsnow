@@ -30,6 +30,7 @@ interface ClassifyResponse {
   model: string
   matches: AIHotTopicMatch[]
   error?: string
+  cacheKey?: string
 }
 
 const lineCodes = Object.keys(healthTopicLines) as HealthTopicLine[]
@@ -124,8 +125,9 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     }))
 
   const ai = getAI(event)
+  const cacheKey = JSON.stringify([ai.provider, ai.model, event.context.aiSettingsRevision ?? 0])
   if (!items.length) {
-    return { enabled: false, model: ai.model, matches: [] }
+    return { enabled: false, model: ai.model, matches: [], cacheKey }
   }
 
   if (!ai?.run) {
@@ -133,11 +135,14 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
       enabled: false,
       model: ai.model,
       matches: [],
+      cacheKey,
       error: "AI provider configuration is not available",
     }
   }
 
   const run = ai.run
+  const subscription = /^(codex|grok-subscription):/.test(ai.provider)
+  const parallelChunks = subscription ? 1 : maxParallelChunks
 
   // AI 判断不依赖榜位：同一批标题即使名次小幅变化，也构造相同的模型输入。
   const modelItems = items
@@ -168,7 +173,8 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     }
 
     let lastError: unknown
-    for (let attempt = 0; attempt < (ai.provider === "proma" ? 1 : 2); attempt++) {
+    // No implicit retry for any API or subscription provider, not only Proma.
+    for (let attempt = 0; attempt < (ai.provider === "cloudflare" ? 2 : 1); attempt++) {
       try {
         const result = await run(ai.model, params)
         return { ok: true as const, parsed: parseModelPayload(result) }
@@ -184,9 +190,9 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
   try {
     const chunkResults: Array<Awaited<ReturnType<typeof runChunk>>> = []
 
-    // 每次最多并行 8 组；比单个大请求快，同时避免一次发出过多 Workers AI 调用。
-    for (let start = 0; start < chunks.length; start += maxParallelChunks) {
-      const wave = chunks.slice(start, start + maxParallelChunks)
+    // Subscription nodes serialize chunks; existing API/Workers parallelism is retained.
+    for (let start = 0; start < chunks.length; start += parallelChunks) {
+      const wave = chunks.slice(start, start + parallelChunks)
       const waveResults = await Promise.all(
         wave.map((chunk, offset) => runChunk(chunk, start + offset)),
       )
@@ -199,7 +205,8 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
         enabled: false,
         model: ai.model,
         matches: [],
-        error: ai.provider === "proma" && chunkResults[0]?.error instanceof Error
+        cacheKey,
+        error: chunkResults[0]?.error instanceof Error
           ? chunkResults[0].error.message : "AI topic classification failed",
       }
     }
@@ -225,6 +232,8 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
       enabled: true,
       model: ai.model,
       matches,
+      cacheKey,
+      error: successful.length < chunks.length ? `仅完成 ${successful.length}/${chunks.length} 批分析；未完成部分没有作为完整结果缓存，请检查 AI 状态。` : undefined,
     }
   } catch (error) {
     logger.error("AI Jianing hot-topic classify failed", error)
@@ -232,6 +241,7 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
       enabled: false,
       model: ai.model,
       matches: [],
+      cacheKey,
       error: error instanceof Error ? error.message : "AI topic classification failed",
     }
   }
