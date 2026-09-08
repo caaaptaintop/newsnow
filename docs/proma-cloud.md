@@ -1,6 +1,6 @@
 # Proma Cloud 模型接入
 
-状态：PENDING，按用户最新要求切换 GLM 5.3 Flash，待真实调用验收。
+状态：PENDING，GLM 5.3 Flash 已部署；Messages 单条成功耗时 44 秒，30 条批量触及 60 秒上限，尚不满足批量使用要求。客户端编码的 adaptive/low 参数在此 API 实测返回 HTTP 529，已撤回该参数，待 Proma 确认支持方式。
 
 依据：2026-09-08 用户提供的 Proma 控制台 API 说明截图。GPT-5.6 系列必须调用 `https://api.proma.cool/v1/responses`，请求字段为 `input`。
 
@@ -20,7 +20,7 @@
 
 ## 行为
 
-- 所有情报主题和健宁分类共用服务端模型配置，GLM 生产使用 Messages 和 temperature=0；Responses 保留给 GPT 系列，GLM 5.3 系列单次调用超时 60 秒；Messages 使用 thinking=adaptive、output_config.effort=low（与 Proma 客户端参数编码一致）；若配置 Chat Completions 则显式设置 reasoning_effort=low；其他模型 25 秒。
+- 所有情报主题和健宁分类共用服务端模型配置，GLM 生产使用 Messages 和 temperature=0；Responses 保留给 GPT 系列，GLM 5.3 系列单次调用超时 60 秒；若配置 Chat Completions 则显式设置 reasoning_effort=low；其他模型 25 秒。
 - 返回未完成、限流或无效 JSON 时保留错误并等待后续重试；付费调用不立即重复请求，不把失败结果入库。
 - Proma 启用但配置不全时报告不可用，不静默换模型。将 provider 改回 `cloudflare` 并重新部署可恢复原模型。
 - D1 已有或快照已有的同 URL、同标题文章不因换模型重新分析。仅标题变化能够在当前去重机制中触发重新分析；正文单独变化尚无检测机制。

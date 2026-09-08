@@ -63,8 +63,6 @@ describe("AI provider", () => {
     const [url, request] = fetcher.mock.calls[0]
     expect(String(url)).toBe("https://api.proma.cool/v1/messages")
     expect(JSON.parse(request.body).system).toBe("rules")
-    expect(JSON.parse(request.body).thinking).toEqual({ type: "adaptive" })
-    expect(JSON.parse(request.body).output_config).toEqual({ effort: "low" })
     expect(JSON.parse(request.body).messages).toEqual(params.messages)
     expect(request.headers["anthropic-version"]).toBe("2023-06-01")
   })
