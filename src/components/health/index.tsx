@@ -110,28 +110,12 @@ export function HealthColumn() {
     return [...deduped.values()]
   }, [queries])
 
-  // 先保证每个平台的高位热点都能进入 AI，再用健宁种子词补充更低榜位的潜在选题。
-  // 种子词只影响候选优先级，不决定最终是否展示。
+  // 当前只取每个平台前 30 条，因此去重后的候选直接交给 AI；
+  // 关键词仅保留为未来扩展能力，不再额外扫描长尾。
   const aiCandidates = useMemo(() => {
-    const highRank = candidatePool
-      .filter(item => item.sourceRank <= healthTopic.perSourceHotLimit)
+    return candidatePool
       .sort((a, b) => b.rankScore - a.rankScore)
-
-    const seedExtras = candidatePool
-      .filter(item => item.sourceRank > healthTopic.perSourceHotLimit && item.priorityMatched)
-      .sort((a, b) => b.rankScore - a.rankScore)
-
-    const remaining = candidatePool
-      .filter(item => item.sourceRank > healthTopic.perSourceHotLimit && !item.priorityMatched)
-      .sort((a, b) => b.rankScore - a.rankScore)
-
-    const merged = new Map<string, TopicItem>()
-    for (const item of [...highRank, ...seedExtras, ...remaining]) {
-      if (!merged.has(item.key)) merged.set(item.key, item)
-      if (merged.size >= healthTopic.aiCandidateLimit) break
-    }
-
-    return [...merged.values()]
+      .slice(0, healthTopic.aiCandidateLimit)
   }, [candidatePool])
 
   const signature = useMemo(() => candidateSignature(aiCandidates), [aiCandidates])
@@ -144,7 +128,6 @@ export function HealthColumn() {
     queryFn: async () => {
       return await myFetch<SemanticResponse>("/topics/health/classify", {
         method: "POST",
-        // 单轮需要分析较多全网热点并生成选题切入角度，给 Workers AI 更充足的等待时间。
         timeout: 90_000,
         body: {
           items: aiCandidates.map(item => ({
@@ -197,7 +180,7 @@ export function HealthColumn() {
   }
 
   const aiStatus = semanticQuery.isFetching
-    ? `${healthTopic.aiLabel} 正在进行热点选题判断`
+    ? `${healthTopic.aiLabel} 正在分析 ${aiCandidates.length} 条热点`
     : semanticQuery.data?.enabled
       ? `${healthTopic.aiLabel} 已完成热点选题筛选`
       : semanticQuery.data?.error?.includes("binding")
@@ -222,7 +205,7 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个来源最多扫描 {healthTopic.sourceLimit} 条，覆盖各平台高位热点并补充健宁相关长尾候选；{healthTopic.aiLabel} 按健宁历史高表现选题逻辑进行筛选与排序。{aiStatus}。
+              每个平台只取前 {healthTopic.sourceLimit} 条热点；去重后由 {healthTopic.aiLabel} 按健宁历史高表现选题逻辑筛选并排序。{aiStatus}。
             </p>
           </div>
           <button
@@ -240,11 +223,11 @@ export function HealthColumn() {
       <div className="rounded-2xl bg-green-500/12 p-4 dark:bg-green-500/15">
         <div className="rounded-2xl bg-base bg-op-75! p-3">
           {isFetchingSources && (
-            <div className="py-12 text-center text-sm op-60">正在扫描全网热点...</div>
+            <div className="py-12 text-center text-sm op-60">正在读取各平台前 {healthTopic.sourceLimit} 条热点...</div>
           )}
 
           {!isFetchingSources && semanticQuery.isFetching && (
-            <div className="py-12 text-center text-sm op-60">热点扫描完成，正在用 {healthTopic.aiLabel} 提炼健宁选题...</div>
+            <div className="py-12 text-center text-sm op-60">已汇总 {aiCandidates.length} 条去重候选，正在用 {healthTopic.aiLabel} 提炼健宁选题...</div>
           )}
 
           {aiUnavailable && (

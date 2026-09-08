@@ -44,12 +44,12 @@ export const healthTopic = {
   navName: "热点选题",
   name: "健宁热点选题",
   description: "从全网热点中发现能自然转化为“好看健宁练”公众号内容的选题机会",
-  /** 该主题单独做更深扫描；普通 NewsNow 页面仍保持原来的 30 条。 */
-  sourceLimit: 100,
-  /** 每个来源至少优先送入 AI 的高位热点数量，避免只盯健康关键词而漏掉跨界热点。 */
-  perSourceHotLimit: 40,
-  /** 跨源去重后送入 GLM 做热点选题判断的候选上限。 */
-  aiCandidateLimit: 400,
+  /** 每个平台只取前 30 条；与普通 NewsNow 页面共用默认缓存，减少抓取与等待时间。 */
+  sourceLimit: 30,
+  /** 每个来源前 30 条全部作为高位热点候选。 */
+  perSourceHotLimit: 30,
+  /** 8 个来源理论最多 240 条，跨源去重后通常更少。 */
+  aiCandidateLimit: 240,
   /** 只返回内部选题潜力达到此门槛的候选；分数仅用于后台筛选和排序，前端不展示。 */
   aiThreshold: 60,
   /** 单轮最多让模型返回的候选选题数量。 */
@@ -70,8 +70,8 @@ export const healthTopic = {
     "smzdm",
   ] as const satisfies readonly SourceID[],
   /**
-   * 只用于补充较低榜位但明显可能与健宁选题有关的候选，不作为最终筛选条件，
-   * 更不会因为关键词命中就直接进入页面。
+   * 保留为后续候选优先级扩展使用；当前每源只取前 30 条，因此不会额外扫描长尾。
+   * 关键词永远不作为最终筛选条件。
    */
   seedKeywords: [
     "健康",
