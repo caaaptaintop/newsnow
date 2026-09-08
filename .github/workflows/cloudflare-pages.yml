@@ -126,24 +126,39 @@ jobs:
             exit 1
           fi
 
-      - name: Verify health AI classifier
+      - name: Verify Jianing hot-topic classifier
         shell: bash
         run: |
           body_file=$(mktemp)
           status=$(curl -sS -o "$body_file" -w '%{http_code}' \
             -X POST "https://news.capx-ai.com/api/topics/health/classify?ts=$(date +%s)" \
             -H 'content-type: application/json' \
-            --data '{"items":[{"key":"health-test","title":"研究显示每天快走30分钟有助于控制血糖","source":"test","rank":1},{"key":"noise-test","title":"某公司员工调岗后发起劳动维权","source":"test","rank":2}]}' || true)
+            --data '{"items":[{"key":"public-test","title":"知名科技企业家公开分享长期服用二甲双胍抗衰老","source":"test","rank":1},{"key":"health-test","title":"研究显示每天快走30分钟有助于控制血糖","source":"test","rank":2},{"key":"noise-test","title":"某公司员工调岗后发起劳动维权","source":"test","rank":3}]}' || true)
           body=$(cat "$body_file")
-          echo "Health classifier smoke test: HTTP $status"
-          echo "Health classifier response: $body"
+          echo "Jianing topic smoke test: HTTP $status"
+          echo "Jianing topic response: $body"
 
           if [ "$status" != "200" ]; then
-            echo "::error::Health classifier returned HTTP $status: $body"
+            echo "::error::Jianing topic classifier returned HTTP $status: $body"
             exit 1
           fi
 
           if ! printf '%s' "$body" | grep -q '"enabled":true'; then
-            echo "::error::Health classifier did not complete successfully: $body"
+            echo "::error::Jianing topic classifier did not complete successfully: $body"
+            exit 1
+          fi
+
+          if ! printf '%s' "$body" | grep -q '"primaryLine"'; then
+            echo "::error::Jianing topic classifier did not return topic-line metadata: $body"
+            exit 1
+          fi
+
+          if ! printf '%s' "$body" | grep -q '"angle"'; then
+            echo "::error::Jianing topic classifier did not return a suggested angle: $body"
+            exit 1
+          fi
+
+          if printf '%s' "$body" | grep -q '"noise-test"'; then
+            echo "::error::Jianing topic classifier incorrectly kept an unrelated labor-dispute headline: $body"
             exit 1
           fi

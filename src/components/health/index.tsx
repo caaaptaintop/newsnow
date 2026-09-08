@@ -1,19 +1,29 @@
 import type { NewsItem, SourceID, SourceResponse } from "@shared/types"
-import { healthTopic } from "@shared/topics"
+import {
+  healthTopic,
+  healthTopicLines,
+  healthTopicTriggers,
+  type HealthTopicLine,
+  type HealthTopicTrigger,
+} from "@shared/topics"
 import { sources } from "@shared/sources"
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { myFetch } from "~/utils"
 
-interface HealthItem extends NewsItem {
+interface TopicItem extends NewsItem {
   key: string
   sourceId: SourceID
   sourceName: string
   sourceRank: number
   rankScore: number
-  keywordMatched: boolean
-  aiScore?: number
-  category?: string
+  priorityMatched: boolean
+  topicScore?: number
+  primaryLine?: HealthTopicLine
+  auxiliaryLines?: HealthTopicLine[]
+  triggers?: HealthTopicTrigger[]
+  angle?: string
+  reason?: string
   finalScore?: number
 }
 
@@ -23,36 +33,25 @@ interface SemanticResponse {
   matches: Array<{
     key: string
     score: number
-    category: string
+    primaryLine: HealthTopicLine
+    auxiliaryLines: HealthTopicLine[]
+    triggers: HealthTopicTrigger[]
+    angle: string
+    reason: string
   }>
   error?: string
-}
-
-const categoryNames: Record<string, string> = {
-  exercise: "运动",
-  weight: "体重管理",
-  nutrition: "营养",
-  sleep: "睡眠",
-  metabolic: "代谢健康",
-  cardiovascular: "心血管",
-  preventive: "预防健康",
-  medical_research: "健康研究",
-  public_health: "公共健康",
-  mental_health: "心理健康",
-  other_health: "健康",
 }
 
 function normalizeTitle(title: string) {
   return title.toLowerCase().replace(/[\s，。！？、,.!?：:；;“”"'‘’（）()【】\[\]-]/g, "")
 }
 
-function matchesHealth(item: NewsItem) {
-  // 关键词兜底只看标题，避免 hover/info 中的背景词把无关内容误判为健康。
+function matchesPrioritySeed(item: NewsItem) {
   const text = item.title.toLowerCase()
-  return healthTopic.keywords.some(keyword => text.includes(keyword.toLowerCase()))
+  return healthTopic.seedKeywords.some(keyword => text.includes(keyword.toLowerCase()))
 }
 
-function candidateSignature(items: HealthItem[]) {
+function candidateSignature(items: TopicItem[]) {
   let hash = 2166136261
   for (const item of items) {
     const text = `${item.key}|${item.title}`
@@ -71,7 +70,7 @@ async function fetchSource(id: SourceID): Promise<SourceResponse> {
 export function HealthColumn() {
   const queries = useQueries({
     queries: healthTopic.sources.map(id => ({
-      queryKey: ["health-source", id, healthTopic.sourceLimit],
+      queryKey: ["jianing-topic-source", id, healthTopic.sourceLimit],
       queryFn: () => fetchSource(id),
       staleTime: 1000 * 60 * 5,
       refetchOnMount: false,
@@ -82,7 +81,7 @@ export function HealthColumn() {
   })
 
   const candidatePool = useMemo(() => {
-    const all: HealthItem[] = []
+    const all: TopicItem[] = []
 
     queries.forEach((query, sourceIndex) => {
       const id = healthTopic.sources[sourceIndex]
@@ -94,12 +93,12 @@ export function HealthColumn() {
           sourceName: sources[id].name,
           sourceRank: rank + 1,
           rankScore: Math.max(0, 100 - rank * 0.75 - sourceIndex * 0.25),
-          keywordMatched: matchesHealth(item),
+          priorityMatched: matchesPrioritySeed(item),
         })
       })
     })
 
-    const deduped = new Map<string, HealthItem>()
+    const deduped = new Map<string, TopicItem>()
     all
       .sort((a, b) => b.rankScore - a.rankScore)
       .forEach((item) => {
@@ -111,32 +110,42 @@ export function HealthColumn() {
     return [...deduped.values()]
   }, [queries])
 
-  // 关键词只承担“召回优先级”的作用；AI 可用时由 AI 做最终判断。
-  // 如果 AI 不可用，才回退到标题关键词筛选。
+  // 先保证每个平台的高位热点都能进入 AI，再用健宁种子词补充更低榜位的潜在选题。
+  // 种子词只影响候选优先级，不决定最终是否展示。
   const aiCandidates = useMemo(() => {
-    const keywordHits = candidatePool
-      .filter(item => item.keywordMatched)
+    const highRank = candidatePool
+      .filter(item => item.sourceRank <= healthTopic.perSourceHotLimit)
       .sort((a, b) => b.rankScore - a.rankScore)
-    const others = candidatePool
-      .filter(item => !item.keywordMatched)
-      .sort((a, b) => a.sourceRank - b.sourceRank || b.rankScore - a.rankScore)
 
-    return [...keywordHits, ...others].slice(0, healthTopic.aiCandidateLimit)
+    const seedExtras = candidatePool
+      .filter(item => item.sourceRank > healthTopic.perSourceHotLimit && item.priorityMatched)
+      .sort((a, b) => b.rankScore - a.rankScore)
+
+    const remaining = candidatePool
+      .filter(item => item.sourceRank > healthTopic.perSourceHotLimit && !item.priorityMatched)
+      .sort((a, b) => b.rankScore - a.rankScore)
+
+    const merged = new Map<string, TopicItem>()
+    for (const item of [...highRank, ...seedExtras, ...remaining]) {
+      if (!merged.has(item.key)) merged.set(item.key, item)
+      if (merged.size >= healthTopic.aiCandidateLimit) break
+    }
+
+    return [...merged.values()]
   }, [candidatePool])
 
   const signature = useMemo(() => candidateSignature(aiCandidates), [aiCandidates])
   const isFetchingSources = queries.some(query => query.isFetching)
-  const hasError = queries.every(query => query.isError)
+  const hasSourceError = queries.every(query => query.isError)
 
   const semanticQuery = useQuery({
-    queryKey: ["topic-semantic", "health", healthTopic.aiModel, signature],
+    queryKey: ["jianing-hot-topic", healthTopic.aiModel, signature],
     enabled: !isFetchingSources && aiCandidates.length > 0,
     queryFn: async () => {
       return await myFetch<SemanticResponse>("/topics/health/classify", {
         method: "POST",
-        // Workers AI 冷启动和较大批量分类可能超过全局 15 秒超时，
-        // 健康主题单独允许更长等待，避免模型已正常工作却被前端误判为不可用。
-        timeout: 75_000,
+        // 单轮需要分析较多全网热点并生成选题切入角度，给 Workers AI 更充足的等待时间。
+        timeout: 90_000,
         body: {
           items: aiCandidates.map(item => ({
             key: item.key,
@@ -152,34 +161,32 @@ export function HealthColumn() {
   })
 
   const items = useMemo(() => {
+    if (semanticQuery.data?.enabled !== true) return []
+
     const aiMatches = new Map(
-      (semanticQuery.data?.matches ?? []).map(item => [item.key, item]),
+      semanticQuery.data.matches.map(item => [item.key, item]),
     )
-    const aiEnabled = semanticQuery.data?.enabled === true
 
     return candidatePool
       .map((item) => {
         const ai = aiMatches.get(item.key)
+        if (!ai) return null
 
-        // AI 可用时，所有结果都必须经过 AI；AI 尚未返回或不可用时只展示标题关键词预览/兜底。
-        if (aiEnabled) {
-          if (!ai) return null
-        } else if (!item.keywordMatched) {
-          return null
-        }
-
-        const finalScore = ai
-          ? ai.score * 0.78 + item.rankScore * 0.22 + (item.keywordMatched ? 2 : 0)
-          : 60 + item.rankScore * 0.35
+        // 模型内部选题判断是主排序信号，原热榜位置只作为较轻的热度信号。
+        const finalScore = ai.score * 0.88 + item.rankScore * 0.12
 
         return {
           ...item,
-          aiScore: ai?.score,
-          category: ai?.category,
+          topicScore: ai.score,
+          primaryLine: ai.primaryLine,
+          auxiliaryLines: ai.auxiliaryLines,
+          triggers: ai.triggers,
+          angle: ai.angle,
+          reason: ai.reason,
           finalScore,
         }
       })
-      .filter((item): item is HealthItem & { finalScore: number } => !!item)
+      .filter((item): item is TopicItem & { finalScore: number } => !!item)
       .sort((a, b) => b.finalScore - a.finalScore)
       .slice(0, healthTopic.displayLimit)
   }, [candidatePool, semanticQuery.data])
@@ -190,14 +197,19 @@ export function HealthColumn() {
   }
 
   const aiStatus = semanticQuery.isFetching
-    ? `${healthTopic.aiLabel} 正在筛选 ${aiCandidates.length} 条候选`
+    ? `${healthTopic.aiLabel} 正在进行热点选题判断`
     : semanticQuery.data?.enabled
-      ? `${healthTopic.aiLabel}（Cloudflare Workers AI）已启用，本轮判断 ${aiCandidates.length} 条、保留 ${semanticQuery.data.matches.length} 条`
+      ? `${healthTopic.aiLabel} 已完成热点选题筛选`
       : semanticQuery.data?.error?.includes("binding")
-        ? "Workers AI 绑定暂不可用，已自动回退标题关键词筛选"
+        ? "Workers AI 暂不可用"
         : semanticQuery.isError || semanticQuery.data?.error
-          ? "AI 暂不可用，已自动回退标题关键词筛选"
-          : "准备进行 AI 语义筛选"
+          ? "热点选题 AI 暂不可用"
+          : "准备进行热点选题判断"
+
+  const aiUnavailable = !isFetchingSources
+    && !semanticQuery.isFetching
+    && aiCandidates.length > 0
+    && (semanticQuery.isError || !!semanticQuery.data?.error || semanticQuery.data?.enabled === false)
 
   return (
     <section className="mx-auto w-full max-w-1100px">
@@ -205,12 +217,12 @@ export function HealthColumn() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="i-ph:heartbeat-duotone text-2xl text-green-600 dark:text-green-400" />
+              <span className="i-ph:target-duotone text-2xl text-green-600 dark:text-green-400" />
               <h1 className="text-2xl font-bold">{healthTopic.name}</h1>
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个来源最多扫描 {healthTopic.sourceLimit} 条；标题关键词只用于召回，Cloudflare Workers AI 的 {healthTopic.aiLabel} 做最终相关性判断。{aiStatus}。
+              每个来源最多扫描 {healthTopic.sourceLimit} 条，覆盖各平台高位热点并补充健宁相关长尾候选；{healthTopic.aiLabel} 按健宁历史高表现选题逻辑进行筛选与排序。{aiStatus}。
             </p>
           </div>
           <button
@@ -219,7 +231,7 @@ export function HealthColumn() {
               "btn i-ph:arrow-counter-clockwise-duotone text-xl text-green-600 dark:text-green-400",
               (isFetchingSources || semanticQuery.isFetching) && "animate-spin i-ph:circle-dashed-duotone",
             )}
-            title="刷新健康管理主题"
+            title="刷新健宁热点选题"
             onClick={handleRefresh}
           />
         </div>
@@ -227,53 +239,72 @@ export function HealthColumn() {
 
       <div className="rounded-2xl bg-green-500/12 p-4 dark:bg-green-500/15">
         <div className="rounded-2xl bg-base bg-op-75! p-3">
-          {isFetchingSources && !items.length && (
-            <div className="py-12 text-center text-sm op-60">正在深度扫描健康管理热点...</div>
+          {isFetchingSources && (
+            <div className="py-12 text-center text-sm op-60">正在扫描全网热点...</div>
           )}
 
-          {!isFetchingSources && semanticQuery.isFetching && !items.length && (
-            <div className="py-12 text-center text-sm op-60">深度扫描完成，正在用 {healthTopic.aiLabel} 筛选...</div>
+          {!isFetchingSources && semanticQuery.isFetching && (
+            <div className="py-12 text-center text-sm op-60">热点扫描完成，正在用 {healthTopic.aiLabel} 提炼健宁选题...</div>
           )}
 
-          {!isFetchingSources && !semanticQuery.isFetching && !items.length && !hasError && (
+          {aiUnavailable && (
             <div className="py-12 text-center">
-              <p className="font-medium">当前未筛到明显的健康管理内容</p>
-              <p className="mt-2 text-sm op-60">每个来源已最多扫描 {healthTopic.sourceLimit} 条；AI 不可用时会自动回退标题关键词筛选。</p>
+              <p className="font-medium">热点选题 AI 暂不可用</p>
+              <p className="mt-2 text-sm op-60">本页不会用关键词结果代替 AI 选题，以免无关热点影响判断。请稍后刷新。</p>
             </div>
           )}
 
-          {hasError && !items.length && (
+          {!isFetchingSources && !semanticQuery.isFetching && semanticQuery.data?.enabled && !items.length && (
+            <div className="py-12 text-center">
+              <p className="font-medium">本轮暂未筛到合适的健宁热点选题</p>
+              <p className="mt-2 text-sm op-60">可以稍后刷新，等待各平台出现新的热点。</p>
+            </div>
+          )}
+
+          {hasSourceError && !semanticQuery.isFetching && !items.length && (
             <div className="py-12 text-center text-sm op-60">信息源暂时获取失败，请稍后刷新。</div>
           )}
 
-          {!!items.length && (
-            <ol className="flex flex-col gap-1">
+          {!isFetchingSources && !semanticQuery.isFetching && !!items.length && (
+            <ol className="flex flex-col gap-2">
               {items.map((item, index) => (
                 <li key={item.key}>
                   <a
                     href={item.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex gap-3 rounded-lg px-2 py-2 transition-all hover:bg-neutral-400/10 visited:text-neutral-400"
+                    className="group flex gap-3 rounded-xl px-2 py-3 transition-all hover:bg-neutral-400/10 visited:text-neutral-400"
                   >
                     <span className="mt-0.5 min-w-7 h-7 flex items-center justify-center rounded-md bg-green-500/10 text-sm font-medium text-green-700 dark:text-green-300">
                       {index + 1}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-base leading-6">{item.title}</span>
-                      <span className="mt-1 flex flex-wrap items-center gap-2 text-xs op-55">
+                      <span className="block text-base font-medium leading-6">{item.title}</span>
+                      <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs op-55">
                         <span>{item.sourceName}</span>
                         <span>原榜第 {item.sourceRank} 名</span>
-                        {item.aiScore !== undefined
-                          ? <>
-                              <span>{categoryNames[item.category ?? ""] ?? "健康"}</span>
-                              <span>AI 相关度 {item.aiScore}</span>
-                              {item.keywordMatched && <span>关键词召回</span>}
-                            </>
-                          : semanticQuery.isFetching
-                            ? <span>关键词预览（AI 筛选中）</span>
-                            : <span>标题关键词命中（AI 回退）</span>}
+                        {item.primaryLine && <span>主线：{healthTopicLines[item.primaryLine]}</span>}
+                        {!!item.auxiliaryLines?.length && (
+                          <span>辅助：{item.auxiliaryLines.map(line => healthTopicLines[line]).join("、")}</span>
+                        )}
+                        {!!item.triggers?.length && (
+                          <span>触发：{item.triggers.map(trigger => healthTopicTriggers[trigger]).join("、")}</span>
+                        )}
                       </span>
+
+                      {item.angle && (
+                        <span className="mt-2 block rounded-lg bg-green-500/8 px-3 py-2 text-sm leading-6">
+                          <span className="mr-2 text-xs font-medium op-55">建议切入</span>
+                          <span>{item.angle}</span>
+                        </span>
+                      )}
+
+                      {item.reason && (
+                        <span className="mt-2 block text-sm leading-6 op-70">
+                          <span className="mr-2 text-xs font-medium op-55">选题判断</span>
+                          <span>{item.reason}</span>
+                        </span>
+                      )}
                     </span>
                   </a>
                 </li>
