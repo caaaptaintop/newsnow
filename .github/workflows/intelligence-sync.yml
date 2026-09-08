@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '23 */6 * * *'
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'server/utils/intelligence-parser.ts'
+      - '.github/workflows/intelligence-sync.yml'
 
 permissions:
   contents: write
@@ -43,6 +49,53 @@ jobs:
           snapshot.setdefault('articles', [])
           snapshot.setdefault('states', [])
           snapshot.setdefault('seen', {})
+
+          # Remove already-persisted mojibake before doing any refresh. These
+          # rows cannot be repaired only at display time because their AI
+          # summaries/categories may also have been generated from corrupted
+          # source text. Clear the whole recent seen set for affected sources so
+          # they are fetched and semantically classified again with the fixed
+          # decoder.
+          suspicious_chars = set('鍏鐨鍚涓缁鏂寤璁鏀鍩骞浣浠鍙鍦鎴垮眿锛銆鈥绉瀹璇闃鏃瀛鍙戞湁鏍煎叕鍛婃剰瑙佹爣鍑嗘湇鍔￠」')
+
+          def looks_garbled(value):
+              if not isinstance(value, str):
+                  return False
+              compact = ''.join(value.split())
+              if not compact:
+                  return False
+              if '\ufffd' in compact:
+                  return True
+              suspicious = sum(1 for ch in compact if ch in suspicious_chars)
+              return suspicious >= 3 and suspicious / max(1, len(compact)) >= 0.08
+
+          corrupt_sources = set()
+          clean_articles = []
+          removed = []
+          for article in snapshot['articles']:
+              title = article.get('title') or ''
+              if looks_garbled(title):
+                  source_id = article.get('sourceId')
+                  if source_id:
+                      corrupt_sources.add(source_id)
+                  removed.append({'sourceId': source_id, 'key': article.get('key'), 'title': title[:100]})
+                  continue
+              publisher = article.get('publisher')
+              if looks_garbled(publisher):
+                  article.pop('publisher', None)
+              for attachment in article.get('attachments') or []:
+                  if looks_garbled(attachment.get('title')):
+                      attachment['title'] = '原文附件'
+              clean_articles.append(article)
+          snapshot['articles'] = clean_articles
+          for source_id in corrupt_sources:
+              snapshot['seen'][source_id] = []
+          if removed:
+              print(json.dumps({
+                  'mojibakeRemoved': len(removed),
+                  'sourcesReset': sorted(corrupt_sources),
+                  'examples': removed[:8],
+              }, ensure_ascii=False), flush=True)
 
           def call(url, body=None):
               data = None if body is None else json.dumps(body, ensure_ascii=False).encode('utf-8')
@@ -107,7 +160,7 @@ jobs:
                   good += 1
               for article in articles:
                   key = article.get('key')
-                  if key:
+                  if key and not looks_garbled(article.get('title') or ''):
                       article_by_key[key] = article
               merged_seen = {item['key']: item for item in retained_seen}
               checked_at = int(state.get('checkedAt') or now)
@@ -128,7 +181,7 @@ jobs:
           limits = {'building': 2500, 'ai': 1200, 'finance': 1200}
           pruned_articles = []
           for topic, limit in limits.items():
-              rows = [item for item in article_by_key.values() if item.get('topic') == topic]
+              rows = [item for item in article_by_key.values() if item.get('topic') == topic and not looks_garbled(item.get('title') or '')]
               rows.sort(key=lambda item: (int(item.get('publishedAt') or 0), int(item.get('collectedAt') or 0)), reverse=True)
               pruned_articles.extend(rows[:limit])
 
