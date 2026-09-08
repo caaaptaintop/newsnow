@@ -1,0 +1,116 @@
+name: Client runtime smoke
+
+on:
+  workflow_run:
+    workflows: [Build and deploy Cloudflare Pages]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-runtime-smoke
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify deployed SPA in real Chrome
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::No Chrome/Chromium binary found on runner"
+            exit 1
+          fi
+          echo "Using browser: $CHROME"
+          PROFILE="$(mktemp -d)"
+          "$CHROME" \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --remote-debugging-port=9222 \
+            --user-data-dir="$PROFILE" \
+            about:blank >/tmp/client-smoke-chrome.log 2>&1 &
+          CHROME_PID=$!
+          trap 'kill "$CHROME_PID" 2>/dev/null || true; cat /tmp/client-smoke-chrome.log || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9222/json/version >/tmp/cdp-version.json 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          test -s /tmp/cdp-version.json || (echo "::error::Chrome DevTools endpoint did not start" && exit 1)
+
+          node <<'NODE'
+          const url = `https://news.capx-ai.com/?client_smoke=${Date.now()}`
+          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+          const targetResponse = await fetch(`http://127.0.0.1:9222/json/new?${encodeURIComponent(url)}`, { method: 'PUT' })
+          if (!targetResponse.ok) throw new Error(`Cannot create Chrome target: HTTP ${targetResponse.status}`)
+          const target = await targetResponse.json()
+          const ws = new WebSocket(target.webSocketDebuggerUrl)
+          let seq = 0
+          const pending = new Map()
+          const exceptions = []
+          const consoleRows = []
+          await new Promise((resolve, reject) => {
+            ws.addEventListener('open', resolve, { once: true })
+            ws.addEventListener('error', reject, { once: true })
+          })
+          ws.addEventListener('message', event => {
+            const message = JSON.parse(String(event.data))
+            if (message.id && pending.has(message.id)) {
+              const { resolve, reject } = pending.get(message.id)
+              pending.delete(message.id)
+              if (message.error) reject(new Error(JSON.stringify(message.error)))
+              else resolve(message.result)
+              return
+            }
+            if (message.method === 'Runtime.exceptionThrown') {
+              const d = message.params?.exceptionDetails
+              exceptions.push(d?.exception?.description || d?.text || JSON.stringify(d))
+            }
+            if (message.method === 'Runtime.consoleAPICalled') {
+              const args = (message.params?.args || []).map(arg => arg.value ?? arg.description ?? '').join(' ')
+              consoleRows.push(`${message.params?.type || 'console'}: ${args}`)
+            }
+          })
+          function send(method, params = {}) {
+            const id = ++seq
+            return new Promise((resolve, reject) => {
+              pending.set(id, { resolve, reject })
+              ws.send(JSON.stringify({ id, method, params }))
+              setTimeout(() => {
+                if (pending.delete(id)) reject(new Error(`CDP timeout: ${method}`))
+              }, 15000)
+            })
+          }
+          await send('Runtime.enable')
+          await send('Page.enable')
+          await send('Network.enable')
+          await send('Page.navigate', { url })
+          await sleep(10000)
+          const evaluated = await send('Runtime.evaluate', {
+            expression: `({text: document.body?.innerText || '', html: document.documentElement?.outerHTML || '', title: document.title, href: location.href})`,
+            returnByValue: true,
+          })
+          const page = evaluated?.result?.value || {}
+          console.log('PAGE_TITLE:', page.title)
+          console.log('PAGE_URL:', page.href)
+          console.log('PAGE_TEXT_START:', String(page.text || '').slice(0, 3000))
+          if (consoleRows.length) console.log('BROWSER_CONSOLE:\n' + consoleRows.join('\n').slice(0, 12000))
+          if (exceptions.length) console.log('BROWSER_EXCEPTIONS:\n' + exceptions.join('\n---\n').slice(0, 20000))
+          const text = String(page.text || '')
+          const ok = text.includes('个人信息情报站') && !text.includes('Something went wrong')
+          ws.close()
+          if (!ok) {
+            console.error('Client runtime smoke failed: intelligence workspace did not mount successfully')
+            process.exit(1)
+          }
+          console.log('Client runtime smoke OK')
+          NODE
