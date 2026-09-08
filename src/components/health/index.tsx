@@ -42,6 +42,14 @@ interface SemanticResponse {
   error?: string
 }
 
+interface StoredSemanticSnapshot {
+  savedAt: number
+  data: SemanticResponse
+}
+
+const topicSnapshotVersion = "v1"
+const topicSnapshotMaxAge = 1000 * 60 * 60 * 24
+
 function normalizeTitle(title: string) {
   return title.toLowerCase().replace(/[\s，。！？、,.!?：:；;“”"'‘’（）()【】\[\]-]/g, "")
 }
@@ -62,6 +70,48 @@ function candidateSignature(items: TopicItem[]) {
     }
   }
   return (hash >>> 0).toString(36)
+}
+
+function semanticSnapshotKey(signature: string) {
+  return `jianing-hot-topic:${topicSnapshotVersion}:${healthTopic.aiModel}:${signature}`
+}
+
+function readSemanticSnapshot(signature: string): SemanticResponse | undefined {
+  if (typeof window === "undefined") return
+
+  try {
+    const key = semanticSnapshotKey(signature)
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return
+
+    const stored = JSON.parse(raw) as StoredSemanticSnapshot
+    if (!stored?.savedAt || Date.now() - stored.savedAt > topicSnapshotMaxAge) {
+      window.localStorage.removeItem(key)
+      return
+    }
+
+    if (stored.data?.enabled === true
+      && stored.data.model === healthTopic.aiModel
+      && Array.isArray(stored.data.matches)) {
+      return stored.data
+    }
+  } catch {
+    // localStorage 被禁用或旧数据损坏时，直接回到在线 AI 分析。
+  }
+}
+
+function writeSemanticSnapshot(signature: string, data: SemanticResponse) {
+  if (typeof window === "undefined" || data.enabled !== true) return
+
+  try {
+    const stored: StoredSemanticSnapshot = {
+      savedAt: Date.now(),
+      data,
+    }
+    window.localStorage.setItem(semanticSnapshotKey(signature), JSON.stringify(stored))
+  } catch {
+    // 快照只是稳定体验的优化，写入失败不影响正常选题。
+  }
 }
 
 async function fetchSource(id: SourceID): Promise<SourceResponse> {
@@ -124,10 +174,15 @@ export function HealthColumn() {
   const hasSourceError = queries.every(query => query.isError)
 
   const semanticQuery = useQuery({
-    queryKey: ["jianing-hot-topic", healthTopic.aiModel, signature],
+    queryKey: ["jianing-hot-topic", topicSnapshotVersion, healthTopic.aiModel, signature],
     enabled: !isFetchingSources && aiCandidates.length > 0,
     queryFn: async () => {
-      return await myFetch<SemanticResponse>("/topics/health/classify", {
+      // 托管大模型即使 temperature=0 仍可能在措辞上有波动。
+      // 因此同一批热点在当前浏览器直接复用第一次分析结果；榜单内容变化后 signature 才变化。
+      const stored = readSemanticSnapshot(signature)
+      if (stored) return stored
+
+      const data = await myFetch<SemanticResponse>("/topics/health/classify", {
         method: "POST",
         timeout: 90_000,
         body: {
@@ -139,6 +194,9 @@ export function HealthColumn() {
           })),
         },
       })
+
+      writeSemanticSnapshot(signature, data)
+      return data
     },
     staleTime: 1000 * 60 * 10,
     retry: false,
@@ -176,8 +234,8 @@ export function HealthColumn() {
   }, [candidatePool, semanticQuery.data])
 
   const handleRefresh = async () => {
-    // 只刷新热榜源；如果候选集合没有变化，就继续复用当前 AI 结果。
-    // 候选真的变化后，signature 会自动变化并触发新的选题分析。
+    // 刷新只更新各平台热榜。候选没有变化时保留当前分析；
+    // 候选发生变化时 signature 自动变化，再生成一份新的选题快照。
     await Promise.all(queries.map(query => query.refetch()))
   }
 
@@ -207,7 +265,7 @@ export function HealthColumn() {
             </div>
             <p className="mt-2 text-sm op-70">{healthTopic.description}</p>
             <p className="mt-1 text-xs op-55">
-              每个平台只取前 {healthTopic.sourceLimit} 条热点；去重后由 {healthTopic.aiLabel} 按健宁历史高表现选题逻辑筛选并排序。同一批热点固定复用同一份分析结果，只有榜单内容变化后才重新分析。{aiStatus}。
+              每个平台只取前 {healthTopic.sourceLimit} 条热点；去重后由 {healthTopic.aiLabel} 按健宁历史高表现选题逻辑筛选并排序。同一批热点在当前浏览器固定复用同一份分析结果，只有榜单内容变化后才重新分析。{aiStatus}。
             </p>
           </div>
           <button
