@@ -3,14 +3,14 @@ import { configuredAI } from "../server/utils/ai-provider"
 import { intelligenceClassify } from "../server/utils/intelligence-ai"
 
 const event = (env: Record<string, unknown>) => ({ context: { cloudflare: { env } } })
-const proma = () => configuredAI(event({ INTELLIGENCE_AI_PROVIDER: "proma", PROMA_API_KEY: "test-only-key" }))
+const proma = () => configuredAI(event({ INTELLIGENCE_AI_PROVIDER: "proma", PROMA_API_KEY: "test-only-key", PROMA_API_PROTOCOL: "responses", PROMA_MODEL: "gpt-5.6-luna" }))
 const params = { messages: [{ role: "user", content: "测试" }], max_completion_tokens: 3000 }
 afterEach(() => vi.unstubAllGlobals())
 
 describe("AI provider", () => {
   it("keeps Workers AI unless explicitly switched", async () => {
     const run = vi.fn().mockResolvedValue({ response: "ok" })
-    const ai = configuredAI(event({ AI: { run }, PROMA_API_KEY: "test-only-key" }))
+    const ai = configuredAI(event({ AI: { run }, PROMA_API_KEY: "test-only-key", PROMA_API_PROTOCOL: "responses", PROMA_MODEL: "gpt-5.6-luna" }))
     expect(ai.provider).toBe("cloudflare")
     await ai.run!(ai.model, params)
     expect(run).toHaveBeenCalledWith(ai.model, params)
@@ -37,7 +37,28 @@ describe("AI provider", () => {
     expect(body.messages).toBeUndefined()
     expect(body.store).toBe(false)
     expect(body.reasoning.effort).toBe("low")
-    expect(request.redirect).toBe("error")
+    expect(request.redirect).toBe("manual")
+  })
+  it("uses Chat Completions for GLM with no GPT-only parameters", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: '{"items":[]}' } }] })))
+    vi.stubGlobal("fetch", fetcher)
+    const ai = configuredAI(event({ INTELLIGENCE_AI_PROVIDER: "proma", PROMA_API_KEY: "test-only-key" }))
+    await ai.run!(ai.model, params)
+    const [url, request] = fetcher.mock.calls[0]
+    expect(String(url)).toBe("https://api.proma.cool/v1/chat/completions")
+    const body = JSON.parse(request.body)
+    expect(body.model).toBe("glm-5.3-flash")
+    expect(body.messages).toEqual(params.messages)
+    expect(body.max_tokens).toBe(3000)
+    expect(body.input).toBeUndefined()
+    expect(body.reasoning).toBeUndefined()
+  })
+  it("rejects redirects without forwarding the credential", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { Location: "https://other.example" } }))
+    vi.stubGlobal("fetch", fetcher)
+    await expect(proma().run!("ignored", params)).rejects.toThrow("HTTP 302")
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls[0][1].redirect).toBe("manual")
   })
   it("does not accept truncated output", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "incomplete", output: [] }))))
