@@ -110,3 +110,17 @@ describe("AI output validation", () => {
     expect(() => intelligenceParseAI({ response: '{"other":[]}' })).toThrow()
   })
 })
+
+it("parses Zhengzhou jhtml articles without treating the index as an article", () => {
+  const source = { id: "official-zhengzhou", home: "https://zzjsj.zhengzhou.gov.cn/" } as any
+  const items = intelligenceParseList('<a href="/tzgg/index.jhtml">住房城乡建设通知公告栏目</a><a href="/tzgg/10229072.jhtml">关于推进智能建造试点工作的通知</a>', source, { name: "通知公告", url: source.home })
+  expect(items).toHaveLength(1)
+  expect(items[0].url).toBe("https://zzjsj.zhengzhou.gov.cn/tzgg/10229072.jhtml")
+})
+
+it("keeps Liaoning date-ID article indexes while excluding directory indexes", () => {
+  const source = { home: "https://zjt.ln.gov.cn/" } as any
+  const items = intelligenceParseList('<a href="/zjt/tfwj/gfxwj/index.shtml">住房城乡建设规范性文件</a><a href="/zjt/tfwj/lzj/2026070710405193851/index.shtml">关于印发辽宁省住房品质提升行动方案的通知</a>', source, { name: "规范性文件", url: source.home })
+  expect(items).toHaveLength(1)
+  expect(items[0].url).toContain("2026070710405193851")
+})

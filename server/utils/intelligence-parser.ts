@@ -122,8 +122,9 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const url = intelligenceAllowedUrl(a.attr("href") ?? "", source, column.url)
     if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
     const path = new URL(url).pathname
-    if (/\.(pdf|docx?|xlsx?|zip|jpe?g|png|gif)$/i.test(path) || /(?:^|\/)(?:index(?:_\d+)?|list)\.s?html?$/i.test(path)) return
-    if (!/\.(?:s?html?|htm)$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
+    const datedArticleIndex = /\/\d{14,22}\/index\.shtml$/i.test(path)
+    if (/\.(pdf|docx?|xlsx?|zip|jpe?g|png|gif)$/i.test(path) || (!datedArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
+    if (!/\.(?:[sj]?html?|htm)$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
     if (url === column.url || url === source.home) return
     let context = a.closest("li,tr").text() || a.parent().text()
     if (context.length > 800) context = ""

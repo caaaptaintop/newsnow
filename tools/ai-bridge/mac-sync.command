@@ -17,9 +17,7 @@ fi
 git pull --ff-only origin main
 codex login status
 print '开始用 ChatGPT 订阅处理一批新信息。请保持 Mac 唤醒和联网。'
-for source in official-shanghai official-shenzhen official-jiangsu newsnow-ai-aihot; do
-  node_modules/.bin/tsx --tsconfig tsconfig.node.json tools/ai-bridge/mac-batch.ts --source "$source" --limit 3
-done
+node_modules/.bin/tsx --tsconfig tsconfig.node.json tools/ai-bridge/mac-batch.ts --source all --limit 12
 if [[ ! -f .data/mac-batch/result.json ]]; then
   print '没有待发布的新结果。'
   exit 0

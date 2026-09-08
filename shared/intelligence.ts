@@ -68,6 +68,8 @@ export interface IntelligenceSourceState {
   columns?: { name: string, url: string }[]
 }
 export interface IntelligenceFeed {
+  pipeline?: "mac"
+  updatedAt?: number
   version: string
   model: string
   aiEnabled: boolean

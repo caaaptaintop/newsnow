@@ -84,14 +84,16 @@ function mergeStates(sources: IntelligenceSource[], runtime: IntelligenceSourceS
 export async function intelligenceFeed(event: any, topic: IntelligenceTopic): Promise<IntelligenceFeed> {
   const store = await getIntelligenceStore()
   const sources = intelligenceSources.filter(s => s.topic === topic && s.enabled)
-  const runtimeStates = await Promise.all(sources.map(async s => await store.get<IntelligenceSourceState>(`source:${s.id}`))).then(values => values.filter((value): value is IntelligenceSourceState => !!value))
+  const runtimeStates = intelligenceSnapshot.pipeline === "mac" ? [] : await Promise.all(sources.map(async s => await store.get<IntelligenceSourceState>(`source:${s.id}`))).then(values => values.filter((value): value is IntelligenceSourceState => !!value))
   const runtimeArticles = await store.articles(topic)
   const snapshotArticles = intelligenceSnapshot.articles.filter(article => article.topic === topic)
   const mergedArticles = intelligenceDedupe([...runtimeArticles, ...snapshotArticles])
   return {
     version: intelligenceVersion,
-    model: intelligenceAI(event).model,
-    aiEnabled: !!intelligenceAI(event)?.run,
+    pipeline: intelligenceSnapshot.pipeline,
+    updatedAt: intelligenceSnapshot.generatedAt,
+    model: intelligenceSnapshot.pipeline === "mac" ? "gpt-5.6-luna" : intelligenceAI(event).model,
+    aiEnabled: intelligenceSnapshot.pipeline === "mac" || !!intelligenceAI(event)?.run,
     persistent: true,
     sources,
     states: mergeStates(sources, runtimeStates),

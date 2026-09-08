@@ -41,6 +41,11 @@ jobs:
 
           base = 'https://news.capx-ai.com/api/intelligence'
           now = int(time.time() * 1000)
+          # Mac is the sole classifier/publisher in subscription mode.
+          live = json.load(urllib.request.urlopen(base + '?topic=building', timeout=30))
+          if live.get('pipeline') == 'mac':
+              print('Mac background pipeline active; no cloud AI refresh or snapshot write.')
+              raise SystemExit(0)
           seven_days = 7 * 86400000
           data_path = Path('data/intelligence-snapshot.json')
           snapshot = json.loads(data_path.read_text(encoding='utf-8')) if data_path.exists() else {

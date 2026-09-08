@@ -1,7 +1,9 @@
+import { healthTopic } from "./topics"
+import { sources } from "./sources"
 import type { IntelligenceSource } from "./intelligence"
 
 /** Official directory seeds. A configured entry is NOT a successful scrape.
- * Province directory verified against Jiangsu/Hunan housing department link directories, 2026-09-08.
+ * Seed directory; current reachability and parser verification are recorded in docs/source-verification.md.
  * Columns without an explicit URL are discovered from the institution's own navigation.
  */
 const provincial: [string, string, string, string][] = [
@@ -44,11 +46,11 @@ const cities: [string, string, string, string, string][] = [
   ["harbin", "黑龙江", "哈尔滨", "哈尔滨市住房和城乡建设局（政府信息公开）", "https://www.harbin.gov.cn/haerbin/c107373/bmzfxxgk_zn.shtml"],
   ["nanjing", "江苏", "南京", "南京市城乡建设委员会", "https://sjw.nanjing.gov.cn/"],
   ["suzhou", "江苏", "苏州", "苏州市住房和城乡建设局", "https://zfcjj.suzhou.gov.cn/"],
-  ["wenzhou", "浙江", "温州", "温州市住房和城乡建设局", "https://wzsjw.wenzhou.gov.cn/"],
-  ["jiaxing", "浙江", "嘉兴", "嘉兴市住房和城乡建设局", "https://jxbuild.jiaxing.gov.cn/"],
-  ["taizhou", "浙江", "台州", "台州市住房和城乡建设局", "https://zjj.zjtz.gov.cn/"],
+  ["wenzhou", "浙江", "温州", "温州市住房和城乡建设局", "https://zjj.wenzhou.gov.cn/"],
+  ["jiaxing", "浙江", "嘉兴", "嘉兴市住房和城乡建设局", "https://jsj.jiaxing.gov.cn/"],
+  ["taizhou", "浙江", "台州", "台州市住房和城乡建设局", "https://jsj.zjtz.gov.cn/"],
   ["hefei", "安徽", "合肥", "合肥市城乡建设局", "https://cxjsj.hefei.gov.cn/"],
-  ["xiamen", "福建", "厦门", "厦门市住房和建设局", "https://js.xm.gov.cn/"],
+  ["xiamen", "福建", "厦门", "厦门市住房和建设局", "https://szjj.xm.gov.cn/"],
   ["qingdao", "山东", "青岛", "青岛市住房和城乡建设局", "https://sjw.qingdao.gov.cn/"],
   ["zhengzhou", "河南", "郑州", "郑州市城乡建设局", "https://zzjsj.zhengzhou.gov.cn/"],
   ["wuhan", "湖北", "武汉", "武汉市自然资源和城乡建设局", "https://zrzyhcxjs.wuhan.gov.cn/"],
@@ -62,6 +64,12 @@ const cities: [string, string, string, string, string][] = [
   ["urumqi", "新疆", "乌鲁木齐", "乌鲁木齐市住房和城乡建设局（官方门户）", "https://www.wlmq.gov.cn/wlmqs/c119234/bm_com_list.shtml"],
 ]
 const explicitColumns: Record<string, { name: string, url: string }[]> = {
+  liaoning: [
+    { name: "规范性文件", url: "https://zjt.ln.gov.cn/zjt/tfwj/gfxwj/index.shtml" },
+    { name: "厅发通知", url: "https://zjt.ln.gov.cn/zjt/tftz/index.shtml" },
+    { name: "公示公告", url: "https://zjt.ln.gov.cn/zjt/gsgg/index.shtml" },
+    { name: "政策解读", url: "https://zjt.ln.gov.cn/zjt/zcjd/index.shtml" },
+  ],
   shanghai: [{ name: "主动公开文件", url: "https://zjw.sh.gov.cn/zdgk/" }],
   jiangsu: [{ name: "政府信息公开", url: "https://jsszfhcxjst.jiangsu.gov.cn/module/xxgk/subjectinfo.jsp?area=014000052" }],
   shenzhen: [{ name: "通知公告", url: "https://zjj.sz.gov.cn/xxgk/tzgg/" }],
@@ -93,4 +101,8 @@ export const mediaIntelligenceSources: IntelligenceSource[] = [
   id: `newsnow-${topic}-${id}`, newsnowId: id, name, home, group: "NewsNow", level: "媒体", region: "", city: "",
   priority: 50, topic: topic as "ai" | "finance", enabled: true,
 }))
-export const intelligenceSources = [...officialIntelligenceSources, ...mediaIntelligenceSources]
+export const healthIntelligenceSources: IntelligenceSource[] = (healthTopic.sources as readonly string[]).flatMap((id) => {
+  const source = (sources as Record<string, { name: string, home?: string }>)[id]
+  return source ? [{ id: `newsnow-health-${id}`, newsnowId: id, name: source.name, home: source.home ?? "", group: "NewsNow", level: "平台", region: "", city: "", priority: 50, topic: "health" as const, enabled: true }] : []
+})
+export const intelligenceSources = [...officialIntelligenceSources, ...mediaIntelligenceSources, ...healthIntelligenceSources]
