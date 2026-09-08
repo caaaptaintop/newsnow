@@ -71,7 +71,7 @@ export function useHealthIntelligence(enabled: boolean) {
         }
       } catch { /* Storage is optional; never replace the editorial classifier with rules. */ }
       const data = await myFetch<SemanticResponse>("/topics/health/classify", {
-        method: "POST", timeout: activeModel.startsWith("glm-5.3") ? 120000 : 90000,
+        method: "POST", timeout: 90000,
         body: { items: candidates.map(item => ({ key: item.key, title: item.title, source: item.sourceName, rank: item.sourceRank })) },
       })
       if (data.enabled) try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data })) } catch { /* Optional cache. */ }

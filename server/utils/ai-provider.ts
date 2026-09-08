@@ -39,13 +39,13 @@ export function configuredAI(event: any) {
       const body = protocol === "responses"
         ? { model, input: params.messages, reasoning: { effort: "low" }, max_output_tokens: params.max_completion_tokens, stream: false, store: false }
         : protocol === "messages"
-          ? { model, system: params.messages.filter((m: any) => m.role === "system").map((m: any) => m.content).join("\n"), messages: params.messages.filter((m: any) => m.role !== "system"), max_tokens: params.max_completion_tokens, stream: false, temperature: 0 }
+          ? { model, system: params.messages.filter((m: any) => m.role === "system").map((m: any) => m.content).join("\n"), messages: params.messages.filter((m: any) => m.role !== "system"), max_tokens: params.max_completion_tokens, stream: false, temperature: 0, ...(isGLM53 ? { thinking: { type: "adaptive" }, output_config: { effort: "low" } } : {}) }
           : { model, messages: params.messages, max_tokens: params.max_completion_tokens, stream: false, temperature: 0, ...(isGLM53 ? { reasoning_effort: "low" } : {}) }
       let response: Response
       try {
         response = await fetch(endpoint!, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}`, ...(protocol === "messages" ? { "anthropic-version": "2023-06-01" } : {}) },
-          body: JSON.stringify(body), signal: AbortSignal.timeout(isGLM53 ? 90000 : 25000), redirect: "manual",
+          body: JSON.stringify(body), signal: AbortSignal.timeout(isGLM53 ? 60000 : 25000), redirect: "manual",
         })
       } catch { throw new Error("Proma 请求超时或连接失败，本批未完成") }
       // Do not expose provider response bodies: they may echo input or credentials.
