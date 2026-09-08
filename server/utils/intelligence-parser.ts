@@ -11,6 +11,43 @@ export interface OfficialCandidate {
   documentNo?: string
   attachments: { title: string, url: string }[]
 }
+
+const mojibakeTokens = /[鍏鐨鍚涓缁鏂寤璁鏀鍩骞浣浠鍙鍦鎴垮眿锛銆鈥绉瀹璇闃鏃瀛鍙戞湁鏍煎叕鍛婃剰瑙佹爣鍑嗘湇鍔￠」]/g
+
+/**
+ * Detect the characteristic output produced when UTF-8 Chinese bytes are
+ * decoded as GBK/GB18030. One rare character is not enough to reject text;
+ * the guard only fires for replacement characters or a dense suspicious run.
+ */
+export function intelligenceLooksGarbled(value: string) {
+  const compact = value.replace(/\s+/g, "")
+  if (!compact) return false
+  if (compact.includes("�")) return true
+  const suspicious = compact.match(mojibakeTokens)?.length ?? 0
+  const length = [...compact].length
+  return suspicious >= 3 && suspicious / Math.max(1, length) >= 0.08
+}
+
+function replacementCount(value: string) {
+  return value.match(/�/g)?.length ?? 0
+}
+
+function decodeHtmlBytes(bytes: Uint8Array, contentType: string) {
+  // A number of government CMSs publish stale or misleading GBK declarations
+  // while the response body is actually UTF-8. Trust the bytes first: valid
+  // UTF-8 must win even when a header/meta tag mentions GBK/GB2312.
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+  } catch {
+    const prefix = new TextDecoder("latin1").decode(bytes.slice(0, 8192))
+    const declaredGb = /(?:charset\s*=\s*["']?\s*(?:gb2312|gbk|gb18030)|(?:gb2312|gbk|gb18030))/i.test(`${contentType} ${prefix}`)
+    const looseUtf8 = new TextDecoder("utf-8").decode(bytes)
+    const gb18030 = new TextDecoder("gb18030").decode(bytes)
+    if (declaredGb) return gb18030
+    return replacementCount(gb18030) < replacementCount(looseUtf8) ? gb18030 : looseUtf8
+  }
+}
+
 export function intelligenceAllowedUrl(value: string, source: IntelligenceSource, base = source.home) {
   try {
     const url = new URL(value, base)
@@ -54,9 +91,7 @@ export async function intelligenceFetchHtml(url: string, source: IntelligenceSou
     const bytes = new Uint8Array(length)
     let offset = 0
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-    const prefix = new TextDecoder("latin1").decode(bytes.slice(0, 8192))
-    const encoding = /(?:gb2312|gbk|gb18030)/i.test(type + prefix) ? "gb18030" : "utf-8"
-    const html = new TextDecoder(encoding).decode(bytes)
+    const html = decodeHtmlBytes(bytes, type)
     if (/验证码|安全验证|访问过于频繁|checking your browser|just a moment/i.test(html.slice(0, 12000)) && html.length < 30000) throw new Error("官网要求访问验证，未绕过验证")
     return { html, url: current }
   }
@@ -85,7 +120,7 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const a = $(el)
     const title = (a.attr("title") || a.text()).replace(/\s+/g, " ").trim()
     const url = intelligenceAllowedUrl(a.attr("href") ?? "", source, column.url)
-    if (!url || title.length < 9 || title.length > 240 || /^(首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
+    if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
     const path = new URL(url).pathname
     if (/\.(pdf|docx?|xlsx?|zip|jpe?g|png|gif)$/i.test(path) || /(?:^|\/)(?:index(?:_\d+)?|list)\.s?html?$/i.test(path)) return
     if (!/\.(?:s?html?|htm)$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
@@ -124,16 +159,20 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   // Do not treat the entire site navigation as article text when a template is unknown.
   const attachments = (articleRoot ?? $("body")).find("a[href]").toArray().flatMap(el => {
     const url = intelligenceAllowedUrl($(el).attr("href") ?? "", source, candidate.url)
-    return url && /\.(pdf|docx?|xlsx?|zip)(?:\?|$)/i.test(url) ? [{ title: $(el).text().trim().slice(0, 160) || "原文附件", url }] : []
+    if (!url || !/\.(pdf|docx?|xlsx?|zip)(?:\?|$)/i.test(url)) return []
+    const rawTitle = $(el).text().trim().slice(0, 160)
+    return [{ title: rawTitle && !intelligenceLooksGarbled(rawTitle) ? rawTitle : "原文附件", url }]
   }).slice(0, 16)
   const visible = $("body").text().replace(/\s+/g, " ").slice(0, 5000)
   const dateText = meta(["PubDate", "pubdate", "publishdate", "PublishDate", "article:published_time", "DC.date.issued"])
     || visible.match(/(?:发布时间|发布日期|发布日|时间)\s*[:：]?\s*((?:19|20)\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2})/)?.[1]
   const documentNo = text.match(/[\u4E00-\u9FFF]{1,14}[〔\[]\d{4}[〕\]]\s*\d{1,6}\s*号/)?.[0]
+  const publisher = meta(["ContentSource", "source", "Source"]).slice(0, 100)
   return {
-    ...candidate, title: fullTitle.length >= 9 && fullTitle.length <= 240 ? fullTitle : candidate.title,
-    text: text || undefined, publishedAt: intelligenceDate(dateText) ?? candidate.publishedAt,
-    publisher: meta(["ContentSource", "source", "Source"]).slice(0, 100) || undefined,
+    ...candidate, title: fullTitle.length >= 9 && fullTitle.length <= 240 && !intelligenceLooksGarbled(fullTitle) ? fullTitle : candidate.title,
+    text: text && !intelligenceLooksGarbled(text.slice(0, 500)) ? text : undefined,
+    publishedAt: intelligenceDate(dateText) ?? candidate.publishedAt,
+    publisher: publisher && !intelligenceLooksGarbled(publisher) ? publisher : undefined,
     documentNo, attachments,
   }
 }
