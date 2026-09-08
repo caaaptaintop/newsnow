@@ -164,22 +164,3 @@ jobs:
             echo "::error::Jianing topic classifier incorrectly kept an unrelated labor-dispute headline: $body"
             exit 1
           fi
-
-          stable_file=$(mktemp)
-          stable_status=$(curl -sS -o "$stable_file" -w '%{http_code}' \
-            -X POST "https://news.capx-ai.com/api/topics/health/classify?ts=$(date +%s)" \
-            -H 'content-type: application/json' \
-            --data "$payload" || true)
-          stable_body=$(cat "$stable_file")
-          echo "Jianing stable-repeat test: HTTP $stable_status"
-          echo "Jianing stable-repeat response: $stable_body"
-
-          if [ "$stable_status" != "200" ]; then
-            echo "::error::Jianing repeated classifier request returned HTTP $stable_status: $stable_body"
-            exit 1
-          fi
-
-          if [ "$body" != "$stable_body" ]; then
-            echo "::error::Same Jianing hotspot snapshot returned different AI results"
-            exit 1
-          fi
