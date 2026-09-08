@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import process from "node:process"
 import { pathToFileURL } from "node:url"
 
-export const workerSources = ["official-shanghai", "official-shenzhen", "official-jiangsu", "newsnow-ai-aihot"]
+export const workerSources = ["all"]
 export const workerModel = "gpt-5.6-luna"
 export function shouldRun(status, now = Date.now()) {
   return !status?.retryAfter || now >= status.retryAfter
@@ -41,7 +41,7 @@ export function runWorker(root, run = command, now = Date.now()) {
     call("git", ["pull", "--ff-only", "origin", "main"])
     if (!/Logged in using ChatGPT/.test(call("codex", ["login", "status"]))) throw new Error("ChatGPT login required")
     for (const source of workerSources) {
-      call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/mac-batch.ts", "--source", source, "--limit", "3", "--model", workerModel])
+      call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/mac-batch.ts", "--source", source, "--limit", "12", "--model", workerModel], 1800000)
       status.completedSources.push(source)
       save()
     }

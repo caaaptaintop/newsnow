@@ -23,5 +23,15 @@ export function mergeBatch(snapshot: any, batch: any) {
     added.push(intelligenceMetadataOnly(article))
     existing.add(key)
   }
-  return { ...snapshot, generatedAt: added.length ? Date.now() : snapshot.generatedAt, articles: [...snapshot.articles, ...added] }
+  const states = new Map((snapshot.states ?? []).map((s: any) => [s.id, s]))
+  let changed = added.length > 0 || (batch.pipeline === "mac" && snapshot.pipeline !== "mac")
+  for (const state of batch.states ?? []) {
+    if (!intelligenceSources.some(s => s.id === state.id) || !["ok", "partial", "error"].includes(state.status) || !Number.isFinite(state.checkedAt)) throw new Error("Invalid source state")
+    const old: any = states.get(state.id)
+    if (!old || state.checkedAt > (old.checkedAt ?? 0)) {
+      states.set(state.id, state)
+      changed = true
+    }
+  }
+  return { ...snapshot, ...(batch.pipeline === "mac" ? { pipeline: "mac" } : {}), generatedAt: changed ? Date.now() : snapshot.generatedAt, states: [...states.values()], articles: [...snapshot.articles, ...added] }
 }

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runWorker, shouldRun, workerModel } from "./mac-worker.mjs"
 
-it("background worker uses Luna low and only publishes after all sources finish", () => {
+it("background worker uses Luna low and only publishes after the complete source registry is processed", () => {
   const root = mkdtempSync(join(tmpdir(), "newsnow-worker-test-"))
   const calls = []
   const run = (bin, args) => {
@@ -21,7 +21,9 @@ it("background worker uses Luna low and only publishes after all sources finish"
     assert.equal(result.model, "gpt-5.6-luna")
     assert.equal(result.reasoning, "low")
     const analyses = calls.filter(c => c.includes("tools/ai-bridge/mac-batch.ts"))
-    assert.equal(analyses.length, 4)
+    assert.equal(analyses.length, 1)
+    assert(analyses[0].includes("all"))
+    assert(analyses[0].includes("12"))
     assert(analyses.every(c => c.includes(workerModel)))
     assert(calls.findIndex(c => c[1] === "push") > calls.indexOf(analyses.at(-1)))
   } finally {

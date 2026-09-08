@@ -1,30 +1,35 @@
-# Mac 订阅批量更新
+# Mac 订阅批处理
 
-当前模式：Mac 登录后通过 LaunchAgent 自动检查新信息，每 15 分钟一轮，使用已有 ChatGPT 登录调用 Codex，结果通过现有仓库快照发布到 Cloudflare。网站原有实时 AI 配置保持不变。
+Mac 登录系统后由 `com.capx.newsnow.mac-worker` 自动执行，约每 15 分钟检查一轮；使用已登录的 ChatGPT 订阅、`gpt-5.6-luna`、`low`。运行期间保持唤醒，电脑离线或休眠时停止更新，网站继续显示已发布内容。
 
-## 使用
+## 当前处理范围
 
-无需手动启动。登录 macOS 后自动运行，每 15 分钟检查上海/深圳/江苏住建公开栏目及 AIHOT，每来源最多分析 3 条新候选，保存分类结果，再提交新增快照并触发现有 Cloudflare 部署。仅在处理期间阻止空闲睡眠，平时允许正常睡眠；睡眠、关机或未登录期间不执行。网站始终可以展示已发布结果。双击 `tools/ai-bridge/mac-sync.command` 可提前触发一轮，不会创建重复后台服务。
+后台从 `shared/official-sources.ts` 读取全部启用来源：建筑 54 个、AI 科技 4 个、财经 2 个、健宁 8 个。公开列表最多 5 个来源并发读取，模型请求顺序执行，每来源每轮最多分析 12 条新候选；未处理完的数量会显示在来源状态中。重复标题与链接不再分析。建筑使用原有召回条件，健宁完整复用原来的八条选题线及“事实桥梁”提示词。
 
-首次部署已复用本机 Codex 的 ChatGPT 登录；登录失效时在终端运行 `codex login` 并由本人完成授权。程序通过官方 CLI 使用登录状态，不读取或复制登录文件，不要求用户填写 OAuth 凭据。新设备需安装 Node.js 22+、Codex、Git、GitHub CLI 和项目依赖，并建立仓库推送权限。
+只保存公开标题、链接、日期、来源及 AI 分类摘要，分析证据标记为“仅依据标题”。不保存正文或 HTML，不下载附件，不读取或复制登录凭据。
 
-默认模型 `gpt-5.6-luna`、low 推理、只读运行，关闭 shell/web/apps/多代理工具；保留本机安全规则和 hook 配置。API 密钥环境变量不会传给分析子进程。订阅额度照常消耗，不自动重试、不自动换模型或付费 API。CLI 返回的 token 数用于核对调用量，不能换算为准确订阅剩余百分比。
+## 前端行为
 
-本机 `.data/mac-batch/result.json` 保存已完成结果与判断，避免重复分析；该目录不进入 Git。正文、HTML、附件不保存；目前仅按标题证据分类，摘要不等同于读完原文。已入库 URL/标题不因换模型重复分析。建筑候选复用网站原有关键词召回规则，最终分类仍交给 AI。
+四个主题都读取已发布结果，每分钟刷新列表；“读取最新结果”和“刷新状态”只读取结果。模型分析在后台进行，打开健宁页面不会触发旧的实时 AI 请求。页面展示最近发布时间以及各来源的真实采集状态。
 
-## 验证与故障处理
+快照包含 `pipeline: "mac"` 后，旧云端同步工作流停止触发 AI 和写入快照，旧实时刷新接口返回 409。AI 设置页保留的旧供应商配置不代表 Mac 后台模型。
 
-发布前校验栏目、来源、URL 哈希、版本和分类结果，只追加快照中尚不存在的文章，保留旧文章、来源状态和 seen 数据。失败不提交半批 AI 结果。发布写入仓库快照，网站合并展示；不宣称已额外导入 D1。
+## 状态与恢复
 
-源码有改动、当前分支不是 main、采集失败、登录失效、超时或推送冲突时停止，终端保留错误。先解决提示的错误再运行；不要删除本机结果文件来重试。意外断电后如发现 `.data/mac-batch/running.lock`，应先确认没有批次正在运行，再清理该锁。
+- 某个来源失败：保存具体原因，继续处理其他来源并发布成功内容；下轮重试。
+- 栏目不可读但首页有文章：保留首页结果并标为“部分完成”，不声称栏目已经完整覆盖。
+- 模型调用失败：本轮后续模型请求暂停，已有成功结果仍发布，未处理部分保留为“部分完成”。
+- 登录、网络检查、Git 发布失败：任务记录错误并进入一小时冷却；已有线上内容不清空。
+- 文件锁阻止重复运行，单轮最长 30 分钟；后台使用独立工作副本，避免干扰人工修改。
 
-若推送失败，本地提交仍然保留，解决网络或分支冲突后重推即可，不需要重新请求模型。完成提示中的 GitHub Actions 页面可以查看部署结果。当前实时刷新仍走原配置；批量入口与网站实时入口是两条独立通路。
+运行目录：`~/Library/Application Support/CapxNewsNow/repo`。
+状态文件：该目录下 `.data/mac-batch/worker-status.json` 和 `result.json`。
+日志：`~/Library/Application Support/CapxNewsNow/worker.log`。
 
-## 本机后台服务
+开发者手动检查单个来源：
 
-- LaunchAgent：`~/Library/LaunchAgents/com.capx.newsnow.mac-worker.plist`，RunAtLoad=true、StartInterval=900。
-- 独立工作目录：`~/Library/Application Support/CapxNewsNow/repo`，不会切换或改动人工开发用的工作目录。
-- 最近状态：该独立目录下 `.data/mac-batch/worker-status.json`；输出日志在上一级 `worker.log` 和 `worker-error.log`。
-- 登录/网络/模型/发布错误后冷却一小时；单轮不自动重试或切换付费模型。正常轮次只调用尚未处理的新内容。
-- 暂停：`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.capx.newsnow.mac-worker.plist`。恢复：`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.capx.newsnow.mac-worker.plist`。
-- Luna/low 首次实测 3 条约 23.1 秒，不能据此宣称已经显著提速；后台执行省去人工等待。
+```sh
+node_modules/.bin/tsx --tsconfig tsconfig.node.json tools/ai-bridge/mac-batch.ts --source official-shanghai --limit 12
+```
+
+全部来源用 `--source all`；也可用逗号分隔少量来源。读取和分析后，`apply-batch.ts` 同步数据及来源状态到两个仓库快照文件，通过现有 GitHub/Cloudflare 部署发布。即使没有新文章，新的失败或成功状态也会发布。
