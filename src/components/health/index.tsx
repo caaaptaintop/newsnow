@@ -47,7 +47,7 @@ interface StoredSemanticSnapshot {
   data: SemanticResponse
 }
 
-const topicSnapshotVersion = "v1"
+const topicSnapshotVersion = "v2"
 const topicSnapshotMaxAge = 1000 * 60 * 60 * 24
 
 function normalizeTitle(title: string) {
@@ -214,7 +214,7 @@ export function HealthColumn() {
         const ai = aiMatches.get(item.key)
         if (!ai) return null
 
-        // 模型内部选题判断是主排序信号，原热榜位置只作为较轻的热度信号。
+        // 模型内部判断只作为隐藏排序信号，原热榜位置作为较轻的热度信号；前端不显示分值。
         const finalScore = ai.score * 0.88 + item.rankScore * 0.12
 
         return {
