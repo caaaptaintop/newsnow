@@ -53,30 +53,65 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure persistent D1 database
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB_NAME="capx-newsnow-intelligence"
+          list_file=$(mktemp)
+          pnpm dlx wrangler@${WRANGLER_VERSION} d1 list --json > "$list_file"
+          DB_ID=$(python - "$list_file" "$DB_NAME" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8-sig") as handle:
+              rows = json.load(handle)
+          row = next((item for item in rows if item.get("name") == sys.argv[2]), None)
+          print((row or {}).get("uuid") or (row or {}).get("database_id") or "")
+          PY
+          )
+
+          if [ -z "$DB_ID" ]; then
+            echo "Creating dedicated D1 database: $DB_NAME"
+            pnpm dlx wrangler@${WRANGLER_VERSION} d1 create "$DB_NAME" --location apac
+            pnpm dlx wrangler@${WRANGLER_VERSION} d1 list --json > "$list_file"
+            DB_ID=$(python - "$list_file" "$DB_NAME" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8-sig") as handle:
+              rows = json.load(handle)
+          row = next((item for item in rows if item.get("name") == sys.argv[2]), None)
+          print((row or {}).get("uuid") or (row or {}).get("database_id") or "")
+          PY
+            )
+          fi
+
+          if [ -z "$DB_ID" ]; then
+            echo "::error::Unable to resolve D1 database ID for $DB_NAME"
+            exit 1
+          fi
+          echo "INTELLIGENCE_D1_NAME=$DB_NAME" >> "$GITHUB_ENV"
+          echo "INTELLIGENCE_D1_ID=$DB_ID" >> "$GITHUB_ENV"
+          echo "D1 database ready: $DB_NAME"
+
       - name: Download current Pages configuration
         run: |
           rm -f wrangler.toml wrangler.json wrangler.jsonc
           pnpm dlx wrangler@${WRANGLER_VERSION} pages download config capx-newsnow --force
           test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
 
-      - name: Prepare Pages configuration and Workers AI binding
+      - name: Prepare Pages configuration, Workers AI and D1 bindings
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
+          import os, re
 
           path = Path("wrangler.toml")
           text = path.read_text()
           output_line = 'pages_build_output_dir = "dist/output/public"'
+          db_name = os.environ["INTELLIGENCE_D1_NAME"]
+          db_id = os.environ["INTELLIGENCE_D1_ID"]
 
           if re.search(r'^pages_build_output_dir\s*=', text, flags=re.M):
-              text = re.sub(
-                  r'^pages_build_output_dir\s*=.*$',
-                  output_line,
-                  text,
-                  flags=re.M,
-              )
+              text = re.sub(r'^pages_build_output_dir\s*=.*$', output_line, text, flags=re.M)
           else:
               first_table = re.search(r'^\[', text, flags=re.M)
               if first_table:
@@ -87,14 +122,33 @@ jobs:
 
           if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
               text = text.rstrip() + '\n\n[ai]\nbinding = "AI"\n'
-
           if not re.search(r'^\[env\.production\.ai\]\s*$', text, flags=re.M):
               text = text.rstrip() + '\n\n[env.production.ai]\nbinding = "AI"\n'
 
+          def upsert_d1(doc: str, table: str) -> str:
+              header = f"[[{table}]]"
+              pattern = re.compile(rf'(?ms)^\[\[{re.escape(table)}\]\]\s*\n(?:(?!^\[).)*(?=^\[|\Z)')
+              for match in list(pattern.finditer(doc)):
+                  block = match.group(0)
+                  if re.search(r'^binding\s*=\s*["\']NEWSNOW_DB["\']\s*$', block, flags=re.M):
+                      replacement = block
+                      values = {"binding": "NEWSNOW_DB", "database_name": db_name, "database_id": db_id}
+                      for key, value in values.items():
+                          line = f'{key} = "{value}"'
+                          if re.search(rf'^{key}\s*=', replacement, flags=re.M):
+                              replacement = re.sub(rf'^{key}\s*=.*$', line, replacement, flags=re.M)
+                          else:
+                              replacement = replacement.rstrip() + "\n" + line + "\n"
+                      return doc[:match.start()] + replacement + doc[match.end():]
+              block = f'\n\n{header}\nbinding = "NEWSNOW_DB"\ndatabase_name = "{db_name}"\ndatabase_id = "{db_id}"\n'
+              return doc.rstrip() + block
+
+          text = upsert_d1(text, "d1_databases")
+          text = upsert_d1(text, "env.production.d1_databases")
           path.write_text(text)
           PY
 
-          echo "Workers AI binding prepared with Wrangler ${WRANGLER_VERSION}"
+          echo "Workers AI and NEWSNOW_DB bindings prepared with Wrangler ${WRANGLER_VERSION}"
 
       - name: Deploy to Cloudflare Pages
         run: pnpm dlx wrangler@${WRANGLER_VERSION} pages deploy dist/output/public --branch main
@@ -120,11 +174,40 @@ jobs:
             echo "::error::Workers AI status endpoint returned HTTP $status: $body"
             exit 1
           fi
-
           if ! printf '%s' "$body" | grep -q '"enabled":true'; then
             echo "::error::Workers AI runtime check failed: $body"
             exit 1
           fi
+
+      - name: Verify persistent intelligence runtime
+        shell: bash
+        run: |
+          body_file=$(mktemp)
+          status=""
+          for attempt in 1 2 3 4 5 6; do
+            status=$(curl -sS -o "$body_file" -w '%{http_code}' "https://news.capx-ai.com/api/intelligence?topic=building&ts=$(date +%s)" || true)
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            sleep 5
+          done
+          body=$(cat "$body_file")
+          echo "Intelligence runtime check: HTTP $status"
+          python - "$status" "$body_file" <<'PY'
+          import json, sys
+          status = sys.argv[1]
+          if status != "200":
+              raise SystemExit(f"Intelligence API returned HTTP {status}")
+          with open(sys.argv[2], encoding="utf-8") as handle:
+              data = json.load(handle)
+          if data.get("persistent") is not True:
+              raise SystemExit("D1 binding is not persistent at runtime")
+          if data.get("aiEnabled") is not True:
+              raise SystemExit("Workers AI is unavailable to intelligence classifier")
+          if len(data.get("sources") or []) != 54:
+              raise SystemExit(f"Expected 54 building sources, got {len(data.get('sources') or [])}")
+          print(f"Persistent intelligence runtime OK: {len(data['sources'])} building sources")
+          PY
 
       - name: Verify Jianing hot-topic classifier
         shell: bash
@@ -144,37 +227,30 @@ jobs:
             echo "::error::Jianing topic classifier returned HTTP $status: $body"
             exit 1
           fi
-
           if ! printf '%s' "$body" | grep -q '"enabled":true'; then
             echo "::error::Jianing topic classifier did not complete successfully: $body"
             exit 1
           fi
-
           if ! printf '%s' "$body" | grep -q '"primaryLine"'; then
             echo "::error::Jianing topic classifier did not return topic-line metadata: $body"
             exit 1
           fi
-
           if ! printf '%s' "$body" | grep -q '"angle"'; then
             echo "::error::Jianing topic classifier did not return a suggested angle: $body"
             exit 1
           fi
-
           if ! printf '%s' "$body" | grep -q '"surrogacy-test"'; then
             echo "::error::Jianing topic classifier missed a direct surrogacy-to-health bridge: $body"
             exit 1
           fi
-
           if printf '%s' "$body" | grep -q '"sports-test"'; then
             echo "::error::Jianing topic classifier invented a health bridge from a sports result: $body"
             exit 1
           fi
-
           if printf '%s' "$body" | grep -q '"gossip-test"'; then
             echo "::error::Jianing topic classifier invented a health bridge from celebrity appearance gossip: $body"
             exit 1
           fi
-
           if printf '%s' "$body" | grep -q '"noise-test"'; then
             echo "::error::Jianing topic classifier incorrectly kept an unrelated labor-dispute headline: $body"
             exit 1
