@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { Buffer } from "node:buffer"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -18,13 +19,18 @@ export async function localCodex(model, messages, onUsage = (_usage) => {}) {
       let output = ""
       let bytes = 0
       let failure
+      let killTimer
       const stop = (message) => {
+        if (failure) return
         failure = new Error(message)
         child.kill("SIGTERM")
+        killTimer = setTimeout(() => child.kill("SIGKILL"), 5000)
+        killTimer.unref()
       }
       const timer = setTimeout(() => stop("Codex batch timed out; no automatic retry"), 120000)
+      child.stdout.setEncoding("utf8")
       child.stdout.on("data", (chunk) => {
-        bytes += chunk.length
+        bytes += Buffer.byteLength(chunk)
         if (bytes > 1048576) stop("Codex output exceeded limit")
         else output += chunk.toString()
       })
@@ -37,6 +43,7 @@ export async function localCodex(model, messages, onUsage = (_usage) => {}) {
       })
       child.on("close", (code) => {
         clearTimeout(timer)
+        clearTimeout(killTimer)
         if (failure || code !== 0) return reject(failure ?? new Error("Codex failed; check CLI login, model access and network"))
         try {
           const content = parseOutput("codex", output)
