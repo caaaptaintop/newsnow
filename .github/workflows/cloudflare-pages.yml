@@ -129,7 +129,7 @@ jobs:
       - name: Verify Jianing hot-topic classifier
         shell: bash
         run: |
-          payload='{"items":[{"key":"public-test","title":"知名科技企业家公开分享长期服用二甲双胍抗衰老","source":"test","rank":1},{"key":"health-test","title":"研究显示每天快走30分钟有助于控制血糖","source":"test","rank":2},{"key":"noise-test","title":"某公司员工调岗后发起劳动维权","source":"test","rank":3}]}'
+          payload='{"items":[{"key":"surrogacy-test","title":"某女演员代孕事件引发关注，代孕妈妈经历妊娠和分娩","source":"test","rank":1},{"key":"public-test","title":"知名科技企业家公开分享长期服用二甲双胍抗衰老","source":"test","rank":2},{"key":"health-test","title":"研究显示每天快走30分钟有助于控制血糖","source":"test","rank":3},{"key":"sports-test","title":"郑钦文逆转震惊美网","source":"test","rank":4},{"key":"gossip-test","title":"刘亦菲脸比珠宝还闪","source":"test","rank":5},{"key":"noise-test","title":"某公司员工调岗后发起劳动维权","source":"test","rank":6}]}'
 
           body_file=$(mktemp)
           status=$(curl -sS -o "$body_file" -w '%{http_code}' \
@@ -157,6 +157,21 @@ jobs:
 
           if ! printf '%s' "$body" | grep -q '"angle"'; then
             echo "::error::Jianing topic classifier did not return a suggested angle: $body"
+            exit 1
+          fi
+
+          if ! printf '%s' "$body" | grep -q '"surrogacy-test"'; then
+            echo "::error::Jianing topic classifier missed a direct surrogacy-to-health bridge: $body"
+            exit 1
+          fi
+
+          if printf '%s' "$body" | grep -q '"sports-test"'; then
+            echo "::error::Jianing topic classifier invented a health bridge from a sports result: $body"
+            exit 1
+          fi
+
+          if printf '%s' "$body" | grep -q '"gossip-test"'; then
+            echo "::error::Jianing topic classifier invented a health bridge from celebrity appearance gossip: $body"
             exit 1
           fi
 
