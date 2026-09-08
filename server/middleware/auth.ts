@@ -6,10 +6,8 @@ export default defineEventHandler(async (event) => {
   if (!url.pathname.startsWith("/api")) return
   if (["JWT_SECRET", "G_CLIENT_ID", "G_CLIENT_SECRET"].find(k => !process.env[k])) {
     event.context.disabledLogin = true
-    // Public read-only/content APIs must remain available when optional login
-    // credentials are not configured. The health topic classifier only uses
-    // the server-side Cloudflare Workers AI binding and does not require a user.
-    if (["/api/s", "/api/proxy", "/api/latest", "/api/topics/health"].every(p => !url.pathname.startsWith(p)))
+    const publicPaths = ["/api/s", "/api/proxy", "/api/latest", "/api/topics/health", "/api/intelligence"]
+    if (!publicPaths.some(p => url.pathname === p || url.pathname.startsWith(`${p}/`)))
       throw createError({ statusCode: 506, message: "Server not configured, disable login" })
   } else {
     if (["/api/s", "/api/me"].find(p => url.pathname.startsWith(p))) {
@@ -17,15 +15,9 @@ export default defineEventHandler(async (event) => {
       if (token) {
         try {
           const { payload } = await jwtVerify(token, new TextEncoder().encode(process.env.JWT_SECRET)) as { payload?: { id: string, type: string } }
-          if (payload?.id) {
-            event.context.user = {
-              id: payload.id,
-              type: payload.type,
-            }
-          }
+          if (payload?.id) event.context.user = { id: payload.id, type: payload.type }
         } catch {
-          if (url.pathname.startsWith("/api/me"))
-            throw createError({ statusCode: 401, message: "JWT verification failed" })
+          if (url.pathname.startsWith("/api/me")) throw createError({ statusCode: 401, message: "JWT verification failed" })
           else logger.warn("JWT verification failed")
         }
       } else if (url.pathname.startsWith("/api/me")) {
