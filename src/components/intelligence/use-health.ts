@@ -13,8 +13,14 @@ interface SemanticResponse {
   matches: { key: string, score: number, primaryLine: HealthTopicLine, auxiliaryLines: HealthTopicLine[], triggers: HealthTopicTrigger[], angle: string, reason: string }[]
   error?: string
 }
+
+// SourceID is generated from the adapter registry and can temporarily drift from
+// the runtime sources.json during source migrations. Never let one stale source
+// id crash the whole intelligence workspace, including unrelated themes.
+const healthSourceIds = (healthTopic.sources as readonly HealthSourceId[])
+  .filter(id => Boolean((sources as Record<string, unknown>)[id]))
+
 export function useHealthIntelligence(enabled: boolean) {
-  const healthSourceIds = healthTopic.sources as readonly HealthSourceId[]
   const queries = useQueries({ queries: healthSourceIds.map((id: HealthSourceId) => ({
     queryKey: ["jianing-topic-source", id, healthTopic.sourceLimit],
     queryFn: () => myFetch<SourceResponse>(`/s?id=${id}&limit=${healthTopic.sourceLimit}`),
@@ -23,9 +29,11 @@ export function useHealthIntelligence(enabled: boolean) {
   const candidates = useMemo(() => {
     const entries = queries.flatMap((query, sourceIndex) => {
       const id = healthSourceIds[sourceIndex]
+      const source = id ? sources[id] : undefined
       const data = query.data as SourceResponse | undefined
+      if (!id || !source) return []
       return (data?.items ?? []).map((item, rank) => ({ ...item,
-        key: `${id}:${String(item.id)}`, sourceId: id, sourceName: sources[id].name, sourceRank: rank + 1,
+        key: `${id}:${String(item.id)}`, sourceId: id, sourceName: source.name, sourceRank: rank + 1,
         rankScore: Math.max(0, 100 - rank * 0.75 - sourceIndex * 0.25), collected: Number(data?.updatedTime) || query.dataUpdatedAt,
       }))
     }).sort((a, b) => b.rankScore - a.rankScore)
@@ -35,7 +43,7 @@ export function useHealthIntelligence(enabled: boolean) {
       if (title && !deduped.has(title)) deduped.set(title, item)
     }
     return [...deduped.values()].slice(0, healthTopic.aiCandidateLimit)
-  }, [queries, healthSourceIds])
+  }, [queries])
   const signature = useMemo(() => {
     let hash = 2166136261
     for (const text of candidates.map(item => `${item.key}|${item.title}`).sort()) {
@@ -81,15 +89,20 @@ export function useHealthIntelligence(enabled: boolean) {
       }]
     }).sort((a, b) => b.importance - a.importance).slice(0, healthTopic.displayLimit)
   }, [candidates, semantic.data])
-  const sourceList: IntelligenceSource[] = healthSourceIds.map((id: HealthSourceId) => ({ id, name: sources[id].name, home: sources[id].home ?? "", group: "NewsNow", level: "平台", region: "", city: "", priority: 50, topic: "health", enabled: true }))
-  const states: IntelligenceSourceState[] = queries.map((q, index) => {
+  const sourceList: IntelligenceSource[] = healthSourceIds.flatMap((id: HealthSourceId) => {
+    const source = sources[id]
+    return source ? [{ id, name: source.name, home: source.home ?? "", group: "NewsNow", level: "平台", region: "", city: "", priority: 50, topic: "health" as const, enabled: true }] : []
+  })
+  const states: IntelligenceSourceState[] = queries.flatMap((q, index) => {
+    const id = healthSourceIds[index]
+    if (!id) return []
     const data = q.data as SourceResponse | undefined
-    return { id: healthSourceIds[index], status: q.isFetching ? "running" : q.isError ? "error" : data ? "ok" : "pending", checkedAt: q.dataUpdatedAt || undefined, fetched: data?.items.length, error: q.isError ? "平台热榜读取失败" : undefined }
+    return [{ id, status: q.isFetching ? "running" as const : q.isError ? "error" as const : data ? "ok" as const : "pending" as const, checkedAt: q.dataUpdatedAt || undefined, fetched: data?.items.length, error: q.isError ? "平台热榜读取失败" : undefined }]
   })
   return {
     articles, sources: sourceList, states, loading: fetchingSources || (enabled && semantic.isFetching),
     aiEnabled: semantic.data?.enabled ?? false,
-    error: queries.every(q => q.isError) ? "全部平台热榜读取失败" : semantic.isError ? "健宁选题 AI 请求失败" : semantic.data?.error,
+    error: queries.length > 0 && queries.every(q => q.isError) ? "全部平台热榜读取失败" : semantic.isError ? "健宁选题 AI 请求失败" : semantic.data?.error,
     progress: fetchingSources ? "正在读取各平台前 30 条热点" : semantic.isFetching ? `正在分析 ${candidates.length} 条去重热点` : "",
     refresh: async () => {
       await Promise.all(queries.map(q => q.refetch()))
