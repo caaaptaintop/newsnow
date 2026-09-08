@@ -49,7 +49,11 @@ export function configuredAI(event: any) {
         })
       } catch { throw new Error("Proma 请求超时或连接失败，本批未完成") }
       // Do not expose provider response bodies: they may echo input or credentials.
-      if (!response.ok) throw new Error(`Proma 请求失败（HTTP ${response.status}），本批未完成`)
+      if (!response.ok) {
+        const trace = response.headers.get("x-proma-trace-id") ?? ""
+        const reference = /^[a-z0-9_-]{1,128}$/i.test(trace) ? `，追踪号 ${trace}` : ""
+        throw new Error(`Proma 请求失败（HTTP ${response.status}）${reference}，本批未完成`)
+      }
       let result: any
       try { result = await response.json() } catch { throw new Error("Proma 未返回有效 JSON 响应") }
       if (protocol === "messages") {
