@@ -4,9 +4,9 @@ import { resolve } from "node:path"
 import process from "node:process"
 import { intelligenceSources } from "../../shared/official-sources"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceDate, intelligenceVersion } from "../../shared/intelligence"
-import { intelligenceClassify } from "../../server/utils/intelligence-ai"
 import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../../server/utils/intelligence-parser"
 import { buildingRecallScore } from "../../shared/building-recall"
+import { classifyBatch } from "./classify-batch"
 import { localCodex } from "./local-codex.mjs"
 
 const args = process.argv.slice(2)
@@ -81,7 +81,7 @@ try {
   } else {
     const startedAt = Date.now()
     const usage: any[] = []
-    const decisions = await intelligenceClassify({ model, run: async (_model: string, params: any) => {
+    const decisions = await classifyBatch({ model, run: async (_model: string, params: any) => {
       const response = await localCodex(model, params.messages, (u: any) => usage.push(u))
       await writeFile(resolve(outputDir, "PENDING-classification.json"), `${JSON.stringify({ sourceId: source.id, model, input: selected, response, usage }, null, 2)}\n`)
       return response
