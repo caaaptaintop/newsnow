@@ -22,7 +22,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Regression tests
-        run: pnpm exec vitest run test/intelligence.test.ts
+        run: pnpm exec vitest run test/intelligence.test.ts test/ai-provider.test.ts
       - name: Cloudflare production build
         run: pnpm run build
         env:

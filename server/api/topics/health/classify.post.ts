@@ -1,3 +1,4 @@
+import { configuredAI } from "../../../utils/ai-provider"
 import {
   healthTopic,
   healthTopicLines,
@@ -41,8 +42,7 @@ function cleanText(value: unknown, max = 180) {
 }
 
 function getAI(event: any) {
-  return event?.context?.cloudflare?.env?.AI
-    || event?.context?.env?.AI
+  return configuredAI(event)
 }
 
 function parseModelPayload(result: any) {
@@ -123,19 +123,21 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
       rank: Number.isFinite(Number(item.rank)) ? Number(item.rank) : undefined,
     }))
 
+  const ai = getAI(event)
   if (!items.length) {
-    return { enabled: false, model: healthTopic.aiModel, matches: [] }
+    return { enabled: false, model: ai.model, matches: [] }
   }
 
-  const ai = getAI(event)
   if (!ai?.run) {
     return {
       enabled: false,
-      model: healthTopic.aiModel,
+      model: ai.model,
       matches: [],
-      error: "Workers AI binding is not available",
+      error: "AI provider configuration is not available",
     }
   }
+
+  const run = ai.run
 
   // AI 判断不依赖榜位：同一批标题即使名次小幅变化，也构造相同的模型输入。
   const modelItems = items
@@ -166,16 +168,16 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     }
 
     let lastError: unknown
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < (ai.provider === "proma" ? 1 : 2); attempt++) {
       try {
-        const result = await ai.run(healthTopic.aiModel, params)
+        const result = await run(ai.model, params)
         return { ok: true as const, parsed: parseModelPayload(result) }
       } catch (error) {
         lastError = error
       }
     }
 
-    logger.error(`Workers AI Jianing chunk ${index + 1} failed`, lastError)
+    logger.error(`AI Jianing chunk ${index + 1} failed`, lastError)
     return { ok: false as const, error: lastError }
   }
 
@@ -195,9 +197,9 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
     if (!successful.length) {
       return {
         enabled: false,
-        model: healthTopic.aiModel,
+        model: ai.model,
         matches: [],
-        error: "Workers AI topic classification failed",
+        error: "AI topic classification failed",
       }
     }
 
@@ -220,16 +222,16 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
 
     return {
       enabled: true,
-      model: healthTopic.aiModel,
+      model: ai.model,
       matches,
     }
   } catch (error) {
-    logger.error("Workers AI Jianing hot-topic classify failed", error)
+    logger.error("AI Jianing hot-topic classify failed", error)
     return {
       enabled: false,
-      model: healthTopic.aiModel,
+      model: ai.model,
       matches: [],
-      error: error instanceof Error ? error.message : "Workers AI topic classification failed",
+      error: error instanceof Error ? error.message : "AI topic classification failed",
     }
   }
 })

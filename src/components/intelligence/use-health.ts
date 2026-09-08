@@ -21,6 +21,12 @@ const healthSourceIds = (healthTopic.sources as readonly HealthSourceId[])
   .filter(id => Boolean((sources as Record<string, unknown>)[id]))
 
 export function useHealthIntelligence(enabled: boolean) {
+  const configuration = useQuery({
+    queryKey: ["intelligence-ai-configuration"],
+    queryFn: () => myFetch<{ enabled: boolean, model: string }>("/topics/health/status"),
+    enabled, staleTime: 60000, retry: false,
+  })
+  const activeModel = configuration.data?.model
   const queries = useQueries({ queries: healthSourceIds.map((id: HealthSourceId) => ({
     queryKey: ["jianing-topic-source", id, healthTopic.sourceLimit],
     queryFn: () => myFetch<SourceResponse>(`/s?id=${id}&limit=${healthTopic.sourceLimit}`),
@@ -53,15 +59,15 @@ export function useHealthIntelligence(enabled: boolean) {
   }, [candidates])
   const fetchingSources = enabled && queries.some(q => q.isFetching)
   const semantic = useQuery({
-    queryKey: ["jianing-hot-topic", "v2", healthTopic.aiModel, signature],
-    enabled: enabled && !fetchingSources && candidates.length > 0,
+    queryKey: ["jianing-hot-topic", "v2", activeModel, signature],
+    enabled: enabled && configuration.data?.enabled === true && !fetchingSources && candidates.length > 0,
     queryFn: async () => {
-      const key = `jianing-hot-topic:v2:${healthTopic.aiModel}:${signature}`
+      const key = `jianing-hot-topic:v2:${activeModel}:${signature}`
       try {
         const raw = localStorage.getItem(key)
         if (raw) {
           const cached = JSON.parse(raw)
-          if (Date.now() - cached.savedAt < 86400000 && cached.data?.enabled === true && cached.data.model === healthTopic.aiModel && Array.isArray(cached.data.matches)) return cached.data as SemanticResponse
+          if (Date.now() - cached.savedAt < 86400000 && cached.data?.enabled === true && cached.data.model === activeModel && Array.isArray(cached.data.matches)) return cached.data as SemanticResponse
         }
       } catch { /* Storage is optional; never replace the editorial classifier with rules. */ }
       const data = await myFetch<SemanticResponse>("/topics/health/classify", {
@@ -85,7 +91,7 @@ export function useHealthIntelligence(enabled: boolean) {
         publishedAt: intelligenceDate(item.pubDate), collectedAt: item.collected, attachments: [],
         category: match.primaryLine, relatedCategories: match.auxiliaryLines ?? [], tags: (match.triggers ?? []).map(t => healthTopicTriggers[t]).filter(Boolean),
         contentType: "热点选题", importance: match.score * 0.88 + item.rankScore * 0.12,
-        summary: match.angle, reason: match.reason, evidence: "title" as const, model: healthTopic.aiModel, analysisVersion: intelligenceVersion,
+        summary: match.angle, reason: match.reason, evidence: "title" as const, model: semantic.data!.model, analysisVersion: intelligenceVersion,
       }]
     }).sort((a, b) => b.importance - a.importance).slice(0, healthTopic.displayLimit)
   }, [candidates, semantic.data])
@@ -102,7 +108,7 @@ export function useHealthIntelligence(enabled: boolean) {
   return {
     articles, sources: sourceList, states, loading: fetchingSources || (enabled && semantic.isFetching),
     aiEnabled: semantic.data?.enabled ?? false,
-    error: queries.length > 0 && queries.every(q => q.isError) ? "全部平台热榜读取失败" : semantic.isError ? "健宁选题 AI 请求失败" : semantic.data?.error,
+    error: configuration.isError ? "AI 配置读取失败" : configuration.data?.enabled === false ? "AI 服务尚未配置" : queries.length > 0 && queries.every(q => q.isError) ? "全部平台热榜读取失败" : semantic.isError ? "健宁选题 AI 请求失败" : semantic.data?.error,
     progress: fetchingSources ? "正在读取各平台前 30 条热点" : semantic.isFetching ? `正在分析 ${candidates.length} 条去重热点` : "",
     refresh: async () => {
       await Promise.all(queries.map(q => q.refetch()))

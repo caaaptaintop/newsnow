@@ -1,4 +1,3 @@
-import { healthTopic } from "@shared/topics"
 import { intelligenceSources } from "@shared/official-sources"
 import { intelligenceSnapshot } from "@shared/intelligence-snapshot"
 import { intelligenceVersion, intelligenceCanonicalUrl, intelligenceDate, intelligenceDedupe, type IntelligenceArticle, type IntelligenceSource, type IntelligenceSourceState, type IntelligenceTopic, type IntelligenceFeed } from "@shared/intelligence"
@@ -114,7 +113,7 @@ export async function intelligenceFeed(event: any, topic: IntelligenceTopic): Pr
   const mergedArticles = intelligenceDedupe([...runtimeArticles, ...snapshotArticles])
   return {
     version: intelligenceVersion,
-    model: healthTopic.aiModel,
+    model: intelligenceAI(event).model,
     aiEnabled: !!intelligenceAI(event)?.run,
     persistent: true,
     sources,
@@ -132,7 +131,7 @@ async function updateSource(event: any, source: IntelligenceSource, externalKnow
   if (previous?.checkedAt && now - previous.checkedAt < (previous.status === "running" ? 180000 : retryAfter)) return { state: previous, articles: [], seenKeys: [] }
   const ai = intelligenceAI(event)
   if (!ai?.run) {
-    const state: IntelligenceSourceState = { id: source.id, status: "error", checkedAt: now, error: "Workers AI 绑定不可用；未用关键词结果替代 AI" }
+    const state: IntelligenceSourceState = { id: source.id, status: "error", checkedAt: now, error: "AI 服务配置不可用；未用关键词结果替代 AI" }
     await store.set(`source:${source.id}`, state)
     return { state, articles: [], seenKeys: [] }
   }
@@ -142,11 +141,15 @@ async function updateSource(event: any, source: IntelligenceSource, externalKnow
   const seenKeys: string[] = []
   try {
     const { items, columns, warnings } = await collect(source)
+    const savedTitles = new Map([
+      ...(await store.articles(source.topic)).map(article => [article.key, article.title] as const),
+      ...intelligenceSnapshot.articles.filter(article => article.topic === source.topic).map(article => [article.key, article.title] as const),
+    ])
     const prepared = await intelligenceMapLimit(items, 4, async item => {
       const key = `${source.topic}:${await digest(intelligenceCanonicalUrl(item.url))}`
-      const signature = await digest(`${intelligenceVersion}|${healthTopic.aiModel}|${source.id}|${item.title}`)
+      const signature = await digest(`${intelligenceVersion}|${ai.model}|${source.id}|${item.title}`)
       const seen = await store.get<{ signature: string, at: number }>(`seen:${source.id}:${key}`)
-      return { item, key, signature, seen: externalKnownKeys.has(key) || (seen?.signature === signature && now - seen.at < 7 * 86400000) }
+      return { item, key, signature, seen: savedTitles.get(key) === item.title || externalKnownKeys.has(key) || (seen?.signature === signature && now - seen.at < 7 * 86400000) }
     })
     const unseen = prepared.filter(x => !x.seen)
 
@@ -196,7 +199,7 @@ async function updateSource(event: any, source: IntelligenceSource, externalKnow
               documentNo: item.documentNo, attachments: item.attachments, category: decision.category,
               relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType,
               importance: decision.importance, summary: decision.summary, reason: decision.reason,
-              evidence: item.text ? "body" : "title", model: healthTopic.aiModel, analysisVersion: intelligenceVersion,
+              evidence: item.text ? "body" : "title", model: ai.model, analysisVersion: intelligenceVersion,
             }
             await store.save(article)
             acceptedArticles.push(article)
