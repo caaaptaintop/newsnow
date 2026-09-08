@@ -20,6 +20,24 @@ export interface IntelligenceRefreshOptions {
 
 const inFlight = new Map<string, Promise<RefreshOutcome>>()
 const interval = 6 * 3600000
+const buildingRecallStrong = [
+  "智能建造", "智能施工", "数字建造", "建筑机器人", "施工机器人", "智慧工地", "数字工地",
+  "bim", "建筑信息模型", "数字孪生", "智能生产", "数字设计", "数字化交付", "建筑产业互联网",
+  "好房子", "好住宅", "高品质住宅", "住宅品质", "住宅性能", "宜居住宅",
+  "智慧建筑", "建筑智能化", "智慧楼宇", "智慧运维", "全屋智能", "智能家居",
+  "绿色建筑", "绿色低碳", "低碳建筑", "建筑节能", "超低能耗", "近零能耗", "零碳建筑", "光储直柔", "绿色建材",
+  "城市更新", "城市体检", "老旧小区", "城中村改造", "既有建筑改造", "危旧房改造",
+  "装配式", "建筑工业化", "模块化建筑", "模块化建造", "预制构件", "部品部件", "工业化建造",
+]
+const buildingRecallSupporting = [
+  "人工智能", "机器视觉", "无人机", "3d打印", "三维打印", "智能装备", "自动化施工", "cim",
+  "住宅设计", "住宅建设", "住宅更新", "适老化", "无障碍", "完整社区",
+  "被动式建筑", "可再生能源", "建筑光伏", "绿色施工", "绿色建造", "建筑碳排放",
+  "更新改造", "有机更新", "历史建筑保护", "韧性城市",
+  "技术标准", "评价标准", "设计标准", "验收标准", "技术导则", "技术规程", "标准化",
+  "试点项目", "试点城市", "示范项目", "示范工程", "科技计划", "科技创新",
+]
+
 export async function intelligenceMapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const result: R[] = new Array(items.length)
   let next = 0
@@ -33,6 +51,13 @@ async function digest(text: string) {
   return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, "0")).join("")
 }
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 240)
+function buildingRecallScore(item: OfficialCandidate) {
+  const text = `${item.title} ${item.column ?? ""}`.toLowerCase()
+  let score = 0
+  for (const keyword of buildingRecallStrong) if (text.includes(keyword)) score += 4
+  for (const keyword of buildingRecallSupporting) if (text.includes(keyword)) score += 2
+  return score
+}
 
 async function collect(source: IntelligenceSource) {
   const warnings: string[] = []
@@ -91,7 +116,6 @@ export async function intelligenceFeed(event: any, topic: IntelligenceTopic): Pr
     version: intelligenceVersion,
     model: healthTopic.aiModel,
     aiEnabled: !!intelligenceAI(event)?.run,
-    // Repository snapshots are durable across Workers/Pages deployments even when D1 is not bound.
     persistent: true,
     sources,
     states: mergeStates(sources, runtimeStates),
@@ -125,7 +149,26 @@ async function updateSource(event: any, source: IntelligenceSource, externalKnow
       return { item, key, signature, seen: externalKnownKeys.has(key) || (seen?.signature === signature && now - seen.at < 7 * 86400000) }
     })
     const unseen = prepared.filter(x => !x.seen)
-    const candidates = unseen.slice(0, 24)
+
+    // Keywords are only a broad recall gate. AI remains the final classifier.
+    // This keeps the free Workers AI quota usable instead of sending every
+    // government notice, procurement item and personnel announcement to Gemma.
+    let recalled = unseen
+    if (source.topic === "building") {
+      const scored = unseen.map((entry, index) => ({ entry, index, score: buildingRecallScore(entry.item) }))
+      const dropped = scored.filter(row => row.score <= 0)
+      for (const row of dropped) {
+        seenKeys.push(row.entry.key)
+        await store.set(`seen:${source.id}:${row.entry.key}`, { signature: row.entry.signature, at: now })
+      }
+      recalled = scored
+        .filter(row => row.score > 0)
+        .sort((a, b) => b.score - a.score || a.index - b.index)
+        .map(row => row.entry)
+    }
+
+    const candidateLimit = source.topic === "building" ? 6 : 10
+    const candidates = recalled.slice(0, candidateLimit)
     let bodyFailures = 0
     const enriched = await intelligenceMapLimit(candidates, 4, async entry => {
       if (source.newsnowId) return entry
@@ -138,9 +181,9 @@ async function updateSource(event: any, source: IntelligenceSource, externalKnow
     let analyzed = 0
     const chunks: typeof enriched[] = []
     for (let i = 0; i < enriched.length; i += 8) chunks.push(enriched.slice(i, i + 8))
-    await intelligenceMapLimit(chunks, 3, async chunk => {
+    await intelligenceMapLimit(chunks, 2, async chunk => {
       try {
-        const decisions = await intelligenceClassify(ai, source.topic, chunk.map(x => ({ key: x.key, title: x.item.title, body: x.item.text?.slice(0, 4500), column: x.item.column })))
+        const decisions = await intelligenceClassify(ai, source.topic, chunk.map(x => ({ key: x.key, title: x.item.title, body: x.item.text?.slice(0, 900), column: x.item.column })))
         for (const { item, key, signature } of chunk) {
           const decision = decisions.get(key)
           if (!decision) continue
@@ -166,7 +209,7 @@ async function updateSource(event: any, source: IntelligenceSource, externalKnow
     })
     if (bodyFailures) warnings.push(`${bodyFailures} 篇正文获取失败，已按标题证据标记`)
     if (analyzed < candidates.length) warnings.push(`${candidates.length - analyzed} 篇 AI 判断未完成，留待重试`)
-    if (unseen.length > candidates.length) warnings.push(`还有 ${unseen.length - candidates.length} 篇候选待后续批次处理`)
+    if (recalled.length > candidates.length) warnings.push(`还有 ${recalled.length - candidates.length} 篇关键词召回候选待后续批次处理`)
     state = { id: source.id, status: warnings.length ? "partial" : "ok", checkedAt: now,
       lastSuccessAt: analyzed === candidates.length ? now : previous?.lastSuccessAt,
       fetched: items.length, accepted, columns, error: warnings.join("；").slice(0, 900) || undefined }
