@@ -53,26 +53,56 @@ jobs:
             exit 1
           fi
 
-      - name: Ensure persistent D1 database
+      - name: Download current Pages configuration
+        run: |
+          rm -f wrangler.toml wrangler.json wrangler.jsonc
+          pnpm dlx wrangler@${WRANGLER_VERSION} pages download config capx-newsnow --force
+          test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
+
+      - name: Resolve persistent D1 database
         shell: bash
         run: |
           set -euo pipefail
-          DB_NAME="capx-newsnow-intelligence"
-          list_file=$(mktemp)
-          pnpm dlx wrangler@${WRANGLER_VERSION} d1 list --json > "$list_file"
-          DB_ID=$(python - "$list_file" "$DB_NAME" <<'PY'
-          import json, sys
-          with open(sys.argv[1], encoding="utf-8-sig") as handle:
-              rows = json.load(handle)
-          row = next((item for item in rows if item.get("name") == sys.argv[2]), None)
-          print((row or {}).get("uuid") or (row or {}).get("database_id") or "")
+          DB_NAME=""
+          DB_ID=""
+
+          readarray -t EXISTING_D1 < <(python - <<'PY'
+          import tomllib
+          with open("wrangler.toml", "rb") as handle:
+              data = tomllib.load(handle)
+          rows = []
+          rows.extend(data.get("d1_databases") or [])
+          rows.extend((((data.get("env") or {}).get("production") or {}).get("d1_databases") or []))
+          seen = set()
+          unique = []
+          for row in rows:
+              key = (row.get("database_id"), row.get("database_name"))
+              if not key[0] or key in seen:
+                  continue
+              seen.add(key)
+              unique.append(row)
+          unique.sort(key=lambda row: (
+              0 if row.get("binding") == "NEWSNOW_DB" else
+              1 if any(token in str(row.get("binding", "")).upper() for token in ("DB", "NEWS")) else 2
+          ))
+          if unique:
+              row = unique[0]
+              print(str(row.get("database_name") or "capx-newsnow-existing"))
+              print(str(row.get("database_id") or ""))
           PY
           )
 
-          if [ -z "$DB_ID" ]; then
-            echo "Creating dedicated D1 database: $DB_NAME"
-            pnpm dlx wrangler@${WRANGLER_VERSION} d1 create "$DB_NAME" --location apac
-            pnpm dlx wrangler@${WRANGLER_VERSION} d1 list --json > "$list_file"
+          if [ "${#EXISTING_D1[@]}" -ge 2 ] && [ -n "${EXISTING_D1[1]}" ]; then
+            DB_NAME="${EXISTING_D1[0]}"
+            DB_ID="${EXISTING_D1[1]}"
+            echo "Reusing an existing D1 database already bound to capx-newsnow."
+          else
+            DB_NAME="capx-newsnow-intelligence"
+            list_file=$(mktemp)
+            if ! pnpm dlx wrangler@${WRANGLER_VERSION} d1 list --json > "$list_file"; then
+              echo "::error::No D1 database is currently bound to the Pages project, and the configured Cloudflare API token cannot list/create D1 databases. Grant the token Account > D1 > Edit (or equivalent D1 read/write) permission, then rerun this workflow."
+              exit 1
+            fi
             DB_ID=$(python - "$list_file" "$DB_NAME" <<'PY'
           import json, sys
           with open(sys.argv[1], encoding="utf-8-sig") as handle:
@@ -81,21 +111,28 @@ jobs:
           print((row or {}).get("uuid") or (row or {}).get("database_id") or "")
           PY
             )
+            if [ -z "$DB_ID" ]; then
+              echo "Creating dedicated D1 database: $DB_NAME"
+              pnpm dlx wrangler@${WRANGLER_VERSION} d1 create "$DB_NAME" --location apac
+              pnpm dlx wrangler@${WRANGLER_VERSION} d1 list --json > "$list_file"
+              DB_ID=$(python - "$list_file" "$DB_NAME" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8-sig") as handle:
+              rows = json.load(handle)
+          row = next((item for item in rows if item.get("name") == sys.argv[2]), None)
+          print((row or {}).get("uuid") or (row or {}).get("database_id") or "")
+          PY
+              )
+            fi
           fi
 
           if [ -z "$DB_ID" ]; then
-            echo "::error::Unable to resolve D1 database ID for $DB_NAME"
+            echo "::error::Unable to resolve a D1 database ID"
             exit 1
           fi
           echo "INTELLIGENCE_D1_NAME=$DB_NAME" >> "$GITHUB_ENV"
           echo "INTELLIGENCE_D1_ID=$DB_ID" >> "$GITHUB_ENV"
-          echo "D1 database ready: $DB_NAME"
-
-      - name: Download current Pages configuration
-        run: |
-          rm -f wrangler.toml wrangler.json wrangler.jsonc
-          pnpm dlx wrangler@${WRANGLER_VERSION} pages download config capx-newsnow --force
-          test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
+          echo "Persistent D1 database resolved."
 
       - name: Prepare Pages configuration, Workers AI and D1 bindings
         shell: bash
