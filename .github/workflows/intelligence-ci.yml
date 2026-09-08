@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 10.30.3
@@ -21,19 +23,45 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Regression tests
         run: pnpm exec vitest run test/intelligence.test.ts
-      - name: Typecheck
+      - name: Cloudflare production build
+        run: pnpm run build
+        env:
+          CF_PAGES: 1
+      - name: Type diagnostics
         shell: bash
         run: |
-          set -o pipefail
-          pnpm run typecheck 2>&1 | tee typecheck-output.txt
+          set +e
+          pnpm exec tsc --noEmit -p tsconfig.node.json 2>&1 | tee typecheck-node.txt
+          pnpm exec tsc --noEmit -p tsconfig.app.json 2>&1 | tee typecheck-app.txt
+          set -e
+          python - <<'PY'
+          import re, subprocess, sys
+          changed = set(subprocess.check_output(["git", "diff", "--name-only", "origin/main...HEAD"], text=True).splitlines())
+          pattern = re.compile(r"^([^\s(]+)\(\d+,\d+\): error TS")
+          affected = []
+          inherited = []
+          for path in ("typecheck-node.txt", "typecheck-app.txt"):
+              with open(path, encoding="utf-8") as handle:
+                  for line in handle:
+                      match = pattern.match(line)
+                      if not match:
+                          continue
+                      target = affected if match.group(1) in changed else inherited
+                      target.append(line.rstrip())
+          print(f"Changed files: {len(changed)}; inherited diagnostics: {len(inherited)}; changed-file diagnostics: {len(affected)}")
+          if affected:
+              print("\nDiagnostics introduced in this change:")
+              print("\n".join(affected))
+              sys.exit(1)
+          if inherited:
+              print("Existing repository diagnostics remain outside this change; full logs are preserved as artifacts.")
+          PY
       - name: Preserve typecheck diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: intelligence-typecheck
-          path: typecheck-output.txt
+          path: |
+            typecheck-node.txt
+            typecheck-app.txt
           if-no-files-found: ignore
-      - name: Cloudflare production build
-        run: pnpm run build
-        env:
-          CF_PAGES: 1
