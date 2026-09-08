@@ -6,6 +6,7 @@ import { intelligenceDate, intelligenceVersion, type IntelligenceArticle, type I
 import type { SourceResponse } from "@shared/types"
 import { myFetch } from "~/utils"
 
+type HealthSourceId = keyof typeof sources & string
 interface SemanticResponse {
   enabled: boolean
   model: string
@@ -13,17 +14,19 @@ interface SemanticResponse {
   error?: string
 }
 export function useHealthIntelligence(enabled: boolean) {
-  const queries = useQueries({ queries: healthTopic.sources.map(id => ({
+  const healthSourceIds = healthTopic.sources as readonly HealthSourceId[]
+  const queries = useQueries({ queries: healthSourceIds.map((id: HealthSourceId) => ({
     queryKey: ["jianing-topic-source", id, healthTopic.sourceLimit],
     queryFn: () => myFetch<SourceResponse>(`/s?id=${id}&limit=${healthTopic.sourceLimit}`),
     enabled, staleTime: 300000, refetchOnMount: false, refetchOnReconnect: false, refetchOnWindowFocus: false, retry: false,
   })) })
   const candidates = useMemo(() => {
     const entries = queries.flatMap((query, sourceIndex) => {
-      const id = healthTopic.sources[sourceIndex]
-      return (query.data?.items ?? []).map((item, rank) => ({ ...item,
+      const id = healthSourceIds[sourceIndex]
+      const data = query.data as SourceResponse | undefined
+      return (data?.items ?? []).map((item, rank) => ({ ...item,
         key: `${id}:${String(item.id)}`, sourceId: id, sourceName: sources[id].name, sourceRank: rank + 1,
-        rankScore: Math.max(0, 100 - rank * 0.75 - sourceIndex * 0.25), collected: Number(query.data?.updatedTime) || query.dataUpdatedAt,
+        rankScore: Math.max(0, 100 - rank * 0.75 - sourceIndex * 0.25), collected: Number(data?.updatedTime) || query.dataUpdatedAt,
       }))
     }).sort((a, b) => b.rankScore - a.rankScore)
     const deduped = new Map<string, typeof entries[number]>()
@@ -32,7 +35,7 @@ export function useHealthIntelligence(enabled: boolean) {
       if (title && !deduped.has(title)) deduped.set(title, item)
     }
     return [...deduped.values()].slice(0, healthTopic.aiCandidateLimit)
-  }, [queries])
+  }, [queries, healthSourceIds])
   const signature = useMemo(() => {
     let hash = 2166136261
     for (const text of candidates.map(item => `${item.key}|${item.title}`).sort()) {
@@ -78,11 +81,11 @@ export function useHealthIntelligence(enabled: boolean) {
       }]
     }).sort((a, b) => b.importance - a.importance).slice(0, healthTopic.displayLimit)
   }, [candidates, semantic.data])
-  const sourceList: IntelligenceSource[] = healthTopic.sources.map(id => ({ id, name: sources[id].name, home: sources[id].home ?? "", group: "NewsNow", level: "平台", region: "", city: "", priority: 50, topic: "health", enabled: true }))
-  const states: IntelligenceSourceState[] = queries.map((q, index) => ({
-    id: healthTopic.sources[index], status: q.isFetching ? "running" : q.isError ? "error" : q.data ? "ok" : "pending",
-    checkedAt: q.dataUpdatedAt || undefined, fetched: q.data?.items.length, error: q.isError ? "平台热榜读取失败" : undefined,
-  }))
+  const sourceList: IntelligenceSource[] = healthSourceIds.map((id: HealthSourceId) => ({ id, name: sources[id].name, home: sources[id].home ?? "", group: "NewsNow", level: "平台", region: "", city: "", priority: 50, topic: "health", enabled: true }))
+  const states: IntelligenceSourceState[] = queries.map((q, index) => {
+    const data = q.data as SourceResponse | undefined
+    return { id: healthSourceIds[index], status: q.isFetching ? "running" : q.isError ? "error" : data ? "ok" : "pending", checkedAt: q.dataUpdatedAt || undefined, fetched: data?.items.length, error: q.isError ? "平台热榜读取失败" : undefined }
+  })
   return {
     articles, sources: sourceList, states, loading: fetchingSources || (enabled && semantic.isFetching),
     aiEnabled: semantic.data?.enabled ?? false,
