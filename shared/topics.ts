@@ -1,25 +1,64 @@
 import type { SourceID } from "./types"
 
 /**
+ * 健宁热点选题的 8 条固定选题线。
+ * 这些选题线来自历史文章表现分析，AI 必须完整保留，不以单一健康分类替代。
+ */
+export const healthTopicLines = {
+  public_event: "公众人物 / 热点事件健康转化",
+  treatment_decision: "减重药 / 治疗决策",
+  symptom_signal: "身体异常 / 症状判别",
+  myth_correction: "反常识 / 健康误区",
+  stress_body: "生活压力 × 身体结果",
+  case_result: "真实案例 / 结果型",
+  guideline_policy: "指南 / 研究 / 政策 → 个人决策",
+  viral_lifestyle: "爆火食品 / 生活方式 → 怎么吃、怎么做",
+} as const
+
+export type HealthTopicLine = keyof typeof healthTopicLines
+
+/**
+ * “为什么现在值得写”的热点触发标签。
+ * 公众人物是高权重横向触发维度，可以与任意一条选题线组合。
+ */
+export const healthTopicTriggers = {
+  public_figure: "公众人物",
+  social_event: "社会事件",
+  research_guideline: "新研究 / 指南",
+  drug_product: "新药 / 新产品",
+  viral_lifestyle: "爆火食品 / 生活方式",
+  seasonal: "节气 / 时令",
+  online_debate: "网络争议 / 误区",
+  sports_event: "体育热点",
+  tech_event: "科技热点",
+} as const
+
+export type HealthTopicTrigger = keyof typeof healthTopicTriggers
+
+/**
  * 主题配置。
- * 主题不是新的抓取源，而是从现有热榜源中筛选并聚合相关内容。
- * 后续新增主题时，优先在这里增加配置，而不是复制一套抓取逻辑。
+ * 路由仍沿用 health，前端定位已经从“健康新闻筛选”升级为“健宁热点选题雷达”。
  */
 export const healthTopic = {
   id: "health",
-  name: "健康管理",
-  description: "聚合全网热榜中与运动、体重管理、营养、睡眠和代谢健康相关的内容",
-  /** 健康主题单独做更深扫描；普通 NewsNow 页面仍保持原来的 30 条。 */
+  navName: "热点选题",
+  name: "健宁热点选题",
+  description: "从全网热点中发现能自然转化为“好看健宁练”公众号内容的选题机会",
+  /** 该主题单独做更深扫描；普通 NewsNow 页面仍保持原来的 30 条。 */
   sourceLimit: 100,
-  /** 跨源去重后送入 GLM 做最终相关性判断的候选上限。关键词命中项优先进入候选。 */
+  /** 每个来源至少优先送入 AI 的高位热点数量，避免只盯健康关键词而漏掉跨界热点。 */
+  perSourceHotLimit: 40,
+  /** 跨源去重后送入 GLM 做热点选题判断的候选上限。 */
   aiCandidateLimit: 400,
-  /** GLM 相关度达到此分数后进入健康管理主题。 */
+  /** 只返回内部选题潜力达到此门槛的候选；分数仅用于后台筛选和排序，前端不展示。 */
   aiThreshold: 60,
+  /** 单轮最多让模型返回的候选选题数量。 */
+  aiResultLimit: 30,
   /** 直接通过 Cloudflare Workers AI binding 调用，无需第三方 API Key。 */
   aiModel: "@cf/zai-org/glm-4.7-flash",
   aiLabel: "GLM-4.7-Flash",
-  /** 深扫描后允许展示更多命中结果。 */
-  displayLimit: 80,
+  /** 页面最多展示的候选选题数量。 */
+  displayLimit: 30,
   sources: [
     "baidu",
     "weibo",
@@ -30,8 +69,11 @@ export const healthTopic = {
     "hupu",
     "smzdm",
   ] as const satisfies readonly SourceID[],
-  keywords: [
-    "健康管理",
+  /**
+   * 只用于补充较低榜位但明显可能与健宁选题有关的候选，不作为最终筛选条件，
+   * 更不会因为关键词命中就直接进入页面。
+   */
+  seedKeywords: [
     "健康",
     "运动",
     "健身",
@@ -42,32 +84,39 @@ export const healthTopic = {
     "肥胖",
     "体重",
     "体脂",
+    "腰围",
     "BMI",
     "跑步",
     "马拉松",
-    "步数",
     "力量训练",
-    "有氧",
-    "无氧",
     "肌肉",
-    "增肌",
     "营养",
     "膳食",
     "饮食",
     "蛋白质",
-    "热量",
-    "卡路里",
     "睡眠",
-    "熬夜",
+    "失眠",
+    "打呼噜",
+    "呼吸暂停",
+    "皮质醇",
     "血糖",
     "血压",
     "血脂",
     "心率",
     "代谢",
-    "控糖",
+    "胰岛素抵抗",
+    "脂肪肝",
     "体检",
+    "抗衰",
+    "二甲双胍",
     "GLP-1",
     "司美格鲁肽",
     "替尔泊肽",
+    "减肥针",
+    "原研药",
+    "集采",
+    "妊娠",
+    "生育",
+    "代孕",
   ],
 } as const

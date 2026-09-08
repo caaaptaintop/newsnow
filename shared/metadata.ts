@@ -24,7 +24,7 @@ export const columns = {
     zh: "关注",
   },
   health: {
-    zh: "健康管理",
+    zh: healthTopic.navName,
   },
   realtime: {
     zh: "实时",
