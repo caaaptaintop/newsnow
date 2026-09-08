@@ -23,6 +23,17 @@ export function configuredAI(event: any) {
   const enabled = !!(endpoint && key && model)
   return {
     provider: "proma", model, enabled,
+    models: enabled ? async () => {
+      const url = new URL(String(env.PROMA_BASE_URL ?? "https://api.proma.cool/v1").replace(/\/$/, "") + "/models")
+      let response: Response
+      try {
+        response = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10000), redirect: "manual" })
+      } catch { throw new Error("Proma 模型列表连接失败") }
+      if (!response.ok) throw new Error(`Proma 模型列表请求失败（HTTP ${response.status}）`)
+      const result: any = await response.json().catch(() => null)
+      if (!Array.isArray(result?.data)) throw new Error("Proma 模型列表格式无效")
+      return result.data.flatMap((item: any) => typeof item?.id === "string" ? [item.id] : []) as string[]
+    } : undefined,
     run: enabled ? async (_model: string, params: any) => {
       const body = protocol === "responses"
         ? { model, input: params.messages, reasoning: { effort: "low" }, max_output_tokens: params.max_completion_tokens, stream: false, store: false }
