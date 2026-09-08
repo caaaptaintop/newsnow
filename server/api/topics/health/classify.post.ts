@@ -199,7 +199,8 @@ export default defineEventHandler(async (event): Promise<ClassifyResponse> => {
         enabled: false,
         model: ai.model,
         matches: [],
-        error: "AI topic classification failed",
+        error: ai.provider === "proma" && chunkResults[0]?.error instanceof Error
+          ? chunkResults[0].error.message : "AI topic classification failed",
       }
     }
 
