@@ -8,8 +8,8 @@ on:
     branches:
       - main
     paths:
-      - 'server/utils/intelligence-parser.ts'
-      - '.github/workflows/intelligence-sync.yml'
+      - server/utils/intelligence-parser.ts
+      - .github/workflows/intelligence-sync.yml
 
 permissions:
   contents: write
@@ -39,6 +39,11 @@ jobs:
           import urllib.request
           from pathlib import Path
 
+          # The checked-out snapshot is authoritative even while a deployment is pending.
+          local_snapshot = Path('data/intelligence-snapshot.json')
+          if local_snapshot.exists() and json.loads(local_snapshot.read_text()).get('pipeline') == 'mac':
+              print('Mac snapshot active; cloud collection is disabled.')
+              raise SystemExit(0)
           base = 'https://news.capx-ai.com/api/intelligence'
           now = int(time.time() * 1000)
           # Mac is the sole classifier/publisher in subscription mode.
