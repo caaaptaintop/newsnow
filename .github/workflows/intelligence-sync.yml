@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '23 */6 * * *'
   workflow_dispatch:
-  workflow_run:
-    workflows: [Build and deploy Cloudflare Pages]
-    types: [completed]
 
 permissions:
   contents: write
@@ -18,7 +15,6 @@ concurrency:
 
 jobs:
   refresh:
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.actor.login != 'github-actions[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
