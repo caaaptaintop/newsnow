@@ -60,6 +60,17 @@ describe("AI provider", () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(fetcher.mock.calls[0][1].redirect).toBe("manual")
   })
+  it("returns only model IDs from the authenticated catalog", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "glm-5.3-flash", internal: "hidden" }, null, { name: "invalid" }] })))
+    vi.stubGlobal("fetch", fetcher)
+    expect(await proma().models!()).toEqual(["glm-5.3-flash"])
+    expect(String(fetcher.mock.calls[0][0])).toBe("https://api.proma.cool/v1/models")
+    expect(fetcher.mock.calls[0][1].redirect).toBe("manual")
+  })
+  it("sanitizes malformed model catalog responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("sensitive invalid JSON")))
+    await expect(proma().models!()).rejects.toThrow("Proma 模型列表格式无效")
+  })
   it("does not accept truncated output", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "incomplete", output: [] }))))
     await expect(proma().run!("ignored", params)).rejects.toThrow("响应未完成")
