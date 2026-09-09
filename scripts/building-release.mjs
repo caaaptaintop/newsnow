@@ -12,9 +12,9 @@ export async function releaseBuilding({ env = process.env, fetcher = fetch, exec
   if (!token || !account || !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? "")) throw new Error("Release credentials or commit identity missing")
   const apiRoot = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/pages/projects/${project}`
   const deployToken = randomBytes(32).toString("hex")
-  const rateSalt = createHmac("sha256", token).update(`building-relay-v3:${account}`).digest("hex")
+  const rateSalt = createHmac("sha256", token).update(`building-relay-v3.1:${account}`).digest("hex")
   const safe = text => String(text).split(deployToken).join("[redacted]").split(rateSalt).join("[redacted]").split(token).join("[redacted]")
-  if (env.GITHUB_ACTIONS) { log(`::add-mask::${deployToken}`); log(`::add-mask::${rateSalt}`) }
+  // Redact before logging: runner masking commands themselves must never enter tee artifacts.
   async function api(path = "", method = "GET", body) {
     const r = await fetcher(apiRoot + path, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(60000), redirect: "error" })
