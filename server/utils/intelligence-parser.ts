@@ -126,7 +126,20 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     if (/\.(pdf|docx?|xlsx?|zip|jpe?g|png|gif)$/i.test(path) || (!datedArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
     if (!/\.(?:[sj]?html?|htm)$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
     if (url === column.url || url === source.home) return
-    let context = a.closest("li,tr").text() || a.parent().text()
+    // A date inside this link belongs to this article. Never read dates from
+    // a shared list container containing links to other articles.
+    const row = a.closest("li,tr").length ? a.closest("li,tr") : a.parent()
+    const dateText = (scope: ReturnType<typeof $>) => {
+      const values = scope.find("time,em,span,[class*=date],[class*=time]").toArray().map(node => $(node).attr("datetime") || $(node).text())
+      values.push(...scope.contents().toArray().filter(node => node.type === "text").map(node => $(node).text()))
+      return values.map(value => value.trim()).find(value => /^(?:(?:19|20)?\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2}日?)(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/.test(value)) || ""
+    }
+    const ownContext = dateText(a)
+    const singleArticleRow = row.find("a[href]").toArray().every(link => {
+      const href = intelligenceAllowedUrl($(link).attr("href") ?? "", source, column.url)
+      return href === url
+    })
+    let context = ownContext || (singleArticleRow ? dateText(row) : "")
     if (context.length > 800) context = ""
     let publishedAt = intelligenceDate(context)
     // Explicit two-digit years on list rows (e.g. Shenzhen 26-09-03); never guess a year from MM-DD.

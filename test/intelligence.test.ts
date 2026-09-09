@@ -124,3 +124,22 @@ it("keeps Liaoning date-ID article indexes while excluding directory indexes", (
   expect(items).toHaveLength(1)
   expect(items[0].url).toContain("2026070710405193851")
 })
+
+it("keeps publication dates scoped to their article rather than the shared list", () => {
+  const html = `<div><a href="/news/1.jhtml"><span>关于最新城市更新试点工作的通知</span><em>2026-09-08</em></a><a href="/news/2.jhtml"><span>关于公布智能工厂第三批名单的通知</span><em>2026-08-31</em></a><a href="/news/3.jhtml">关于调整城市更新项目库的通知</a></div>`
+  const items = intelligenceParseList(html, source, { name: "通知公告", url: source.home })
+  expect(items.map(item => item.publishedAt)).toEqual([intelligenceDate("2026-09-08"), intelligenceDate("2026-08-31"), undefined])
+  const dated = items.map((item, i) => ({ ...article, ...item, key: String(i), collectedAt: Date.now() }))
+  expect(intelligenceFilter(dated.reverse(), emptyIntelligenceFilters()).map(item => item.key)).toEqual(["0", "1", "2"])
+})
+
+it("keeps corrected publication metadata when a legacy copy follows the same URL", () => {
+  const corrected = { ...article, publishedAt: intelligenceDate("2026-08-31") }
+  const legacy = { ...article, publishedAt: intelligenceDate("2026-09-08") }
+  expect(intelligenceDedupe([corrected, legacy])[0].publishedAt).toBe(corrected.publishedAt)
+})
+
+it("prefers the date label over dates mentioned inside a policy title", () => {
+  const html = `<li><a href="/news/4.html">关于2026年8月1日城市更新工作会议的通知</a><span>2026-09-02</span></li>`
+  expect(intelligenceParseList(html, source, { name: "通知公告", url: source.home })[0].publishedAt).toBe(intelligenceDate("2026-09-02"))
+})
