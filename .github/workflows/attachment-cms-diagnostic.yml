@@ -7,35 +7,56 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect Nanjing attachment markup
+      - name: Scan recent official pages for script-only attachment patterns
         shell: bash
         run: |
           python - <<'PY'
-          import re, urllib.request, html
-          url='https://sjw.nanjing.gov.cn/zmhd/dczj/202609/t20260903_5905099.html'
-          req=urllib.request.Request(url, headers={'User-Agent':'CapxIntelligence/1.0 (official public information reader)','Accept':'text/html,application/xhtml+xml'})
-          with urllib.request.urlopen(req, timeout=20) as r:
-              raw=r.read(); ctype=r.headers.get('content-type','')
-          try: text=raw.decode('utf-8')
-          except UnicodeDecodeError: text=raw.decode('gb18030','replace')
-          print('CONTENT_TYPE',ctype,'BYTES',len(raw),'CHARS',len(text))
-          for needle in ['附件：','南京市城市更新条例（草案）','起草说明']:
-              print('\n===',needle,'===')
-              for m in list(re.finditer(re.escape(needle), text))[:8]:
-                  a=max(0,m.start()-1400); b=min(len(text),m.end()+1800)
-                  print(text[a:b].replace('\n',' ')[:3600])
-          print('\n=== candidate tags/attributes ===')
-          for m in re.finditer(r'<[^>]{0,2500}>', text, re.I|re.S):
-              tag=m.group(0)
-              low=tag.lower()
-              if any(x in low for x in ['.doc','.docx','.pdf','.xls','.xlsx','.ppt','.zip','attachment','download','onclick','data-file','fileurl','file_url','fileid','file-id','file_id','p020']):
-                  print(tag.replace('\n',' ')[:2600])
-          print('\n=== script/string candidates ===')
-          for line in text.splitlines():
-              low=line.lower()
-              if any(x in low for x in ['.doc','.docx','.pdf','attachment','download','fileurl','file_url','fileid','p020']) and len(line) < 6000:
-                  print(line[:6000])
+          import concurrent.futures, json, re, urllib.request, urllib.parse
+          from collections import defaultdict
+          EXT=r'(?:pdf|ofd|docx?|docm|wps|rtf|xlsx?|xlsm|xlsb|csv|pptx?|pptm|zip|rar|7z|txt)'
+          snapshot=json.load(open('data/intelligence-snapshot.json'))
+          by_host=defaultdict(list)
+          for a in sorted(snapshot.get('articles',[]), key=lambda x:(x.get('publishedAt') or 0,x.get('collectedAt') or 0), reverse=True):
+              if a.get('attachments'): continue
+              try: host=urllib.parse.urlsplit(a['url']).hostname or ''
+              except Exception: continue
+              if host.endswith('.gov.cn') and len(by_host[host])<8: by_host[host].append(a['url'])
+          urls=[u for values in by_host.values() for u in values][:360]
+          def fetch(url):
+              try:
+                  req=urllib.request.Request(url, headers={'User-Agent':'CapxIntelligence/1.0 (official public information reader)','Accept':'text/html,application/xhtml+xml'})
+                  with urllib.request.urlopen(req, timeout=10) as r:
+                      raw=r.read(2_000_001)
+                  if len(raw)>2_000_000: return (url,'too-large',[])
+                  try: text=raw.decode('utf-8')
+                  except UnicodeDecodeError: text=raw.decode('gb18030','replace')
+                  hits=[]
+                  for s in re.findall(r'<script\b[^>]*>([\s\S]*?)</script\s*>', text, re.I):
+                      low=s.lower()
+                      if not re.search(r'document\.write(?:ln)?\s*\(', low): continue
+                      if not re.search(r'<a\b', low): continue
+                      fileish=bool(re.search(r'\.'+EXT+r'(?=$|[?&#"\'<>\s])', low, re.I))
+                      opaque=bool(re.search(r'(?:href\s*=.{0,180}(?:download|attachment|/file|file=)|附件.{0,300}<a\b)', s, re.I|re.S))
+                      if fileish or opaque: hits.append(re.sub(r'\s+',' ',s).strip()[:900])
+                  return (url,'ok',hits)
+              except Exception as e: return (url,type(e).__name__,[])
+          results=[]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+              for item in ex.map(fetch, urls): results.append(item)
+          affected=defaultdict(list); errors=defaultdict(int)
+          for url,status,hits in results:
+              host=urllib.parse.urlsplit(url).hostname or ''
+              if hits: affected[host].append((url,hits[0]))
+              elif status!='ok': errors[status]+=1
+          print('SCANNED',len(results),'HOSTS',len(by_host),'AFFECTED_HOSTS',len(affected),'ERRORS',dict(errors))
+          for host,items in sorted(affected.items()):
+              print('\nHOST',host,'COUNT',len(items))
+              for url,snippet in items[:5]:
+                  print('URL',url)
+                  print('SCRIPT',snippet)
+          if not affected:
+              print('NO_SIMILAR_SCRIPT_ONLY_ATTACHMENTS_FOUND_IN_SAMPLE')
           PY
