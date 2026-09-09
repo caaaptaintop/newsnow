@@ -2,26 +2,43 @@ name: Attachment preview validation
 on:
   push:
     branches: [feat/attachment-preview-no-storage]
-  pull_request:
-    paths:
-      - 'src/components/attachment-preview/**'
-      - 'server/api/intelligence/attachment*'
-      - 'server/utils/attachment*'
-      - 'shared/attachment*'
-      - 'test/attachment*'
-      - '.github/workflows/attachment-preview-ci.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
-  validate:
+  prepare:
+    if: github.ref == 'refs/heads/feat/attachment-preview-no-storage'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Export tracked source for isolated review
-        run: git archive --format=tar.gz -o /tmp/attachment-review-source.tar.gz HEAD
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Pin preview dependencies and lockfile
+        run: |
+          pnpm add --save-exact docx-preview@0.4.0 'legacy-word-reader@github:Alpaq92/JSDoc#821695a884e0c0bb8592a635d9524bb3e116cd67'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json pnpm-lock.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: lock browser Word preview dependencies'
+            git push origin HEAD:feat/attachment-preview-no-storage
+          fi
+      - name: Export tracked source and dependency code for review
+        run: |
+          git archive --format=tar.gz -o /tmp/attachment-review-source.tar.gz HEAD
+          mkdir -p /tmp/preview-dependencies
+          cp -RL node_modules/legacy-word-reader /tmp/preview-dependencies/legacy-word-reader
+          cp -RL node_modules/docx-preview /tmp/preview-dependencies/docx-preview
+          tar czf /tmp/preview-dependencies.tar.gz -C /tmp preview-dependencies
       - uses: actions/upload-artifact@v4
         with:
           name: attachment-review-source
-          path: /tmp/attachment-review-source.tar.gz
+          path: |
+            /tmp/attachment-review-source.tar.gz
+            /tmp/preview-dependencies.tar.gz
           retention-days: 1
