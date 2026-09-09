@@ -32,6 +32,8 @@ jobs:
         run: pnpm run build
         env:
           CF_PAGES: 1
+      - name: Release safety regressions
+        run: node --test scripts/building-release.test.mjs
       - name: Preserve current Pages configuration
         shell: bash
         run: |
@@ -63,6 +65,7 @@ jobs:
           path: |
             wrangler-deploy.log
             /tmp/building-release-evidence.json
+            /tmp/building-release-cleanup.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Verify public building endpoints

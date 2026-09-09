@@ -36,6 +36,8 @@ jobs:
         run: pnpm exec vitest run test
       - name: Existing Mac orchestration regressions
         run: node --test tools/ai-bridge/mac-worker.test.mjs
+      - name: Release safety regressions
+        run: node --test scripts/building-release.test.mjs
       - name: Cloudflare production build
         run: pnpm run build
         env:

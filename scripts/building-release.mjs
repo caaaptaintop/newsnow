@@ -86,7 +86,7 @@ export async function releaseBuilding({ env = process.env, fetcher = fetch, exec
     touched = true
     await api("", "PATCH", { deployment_configs: {
       preview: { env_vars: { BUILDING_DEPLOY_TOKEN: { type: "secret_text", value: deployToken },
-        BUILDING_DEPLOY_EXPIRES: { type: "plain_text", value: String(Date.now() + 1200000) },
+        BUILDING_DEPLOY_EXPIRES: { type: "secret_text", value: String(Date.now() + 1200000) },
         BUILDING_RATE_SALT: { type: "secret_text", value: rateSalt } }, d1_databases: { NEWSNOW_DB: { id: database } } },
       production: { env_vars: { BUILDING_RATE_SALT: { type: "secret_text", value: rateSalt } } },
     } })
