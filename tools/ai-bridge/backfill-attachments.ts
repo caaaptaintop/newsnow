@@ -3,6 +3,7 @@ import { resolve } from "node:path"
 import process from "node:process"
 import { intelligenceSources } from "../../shared/official-sources"
 import { enrichOfficialArticleMetadata } from "./enrich-article"
+import { intelligenceAttachmentDiscoveryVersion } from "../../server/utils/intelligence-parser"
 
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
@@ -33,7 +34,9 @@ ledger.failures ??= {}
 const sources = new Map(intelligenceSources.filter(source => source.enabled && !source.newsnowId).map(source => [source.id, source]))
 const candidates = snapshot.articles
   .filter((article: any) => {
-    if (!sources.has(article.sourceId) || (article.attachments?.length ?? 0) > 0 || ledger.checked[article.key]) return false
+    const checked = ledger.checked[article.key]
+    const currentCheck = checked && Number(checked.discoveryVersion ?? 1) >= intelligenceAttachmentDiscoveryVersion
+    if (!sources.has(article.sourceId) || (article.attachments?.length ?? 0) > 0 || currentCheck) return false
     return (ledger.failures[article.key]?.attempts ?? 0) < 3
   })
   .sort((a: any, b: any) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0) || (b.collectedAt ?? 0) - (a.collectedAt ?? 0))
@@ -53,7 +56,7 @@ await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, async (
         publishedAt: article.publishedAt,
         attachments: [],
       })
-      ledger.checked[article.key] = { at: Date.now(), attachments: metadata.attachments.length }
+      ledger.checked[article.key] = { at: Date.now(), attachments: metadata.attachments.length, discoveryVersion: intelligenceAttachmentDiscoveryVersion }
       delete ledger.failures[article.key]
       if (metadata.attachments.length) updates.push({ key: article.key, attachments: metadata.attachments })
     } catch (error: any) {

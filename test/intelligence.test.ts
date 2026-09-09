@@ -94,6 +94,36 @@ describe("official-page parsing", () => {
     ])
     expect(parsed.publishedAt).toBe(article.publishedAt)
   })
+  it("extracts attachment anchors written by a static CMS document.write without executing scripts", () => {
+    const njSource = { id: "official-nanjing", home: "https://sjw.nanjing.gov.cn/" } as any
+    const candidate = { title: "关于南京市城市更新条例草案公开征求意见的公告", url: `${njSource.home}zmhd/dczj/202609/t20260903_5905099.html`, column: "调查征集", attachments: [] }
+    const body = "南京市城乡建设委员会公开征求城市更新条例草案意见。".repeat(8)
+    const html = `<div class="view TRS_UEDITOR">${body}<p>附件：1．南京市城市更新条例（草案） 2．起草说明</p></div>
+      <script>window.mustNotRun = true; if("附件1.pdf<BR/>附件2.pdf" != ""){document.write('<a href="./P020260903657491913704.pdf">附件1-南京市城市更新条例（草案）》征求意见稿.pdf</a><BR/><a href="./P020260903657496859244.pdf">附件2-关于《南京市城市更新条例（草案）》（征求意见稿）起草情况的说明.pdf</a>');}</script>
+      <script>document.write('<a href="https://evil.example/steal.pdf">附件3-外部文件.pdf</a>')</script>`
+    const parsed = intelligenceParseArticle(html, candidate, njSource)
+    expect(parsed.attachments).toEqual([
+      { title: "附件1-南京市城市更新条例（草案）》征求意见稿.pdf", url: `${njSource.home}zmhd/dczj/202609/P020260903657491913704.pdf` },
+      { title: "附件2-关于《南京市城市更新条例（草案）》（征求意见稿）起草情况的说明.pdf", url: `${njSource.home}zmhd/dczj/202609/P020260903657496859244.pdf` },
+    ])
+  })
+
+  it("extracts attachment anchors stored in a static hasFJ variable", () => {
+    const cqSource = { id: "official-chongqing", home: "https://zfcxjw.cq.gov.cn/" } as any
+    const candidate = { title: "关于公布重庆市智能建造试点名单的通知", url: `${cqSource.home}zwxx_166/gsgg/202609/t20260903_16027723.html`, column: "公示公告", attachments: [] }
+    const html = `<div class="TRS_Editor">${"重庆市住房城乡建设主管部门公布智能建造试点名单。".repeat(8)}</div><script>var hasFJ='<a href="./P020260903553980549840.docx">附件1：重庆市第六批智能建造试点企业名单.docx</a><BR/><a href="./P020260903553980810778.docx">附件2：重庆市第七批智能建造试点项目名单.docx</a>'; if(hasFJ!=''){var FJarr=hasFJ.split("<BR/>"); document.write('<div>附件下载：</div>'); for(var i=1;i<=FJarr.length;i++){document.write(i+"."+FJarr[i-1]+"<br/>");}}</script>`
+    expect(intelligenceParseArticle(html, candidate, cqSource).attachments.map(item => item.url)).toEqual([
+      `${cqSource.home}zwxx_166/gsgg/202609/P020260903553980549840.docx`,
+      `${cqSource.home}zwxx_166/gsgg/202609/P020260903553980810778.docx`,
+    ])
+  })
+
+  it("does not interpret dynamic JavaScript as attachment markup", () => {
+    const candidate = { title: article.title, url: article.url, column: "通知公告", attachments: [] }
+    const html = `<div class="TRS_Editor">${"深圳市发布智能建造试点项目通知。".repeat(10)}</div><script>const p='/file.pdf'; document.write('<a href="' + p + '">附件下载</a>')</script>`
+    expect(intelligenceParseArticle(html, candidate, source).attachments).toEqual([])
+  })
+
   it("allows attachment file subdomains inside the same government site scope", () => {
     const ynSource = { ...source, home: "https://zfcxjst.yn.gov.cn/" }
     const candidate = { title: article.title, url: `${ynSource.home}notice.html`, column: "公示公告", attachments: [] }
