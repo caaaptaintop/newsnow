@@ -7,7 +7,8 @@ export async function machineRequest(event:any){
   const origin=getHeader(event,"origin"),url=getRequestURL(event)
   if(origin&&origin!==url.origin)throw new BuildingError(403,"不允许跨站发布")
   const env=buildingEnv(event),bearer=getHeader(event,"authorization")?.replace(/^Bearer /,"")??""
-  const deployment=typeof env.BUILDING_DEPLOY_TOKEN==="string"&&/^[a-f0-9]{64}$/.test(env.BUILDING_DEPLOY_TOKEN)&&equal(bearer,env.BUILDING_DEPLOY_TOKEN)
+  const deadline=Number(env.BUILDING_DEPLOY_EXPIRES)
+  const deployment=Number.isSafeInteger(deadline)&&deadline>Date.now()&&deadline<=Date.now()+1800000&&typeof env.BUILDING_DEPLOY_TOKEN==="string"&&/^[a-f0-9]{64}$/.test(env.BUILDING_DEPLOY_TOKEN)&&equal(bearer,env.BUILDING_DEPLOY_TOKEN)
   const key=(registry.keys as Array<{id:string,jwk:{kty:string,crv:string,x:string,ext?:boolean},capabilities:string[]}>).find(k=>k.id===getHeader(event,"x-building-key"))
   if(!deployment&&!key)throw new BuildingError(401,"缺少有效后台凭据")
   if(!/^application\/json(?:;|$)/i.test(getHeader(event,"content-type")??""))throw new BuildingError(415,"只接受JSON请求")

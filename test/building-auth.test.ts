@@ -11,6 +11,15 @@ function event(action="known",extra:any={}){
  return{method:"POST",body,context:{},headers:{"content-type":"application/json","x-building-key":"test-key","x-building-time":time,"x-building-signature":signature},...extra}
 }
 describe("machine authentication without visitor accounts",()=>{
+ it("requires an unexpired bounded deployment credential",async()=>{
+  const e=event("init");e.headers={"content-type":"application/json",authorization:`Bearer ${"a".repeat(64)}`} as any
+  e.context={env:{BUILDING_DEPLOY_TOKEN:"a".repeat(64),BUILDING_DEPLOY_EXPIRES:String(Date.now()+600000)}}
+  expect((await machineRequest(e)).capabilities).toContain("migrate")
+  for(const deadline of [undefined,String(Date.now()-1),String(Date.now()+3600000)]){
+    e.context={env:{BUILDING_DEPLOY_TOKEN:"a".repeat(64),BUILDING_DEPLOY_EXPIRES:deadline}}
+    await expect(machineRequest(e)).rejects.toMatchObject({statusCode:401})
+  }
+ })
  it("accepts a valid body-bound signature and preserves capabilities",async()=>{const r=await machineRequest(event());expect(r.owner).toBe("test-key");expect(r.capabilities).toEqual(["publish"])})
  it("rejects unsigned, tampered, expired and revoked credentials",async()=>{
   await expect(machineRequest(event("known",{headers:{}}))).rejects.toMatchObject({statusCode:401})

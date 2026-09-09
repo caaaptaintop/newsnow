@@ -105,3 +105,19 @@ export async function articleById(db:BuildingDB,key:string):Promise<Intelligence
   const row=await db.prepare("SELECT data FROM building_docs_v3 WHERE id=?").bind(key).first<{data:string}>()
   return row?JSON.parse(row.data):undefined
 }
+
+/** Activation is one transaction; no reader can see a partly seeded database. */
+export async function activateBuilding(db:BuildingDB,expectedTotal:number,revision:number){
+  if(!Number.isSafeInteger(expectedTotal)||expectedTotal<1||!Number.isSafeInteger(revision)||revision<1)throw new BuildingError(400,"迁移验收参数无效")
+  const guard=crypto.randomUUID()
+  try{await db.batch([
+    db.prepare(`INSERT INTO building_guards_v3 VALUES(?,CASE WHEN
+      (SELECT initialized FROM building_meta_v3 WHERE topic='building')=1 AND
+      (SELECT total FROM building_meta_v3 WHERE topic='building')=? AND
+      (SELECT COUNT(*) FROM building_docs_v3)=? AND
+      (SELECT revision FROM building_meta_v3 WHERE topic='building')=? THEN 1 ELSE 0 END)`).bind(guard,expectedTotal,expectedTotal,revision),
+    db.prepare("INSERT OR REPLACE INTO building_migration_v3(id,completed_at,total) VALUES(1,?,?)").bind(Date.now(),expectedTotal),
+    db.prepare("DELETE FROM building_guards_v3 WHERE id=?").bind(guard),
+  ])}catch(error){if(/CHECK constraint failed/i.test(String(error)))throw new BuildingError(409,"迁移验收数量或版本不一致");throw error}
+  return{ready:true,total:expectedTotal}
+}

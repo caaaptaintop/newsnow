@@ -1,6 +1,6 @@
 import { createError,defineEventHandler,setHeaders } from "h3"
 import { machineRequest } from "../../building/auth"
-import { buildingDB,buildingMeta,initializeBuilding,publishBatch,knownRecords } from "../../building/store"
+import { buildingDB,buildingMeta,initializeBuilding,publishBatch,knownRecords,activateBuilding } from "../../building/store"
 import { buildingStatus,relayPolicy,maintainBuilding } from "../../building/relay-budget"
 import { BuildingError } from "@shared/building-contract"
 export default defineEventHandler(async event=>{
@@ -31,12 +31,7 @@ export default defineEventHandler(async event=>{
         const rows=(await db.prepare(`SELECT id,data FROM ${name} WHERE topic='building' AND id>? ORDER BY id LIMIT 80`).bind(body.after).all<any>()).results
         return{articles:rows.map(r=>{try{return JSON.parse(r.data)}catch{throw new BuildingError(409,"旧数据JSON损坏，迁移已停止")}}),after:rows.length===80?rows[79].id:null}
       }
-      case "activate":{
-        const state=await buildingMeta(db)
-        if(!Number.isSafeInteger(body.expectedTotal)||body.expectedTotal<1||state.total!==body.expectedTotal||state.revision!==body.revision)throw new BuildingError(409,"迁移验收数量或版本不一致")
-        await db.prepare("INSERT OR REPLACE INTO building_migration_v3(id,completed_at,total) VALUES(1,?,?)").bind(Date.now(),state.total).run()
-        return{ready:true,total:state.total}
-      }
+      case "activate":return activateBuilding(db,body.expectedTotal,body.revision)
       case "status":return buildingStatus(db)
       case "relay":return relayPolicy(db,body)
       case "maintain":await maintainBuilding(db);return{ok:true}

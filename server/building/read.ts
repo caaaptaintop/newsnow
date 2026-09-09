@@ -53,7 +53,7 @@ function conditions(f:IntelligenceFilters,at:number){
 }
 export async function readPage(db:BuildingDB,params:URLSearchParams,now=Date.now()){
   const q=readQuery(params),state=await buildingMeta(db)
-  if(!state.initialized)throw new BuildingError(503,"资讯库尚未发布")
+  if(!state.initialized||!state.migrationComplete)throw new BuildingError(503,"资讯库尚未发布")
   const hash=await buildingHash(JSON.stringify([q.filters,q.limit])),cursor=q.cursor?decode(q.cursor):undefined
   if(cursor&&(cursor.revision!==state.revision||cursor.hash!==hash||cursor.at>now+60000||cursor.at<now-86400000))throw new BuildingError(409,"资讯版本或筛选已更新，请刷新后继续")
   const at=cursor?.at??now,{where,binds}=conditions(q.filters,at),ranked=q.filters.sort!=="latest"
@@ -77,4 +77,4 @@ export async function readPage(db:BuildingDB,params:URLSearchParams,now=Date.now
   const locations=[...grouped].sort(([a],[b])=>a===b?0:a==="全国"?-1:b==="全国"?1:a.localeCompare(b,"zh-CN")).map(([region,cities])=>({region,cities:[...cities].sort((a,b)=>a.localeCompare(b,"zh-CN"))}))
   return{topic:"building" as const,version:String(state.revision),updatedAt:state.published_at??undefined,articles,sources,total:result[1].results[0].n,totalPublished:state.total,nextCursor,truncated:false,facets:{categories:Object.fromEntries(result[3].results.map((r:any)=>[r.category,r.n])),locations,tags:result[5].results.map((r:any)=>({id:r.tag,name:r.tag}))}}
 }
-export async function readVersion(db:BuildingDB){const row=await buildingMeta(db);if(!row.initialized)throw new BuildingError(503,"资讯库尚未发布");return{topic:"building",version:String(row.revision),updatedAt:row.published_at??undefined,totalPublished:row.total}}
+export async function readVersion(db:BuildingDB){const row=await buildingMeta(db);if(!row.initialized||!row.migrationComplete)throw new BuildingError(503,"资讯库尚未发布");return{topic:"building",version:String(row.revision),updatedAt:row.published_at??undefined,totalPublished:row.total}}

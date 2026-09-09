@@ -1,7 +1,7 @@
 import { beforeEach,afterEach,describe,it,expect } from "vitest"
 import { createHash } from "node:crypto"
 import { memoryBuildingDB } from "./helpers/building-db"
-import { initializeBuilding,publishBatch,knownRecords,buildingMeta } from "../server/building/store"
+import { initializeBuilding,publishBatch,knownRecords,buildingMeta,activateBuilding } from "../server/building/store"
 import { readPage,readVersion } from "../server/building/read"
 import { reserveRelay,settleRelay,relayPolicy,buildingStatus,maintainBuilding } from "../server/building/relay-budget"
 import { normalizeBatchItem,locationCityId,buildingLimits } from "../shared/building-contract"
@@ -13,12 +13,23 @@ function article(i:number,extra:any={}){
 let memory:ReturnType<typeof memoryBuildingDB>,counter=0
 beforeEach(async()=>{memory=memoryBuildingDB();await initializeBuilding(memory.db)})
 afterEach(()=>memory.sqlite.close())
-async function publish(items:any[]){let result:any;for(let i=0;i<items.length;i+=buildingLimits.batchItems)result=await publishBatch(memory.db,"test",{batchId:`testbatch_${++counter}`,baseRevision:(await buildingMeta(memory.db)).revision,items:items.slice(i,i+buildingLimits.batchItems)});return result}
+async function publish(items:any[]){let result:any;for(let i=0;i<items.length;i+=buildingLimits.batchItems)result=await publishBatch(memory.db,"test",{batchId:`testbatch_${++counter}`,baseRevision:(await buildingMeta(memory.db)).revision,items:items.slice(i,i+buildingLimits.batchItems)});const state=await buildingMeta(memory.db);if(!state.migrationComplete&&state.total>0)await activateBuilding(memory.db,state.total,state.revision);return result}
 describe("atomic metadata publication",()=>{
+  it("keeps incomplete migration invisible until count and revision are verified",async()=>{
+    await publishBatch(memory.db,"seed",{batchId:"seed_guard_01",baseRevision:0,items:[article(1)]})
+    await expect(readVersion(memory.db)).rejects.toMatchObject({statusCode:503})
+    await expect(readPage(memory.db,new URLSearchParams(),now)).rejects.toMatchObject({statusCode:503})
+    await expect(activateBuilding(memory.db,2,1)).rejects.toMatchObject({statusCode:409})
+    await expect(activateBuilding(memory.db,1,2)).rejects.toMatchObject({statusCode:409})
+    expect((await buildingMeta(memory.db)).migrationComplete).toBe(false)
+    await activateBuilding(memory.db,1,1)
+    expect((await readVersion(memory.db)).version).toBe("1")
+  })
   it("publishes a complete transaction and makes retries idempotent",async()=>{
     const body={batchId:"atomic_001",baseRevision:0,items:[article(1),article(2)]}
     expect((await publishBatch(memory.db,"test",body)).revision).toBe(1)
     expect((await publishBatch(memory.db,"test",body)).repeated).toBe(true)
+    await activateBuilding(memory.db,2,1)
     expect((await readVersion(memory.db)).version).toBe("1")
   })
   it("rolls back every row when a statement fails mid-batch",async()=>{
