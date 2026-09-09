@@ -55,10 +55,12 @@ export async function relayAttachment(input: {
     const fetcher = input.fetcher ?? fetch
     let upstream: Response | undefined
     for (let redirects = 0; redirects <= attachmentPreviewPolicy.maxRedirects; redirects++) {
-      upstream = await fetcher(url.href, {
+      // Cloudflare/WHATWG fetch supports cache=no-store; the repository's RequestInit shim does not declare it.
+      const requestOptions = {
         method: "GET", redirect: "manual", cache: "no-store", credentials: "omit", signal: controller.signal,
         headers: { "Accept": "*/*", "Accept-Encoding": "identity", "Cache-Control": "no-cache", ...(referer ? { Referer: referer } : {}) },
-      })
+      } as RequestInit
+      upstream = await fetcher(url.href, requestOptions)
       if (![301, 302, 303, 307, 308].includes(upstream.status)) break
       const location = upstream.headers.get("location")
       await upstream.body?.cancel()
