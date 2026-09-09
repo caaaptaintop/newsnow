@@ -23,6 +23,8 @@ jobs:
           assert hashlib.sha256(raw).hexdigest() == 'c178ce25092ae345114609a92d02aef378a4dc980bbfb61cbac86965879189e6'
           changes = json.loads(raw)
           for item in changes:
+              if item['path'].startswith('.github/'):
+                  continue
               path = root / item['path']
               assert not Path(item['path']).is_absolute() and '..' not in Path(item['path']).parts
               assert path.resolve().is_relative_to(root) and not path.is_symlink()
@@ -34,7 +36,7 @@ jobs:
               assert hashlib.sha256(text.encode()).hexdigest() == item['new'], item['path']
               path.parent.mkdir(parents=True, exist_ok=True)
               path.write_text(text)
-          print('Verified and applied', len(changes), 'source files')
+          print('Verified source edits; workflow changes excluded from Actions write')
           PY
           git diff --check
           git config user.name building-platform
