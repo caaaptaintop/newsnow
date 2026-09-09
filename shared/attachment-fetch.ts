@@ -40,8 +40,10 @@ export async function loadAttachment(target: AttachmentPreviewTarget, signal: Ab
   let response: Response | undefined
   try {
     onStage("正在从原站读取附件…")
+    // The runtime supports the standard browser cache directive, while the repository's shared RequestInit shim omits it.
+    const directOptions = { redirect: "error", signal: directController.signal, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" } as RequestInit
     // Response headers such as Content-Disposition never trigger a browser download through fetch.
-    response = await fetch(url, { redirect: "error", signal: directController.signal, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" })
+    response = await fetch(url, directOptions)
     if (!response.ok || response.status === 206) { await response.body?.cancel(); response = undefined }
     if (response) {
       const buffer = await readAttachmentResponse(response, directController.signal)
@@ -60,14 +62,21 @@ export async function loadAttachment(target: AttachmentPreviewTarget, signal: Ab
   if (signal.aborted) abort()
   const timeout = setTimeout(abort, attachmentPreviewPolicy.fetchTimeoutMs + 5000)
   try {
-    response = await fetch("/api/intelligence/attachment", {
+    const relayOptions = {
       method: "POST", cache: "no-store", credentials: "same-origin", signal: controller.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ topic: target.topic, articleKey: target.articleKey, url: target.url }),
-    })
+    } as RequestInit
+    response = await fetch("/api/intelligence/attachment", relayOptions)
     if (!response.ok) {
       let message = `附件读取失败（HTTP ${response.status}），请使用原站下载`
-      try { const data = await response.json(); if (typeof data.message === "string") message = data.message.slice(0, 240) } catch { /* Preserve the status fallback. */ }
+      try {
+        const data: unknown = await response.json()
+        if (data && typeof data === "object" && "message" in data) {
+          const candidate = (data as { message?: unknown }).message
+          if (typeof candidate === "string") message = candidate.slice(0, 240)
+        }
+      } catch { /* Preserve the status fallback. */ }
       throw new Error(message)
     }
     const buffer = await readAttachmentResponse(response, controller.signal)
