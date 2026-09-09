@@ -13,6 +13,7 @@ export interface OfficialCandidate {
 }
 
 const mojibakeTokens = /[鍏鐨鍚涓缁鏂寤璁鏀鍩骞浣浠鍙鍦鎴垮眿锛銆鈥绉瀹璇闃鏃瀛鍙戞湁鏍煎叕鍛婃剰瑙佹爣鍑嗘湇鍔￠」]/g
+const attachmentExtensions = new Set(["pdf", "ofd", "doc", "docx", "docm", "wps", "rtf", "xls", "xlsx", "xlsm", "xlsb", "csv", "ppt", "pptx", "pptm", "zip", "rar", "7z", "txt"])
 
 /**
  * Detect the characteristic output produced when UTF-8 Chinese bytes are
@@ -26,6 +27,39 @@ export function intelligenceLooksGarbled(value: string) {
   const suspicious = compact.match(mojibakeTokens)?.length ?? 0
   const length = [...compact].length
   return suspicious >= 3 && suspicious / Math.max(1, length) >= 0.08
+}
+
+function attachmentExtension(...values: Array<string | undefined>) {
+  for (const value of values) {
+    if (!value) continue
+    let decoded = value
+    try { decoded = decodeURIComponent(value) } catch { /* Keep the original encoded value. */ }
+    const matches = decoded.toLowerCase().matchAll(/\.([a-z0-9]{1,6})(?=$|[?#&=;,\s)）\]}>])/g)
+    for (const match of matches) if (attachmentExtensions.has(match[1])) return match[1]
+  }
+}
+function governmentScope(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^www\./, "")
+  if (!host.endsWith(".gov.cn")) return host
+  const parts = host.split(".")
+  return parts.length >= 3 ? parts.slice(-3).join(".") : host
+}
+/**
+ * Attachment links are displayed, never fetched. Keep the normal same-host
+ * rule, while allowing file subdomains inside the same Chinese government
+ * site scope (for example zfcxjst.yn.gov.cn -> files.yn.gov.cn).
+ */
+export function intelligenceAllowedAttachmentUrl(value: string, source: IntelligenceSource, base = source.home) {
+  try {
+    const url = new URL(value, base)
+    const safe = intelligenceHttpUrl(url.href)
+    if (!safe || (url.port && !["80", "443"].includes(url.port))) return
+    const approved = new URL(source.home)
+    const host = url.hostname.toLowerCase().replace(/^www\./, "")
+    const approvedHost = approved.hostname.toLowerCase().replace(/^www\./, "")
+    if (host === approvedHost) return safe
+    if (host.endsWith(".gov.cn") && approvedHost.endsWith(".gov.cn") && governmentScope(host) === governmentScope(approvedHost)) return safe
+  } catch { return }
 }
 
 function replacementCount(value: string) {
@@ -123,7 +157,7 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
     const path = new URL(url).pathname
     const datedArticleIndex = /\/\d{14,22}\/index\.shtml$/i.test(path)
-    if (/\.(pdf|docx?|xlsx?|zip|jpe?g|png|gif)$/i.test(path) || (!datedArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
+    if (attachmentExtension(path, url) || (!datedArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
     if (!/\.(?:[sj]?html?|htm)$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
     if (url === column.url || url === source.home) return
     // A date inside this link belongs to this article. Never read dates from
@@ -171,12 +205,31 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
     if (value.length >= 80 && value.length <= 100000) { text = value.slice(0, 8000); articleRoot = root; break }
   }
   // Do not treat the entire site navigation as article text when a template is unknown.
-  const attachments = (articleRoot ?? $("body")).find("a[href]").toArray().flatMap(el => {
-    const url = intelligenceAllowedUrl($(el).attr("href") ?? "", source, candidate.url)
-    if (!url || !/\.(pdf|docx?|xlsx?|zip)(?:\?|$)/i.test(url)) return []
-    const rawTitle = $(el).text().trim().slice(0, 160)
-    return [{ title: rawTitle && !intelligenceLooksGarbled(rawTitle) ? rawTitle : "原文附件", url }]
-  }).slice(0, 16)
+  const foundAttachments = new Map<string, { title: string, url: string }>()
+  ;(articleRoot ?? $("body")).find("a[href]").each((_index, el) => {
+    const href = $(el).attr("href") ?? ""
+    const url = intelligenceAllowedAttachmentUrl(href, source, candidate.url)
+    if (!url) return
+    const rawTitle = $(el).text().replace(/\s+/g, " ").trim().slice(0, 160)
+    const download = ($(el).attr("download") ?? "").trim().slice(0, 160)
+    const extension = attachmentExtension(url, rawTitle, download)
+    let opaqueDownload = !!download
+    try {
+      const parsed = new URL(url)
+      opaqueDownload ||= /附件|下载/i.test(rawTitle) && /(?:download|attachment|file)/i.test(`${parsed.pathname}${parsed.search}`)
+    } catch { /* The URL has already passed validation. */ }
+    if (!extension && !opaqueDownload) return
+    let filename = ""
+    try {
+      const parsed = new URL(url)
+      filename = [...parsed.searchParams.entries()].find(([key, value]) => /(?:file|name|attachment)/i.test(key) && value)?.[1] || parsed.pathname.split("/").pop() || ""
+      try { filename = decodeURIComponent(filename) } catch { /* Keep encoded filename. */ }
+    } catch { /* The URL has already passed validation. */ }
+    const preferredTitle = rawTitle && !intelligenceLooksGarbled(rawTitle) ? rawTitle : download && !intelligenceLooksGarbled(download) ? download : filename && !intelligenceLooksGarbled(filename) ? filename : "原文附件"
+    const key = intelligenceCanonicalUrl(url) || url
+    if (!foundAttachments.has(key)) foundAttachments.set(key, { title: preferredTitle, url })
+  })
+  const attachments = [...foundAttachments.values()].slice(0, 16)
   const visible = $("body").text().replace(/\s+/g, " ").slice(0, 5000)
   const dateText = meta(["PubDate", "pubdate", "publishdate", "PublishDate", "article:published_time", "DC.date.issued"])
     || visible.match(/(?:发布时间|发布日期|发布日|时间)\s*[:：]?\s*((?:19|20)\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2})/)?.[1]
