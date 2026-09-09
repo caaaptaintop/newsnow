@@ -8,6 +8,7 @@ import { buildingRecallScore } from "../../shared/building-recall"
 import { collectSource } from "./collect-source"
 import { classifyBatch } from "./classify-batch"
 import { verifyPublicationDate } from "./publication-date"
+import { enrichOfficialArticleMetadata } from "./enrich-article"
 import { localCodex } from "./local-codex.mjs"
 
 const args = process.argv.slice(2)
@@ -121,11 +122,22 @@ try {
           if (!decision.keep) return []
           return [{ key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence: "title", model, analysisVersion: intelligenceVersion }]
         })
+        const selectedByKey = new Map(selected.map(item => [item.key, item]))
+        let metadataFailures = 0
         for (let i = 0; i < articles.length; i += 5) {
           await Promise.all(articles.slice(i, i + 5).map(async (article) => {
+            const candidate = selectedByKey.get(article.key)
+            if (!source.newsnowId && candidate) {
+              try {
+                Object.assign(article, await enrichOfficialArticleMetadata(source, article, candidate))
+              } catch {
+                metadataFailures++
+              }
+            }
             Object.assign(article, await verifyPublicationDate(source, article, true))
           }))
         }
+        if (metadataFailures) warnings.push(`${metadataFailures} 篇原文附件或文件元数据提取失败；文章保留，附件可能不完整`)
         state.accepted = articles.length
         const result = { ...previous, generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...articles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...selected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
         const pending = resolve(outputDir, "result.pending.json")
