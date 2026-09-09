@@ -1,0 +1,41 @@
+name: Attachment CMS diagnostic
+on:
+  push:
+    branches: [fix/attachment-discovery-cms-diag]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Nanjing attachment markup
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re, urllib.request, html
+          url='https://sjw.nanjing.gov.cn/zmhd/dczj/202609/t20260903_5905099.html'
+          req=urllib.request.Request(url, headers={'User-Agent':'CapxIntelligence/1.0 (official public information reader)','Accept':'text/html,application/xhtml+xml'})
+          with urllib.request.urlopen(req, timeout=20) as r:
+              raw=r.read(); ctype=r.headers.get('content-type','')
+          try: text=raw.decode('utf-8')
+          except UnicodeDecodeError: text=raw.decode('gb18030','replace')
+          print('CONTENT_TYPE',ctype,'BYTES',len(raw),'CHARS',len(text))
+          for needle in ['附件：','南京市城市更新条例（草案）','起草说明']:
+              print('\n===',needle,'===')
+              for m in list(re.finditer(re.escape(needle), text))[:8]:
+                  a=max(0,m.start()-1400); b=min(len(text),m.end()+1800)
+                  print(text[a:b].replace('\n',' ')[:3600])
+          print('\n=== candidate tags/attributes ===')
+          for m in re.finditer(r'<[^>]{0,2500}>', text, re.I|re.S):
+              tag=m.group(0)
+              low=tag.lower()
+              if any(x in low for x in ['.doc','.docx','.pdf','.xls','.xlsx','.ppt','.zip','attachment','download','onclick','data-file','fileurl','file_url','fileid','file-id','file_id','p020']):
+                  print(tag.replace('\n',' ')[:2600])
+          print('\n=== script/string candidates ===')
+          for line in text.splitlines():
+              low=line.lower()
+              if any(x in low for x in ['.doc','.docx','.pdf','attachment','download','fileurl','file_url','fileid','p020']) and len(line) < 6000:
+                  print(line[:6000])
+          PY
