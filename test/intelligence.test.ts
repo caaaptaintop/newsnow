@@ -79,14 +79,27 @@ describe("official-page parsing", () => {
     expect(items[0].title).toBe(article.title)
     expect(items[0].publishedAt).toBe(article.publishedAt)
   })
-  it("extracts body and attachment but never equates navigation with body", () => {
+  it("extracts body and common document attachments but never equates navigation with body", () => {
     const candidate = { title: article.title, url: article.url, column: "通知公告", attachments: [] }
     expect(intelligenceParseArticle('<nav>智能建造 好房子 智慧建筑</nav>', candidate, source).text).toBeUndefined()
-    const html = `<meta name="PubDate" content="2026-09-03"><div class="TRS_Editor">${"深圳市发布智能建造试点项目通知。".repeat(10)}<a href="/file.pdf">项目名单</a></div>`
+    const html = `<meta name="PubDate" content="2026-09-03"><div class="TRS_Editor">${"深圳市发布智能建造试点项目通知。".repeat(10)}<a href="/file.pdf">项目名单</a><a href="/form.docx">意见反馈表.docx</a><a href="/slides.pptx">宣贯材料</a><a href="/formal.ofd">正式文件</a><a href="/download?id=1" download="数据表.xlsx">附件下载</a></div>`
     const parsed = intelligenceParseArticle(html, candidate, source)
     expect(parsed.text).toContain("智能建造")
-    expect(parsed.attachments[0].url).toBe(`${source.home}file.pdf`)
+    expect(parsed.attachments.map(item => item.url)).toEqual([
+      `${source.home}file.pdf`,
+      `${source.home}form.docx`,
+      `${source.home}slides.pptx`,
+      `${source.home}formal.ofd`,
+      `${source.home}download?id=1`,
+    ])
     expect(parsed.publishedAt).toBe(article.publishedAt)
+  })
+  it("allows attachment file subdomains inside the same government site scope", () => {
+    const ynSource = { ...source, home: "https://zfcxjst.yn.gov.cn/" }
+    const candidate = { title: article.title, url: `${ynSource.home}notice.html`, column: "公示公告", attachments: [] }
+    const html = `<div class="TRS_Editor">${"云南省住房城乡建设主管部门公开征求标准意见。".repeat(8)}<a href="https://files.yn.gov.cn/standard.docx">标准征求意见稿</a><a href="https://evil.example/other.docx">外部文件</a></div>`
+    const parsed = intelligenceParseArticle(html, candidate, ynSource)
+    expect(parsed.attachments.map(item => item.url)).toEqual(["https://files.yn.gov.cn/standard.docx"])
   })
 })
 describe("AI output validation", () => {
