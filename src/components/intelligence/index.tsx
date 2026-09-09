@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { intelligenceTopics, intelligenceContentTypes, emptyIntelligenceFilters, intelligenceFilter, intelligenceHttpUrl, type IntelligenceArticle, type IntelligenceFeed, type IntelligenceFilters, type IntelligenceSource, type IntelligenceSourceState, type IntelligenceTopic } from "@shared/intelligence"
-import { intelligenceAttachmentKind, intelligenceAttachmentKinds } from "@shared/intelligence-attachments"
+import { AttachmentList } from "../attachment-preview"
 import { useHealthIntelligence } from "./use-health"
 import "~/styles/intelligence.css"
 
@@ -50,11 +50,6 @@ function ArticleCard({ article, topic }: { article: IntelligenceArticle, topic: 
   const categories: Record<string, string> = intelligenceTopics[topic].categories
   const url = intelligenceHttpUrl(article.url)
   const tags = article.tags ?? []
-  const attachments = (article.attachments ?? []).flatMap(attachment => {
-    const safeUrl = intelligenceHttpUrl(attachment.url)
-    return safeUrl ? [{ ...attachment, url: safeUrl, kind: intelligenceAttachmentKind(attachment) }] : []
-  })
-  const attachmentKinds = intelligenceAttachmentKinds(attachments)
   return <article className="intel-card">
     <div className="intel-meta"><span className="intel-source-name">{article.sourceName}</span>{article.sourceGroup === "住建官方" && <span className="intel-official">官方</span>}<span>{[article.region, article.city && article.city !== article.region ? article.city : ""].filter(Boolean).join(" / ")}</span><time title={article.publicationDate?.basis === "source_id" ? "根据帖子ID编码提取创建时间" : article.publicationDate?.status === "verified" ? "已核对信息源发布时间" : "信息源发布时间尚未核实"}>{!article.publishedAt && article.publicationDate?.reason !== "not_article" ? "发布日期待核实" : displayDate(article.publishedAt)}</time></div>
     <h2>{url ? <a href={url} target="_blank" rel="noreferrer">{article.title}<Icon kind="external" /></a> : article.title}</h2>
@@ -62,7 +57,7 @@ function ArticleCard({ article, topic }: { article: IntelligenceArticle, topic: 
     {topic === "health" && article.reason && <p className="intel-reason">选题判断：{article.reason}</p>}
     <div className="intel-card-labels"><span>{categories[article.category] ?? article.category}</span><span>{article.contentType}</span>{tags.map(tag => <span key={tag}>{tag}</span>)}</div>
     <div className="intel-card-foot"><span>{article.column}</span>{article.documentNo && <span>{article.documentNo}</span>}<span>{article.evidence === "title" ? "仅依据标题分析" : "依据已提取正文分析"}</span>{topic !== "health" && <span title="AI 编辑排序信号，不代表法定效力或客观评价">{article.importance >= 80 ? "重点关注" : article.importance >= 60 ? "值得关注" : "一般信息"}</span>}</div>
-    {attachments.length > 0 && <details className="intel-attachments intel-original-attachments"><summary><span className="intel-attachment-summary-title">原文附件 <strong>{attachments.length}</strong> 份</span><span className="intel-attachment-kinds">{attachmentKinds.map(kind => <span className="intel-file-type" key={kind}>{kind}</span>)}</span></summary><div className="intel-attachment-list">{attachments.map((attachment, index) => <a className="intel-attachment-link" key={`${attachment.url}:${index}`} href={attachment.url} target="_blank" rel="noreferrer"><span className="intel-file-type">{attachment.kind}</span><span>{attachment.title}</span></a>)}</div><small>附件保留官方原始链接；未解析的附件内容不纳入摘要。</small></details>}
+    <AttachmentList article={article} />
     {!!article.otherSources?.length && <details className="intel-attachments"><summary>其他转载来源 {article.otherSources.length} 个</summary>{article.otherSources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.name}</a>)}</details>}
   </article>
 }
