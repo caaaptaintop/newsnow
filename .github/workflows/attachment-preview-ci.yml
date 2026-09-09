@@ -38,7 +38,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Attachment, authorization and existing workspace regressions
-        run: pnpm exec vitest run test/attachment-preview.test.ts test/attachment-route.test.ts test/intelligence-attachments.test.ts test/intelligence.test.ts test/mac-batch.test.ts
+        run: pnpm exec vitest run test/attachment-preview.test.ts test/attachment-origin-preview.test.ts test/attachment-route.test.ts test/intelligence-attachments.test.ts test/intelligence.test.ts test/mac-batch.test.ts
       - name: Metadata-only storage regressions
         run: node --experimental-strip-types --test test/intelligence-storage.test.mjs
       - name: Cloudflare production build
