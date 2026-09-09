@@ -72,7 +72,7 @@ const evaluate = async expression => {
 }
 async function until(expression, label) {
   for (let i = 0; i < 120; i++) { if (await evaluate(expression)) return; await sleep(250) }
-  throw new Error(`Timed out: ${label}\n${await evaluate("document.body.innerText")}`)
+  throw new Error(`Timed out: ${label}\n${await evaluate("document.body?.innerText ?? document.documentElement?.outerHTML ?? 'document unavailable'")}`)
 }
 async function open(key) {
   const filename = fixtures[key].filename
@@ -90,7 +90,7 @@ try {
   await send("Page.addScriptToEvaluateOnNewDocument", { source: "window.__revoked=[];const revoke=URL.revokeObjectURL;URL.revokeObjectURL=function(v){window.__revoked.push(v);return revoke.call(this,v)}" })
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await send("Page.navigate", { url: "http://127.0.0.1:4173/" })
-  await until("document.body.innerText.includes('附件预览自动验收')", "workspace hydration")
+  await until("document.body?.innerText?.includes('附件预览自动验收')", "workspace hydration")
   assert.equal(relayRequests.length, 0, "no attachment prefetch")
   await open("doc")
   await until("document.querySelector('iframe[title=\"附件阅读预览\"]')?.srcdoc.includes('测试工程')", "binary DOC in worker")
