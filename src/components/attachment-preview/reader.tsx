@@ -53,7 +53,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
   return createPortal(<dialog ref={dialog} className="intel-preview-dialog" aria-labelledby={headingId} onCancel={event => { event.preventDefault(); onClose() }}>
     <header className="intel-preview-header"><div><h2 id={headingId}>{preview?.filename ?? target.title}</h2><p>{target.sourceName} · 按需读取，不保存附件</p></div><button type="button" aria-label="关闭附件预览" onClick={onClose}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
     <nav className="intel-preview-toolbar" aria-label="附件预览操作">
-      {preview?.html && <><label>查找 <input type="search" placeholder="高亮文档中的文字" value={search} maxLength={100} onChange={event => setSearch(event.target.value)} /></label><label>缩放 <select value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[60, 80, 100, 120, 150].map(value => <option key={value} value={value}>{value}%</option>)}</select></label></>}
+      {preview?.html && <><label>查找 <input type="search" placeholder="高亮文档中的文字" value={search} maxLength={100} onInput={event => setSearch(event.currentTarget.value)} /></label><label>缩放 <select value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[60, 80, 100, 120, 150].map(value => <option key={value} value={value}>{value}%</option>)}</select></label></>}
       <span className="intel-preview-toolbar-spacer" />
       {intelligenceHttpUrl(target.articleUrl) && <a href={target.articleUrl} target="_blank" rel="noreferrer">打开原网页</a>}
       <a href={target.url} target="_blank" rel="noreferrer" className="intel-preview-primary">下载原文件</a>
