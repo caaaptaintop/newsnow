@@ -3,7 +3,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises"
 import { resolve, join } from "node:path"
 const root = resolve("dist/output/public")
 const snapshot = JSON.parse(await readFile("data/intelligence-snapshot.json", "utf8"))
-const disabledKeys = snapshot.articles.filter(article => article.topic !== "building").map(article => article.key)
+const disabledKeys = snapshot.articles.map(article => article.key)
 async function walk(path) {
   const output = []
   for (const entry of await readdir(path, { withFileTypes: true })) {
@@ -16,7 +16,7 @@ async function walk(path) {
 let checked = 0
 for (const file of await walk(root)) {
   const text = await readFile(file, "utf8")
-  assert(!disabledKeys.some(key => text.includes(key)), `Disabled-topic production record included in ${file}`)
+  assert(!disabledKeys.some(key => text.includes(key)), `Production snapshot record included in ${file}`)
   checked++
 }
 if (process.env.CF_PAGES) {

@@ -30,7 +30,8 @@ it("background worker uses Luna low and runs attachment backfill even when the n
     assert(backfills[0].includes("24"))
     assert.equal(calls.some(c => c.includes("tools/ai-bridge/apply-batch.ts")), false)
     assert(calls.indexOf(backfills[0]) > calls.indexOf(analyses.at(-1)))
-    assert(calls.findIndex(c => c[1] === "push") > calls.indexOf(backfills[0]))
+    assert.equal(calls.some(c => c[1] === "push"), false, "no data Git push")
+    assert(calls.findIndex(c => c.includes("tools/ai-bridge/publisher.mjs") && c.includes("prepare")) < calls.indexOf(analyses[0]))
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
-import { useQuery } from "@tanstack/react-query"
-import { emptyIntelligenceFilters, intelligenceContentTypes, intelligenceFilter, intelligenceHttpUrl, intelligenceTopics, type IntelligenceFilters } from "@shared/intelligence"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { emptyIntelligenceFilters, intelligenceContentTypes, intelligenceHttpUrl, intelligenceTopics, type IntelligenceFilters } from "@shared/intelligence"
 import { isPublishedTopic, publicSite } from "@shared/public-site"
 import type { PublicIntelligenceArticle, PublicIntelligenceFeed, PublicIntelligenceSource } from "@shared/public-intelligence"
 import { AttachmentList } from "../attachment-preview"
@@ -31,7 +31,7 @@ export function buildingView(search = "") {
 }
 async function request<T>(url: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]), credentials: "omit" })
-  if (!response.ok) throw new Error(`读取失败（HTTP ${response.status}），请稍后刷新`)
+  if (!response.ok) throw new Error(response.status === 409 ? "资讯版本已更新，请点击刷新后继续" : `读取失败（HTTP ${response.status}），请稍后刷新`)
   return response.json() as Promise<T>
 }
 function Icon({ kind }: { kind: "search" | "refresh" | "external" | "sources" }) {
@@ -65,14 +65,31 @@ export function BuildingWorkspace() {
   const [ready, setReady] = useState(false)
   const [showSources, setShowSources] = useState(false)
   const [activeFilter, setActiveFilter] = useState<string>()
-  const [visible, setVisible] = useState(40)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [search, setSearch] = useState("")
   const { filters, unavailable } = view
-  const feed = useQuery({ queryKey: ["public-intelligence", topic], queryFn: ({ signal }) => request<PublicIntelligenceFeed>(`/api/intelligence?topic=${topic}`, signal), enabled: ready && !unavailable, staleTime: Infinity, refetchOnWindowFocus: false, retry: false })
-  const version = useQuery({ queryKey: ["public-intelligence-version", topic], queryFn: ({ signal }) => request<{ version: string, updatedAt?: number }>(`/api/intelligence/version?topic=${topic}`, signal), enabled: ready && !unavailable && !!feed.data, staleTime: publicSite.versionPollMs, refetchInterval: publicSite.versionPollMs, refetchIntervalInBackground: false, refetchOnWindowFocus: true, retry: false })
-  const articles = feed.data?.articles ?? emptyArticles
-  const sources = feed.data?.sources ?? emptySources
-  const patch = (change: Partial<IntelligenceFilters>) => { setView(current => ({ ...current, filters: { ...current.filters, ...change } })); setVisible(40) }
-  const refresh = async () => { await feed.refetch(); await version.refetch() }
+  useEffect(() => { const timer = setTimeout(() => setSearch(filters.q.trim()), 300); return () => clearTimeout(timer) }, [filters.q])
+  const queryParams = useMemo(() => {
+    const params = new URLSearchParams({ topic, limit: "50", sort: filters.sort })
+    if (filters.category) params.set("category", filters.category)
+    if (search) params.set("q", search)
+    if (filters.days) params.set("days", String(filters.days))
+    if (filters.importance) params.set("importance", String(filters.importance))
+    for (const key of ["regions", "cities", "types", "sources", "tags"] as const) for (const value of [...filters[key]].sort()) params.append(key, value)
+    return params.toString()
+  }, [filters.category, filters.sort, filters.days, filters.importance, filters.regions, filters.cities, filters.types, filters.sources, filters.tags, search])
+  const feed = useInfiniteQuery({
+    queryKey: ["public-intelligence-v3", topic, queryParams, refreshKey], initialPageParam: "",
+    queryFn: ({ signal, pageParam }) => request<PublicIntelligenceFeed>(`/api/intelligence?${queryParams}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, signal),
+    getNextPageParam: page => page.nextCursor || undefined,
+    enabled: ready && !unavailable && search === filters.q.trim(), staleTime: Infinity, gcTime: 60000, refetchOnWindowFocus: false, retry: false,
+  })
+  const firstPage = feed.data?.pages[0]
+  const version = useQuery({ queryKey: ["public-intelligence-version", topic], queryFn: ({ signal }) => request<{ version: string, updatedAt?: number }>(`/api/intelligence/version?topic=${topic}`, signal), enabled: ready && !unavailable && !!firstPage, staleTime: publicSite.versionPollMs, refetchInterval: publicSite.versionPollMs, refetchIntervalInBackground: false, refetchOnWindowFocus: true, retry: false })
+  const articles = useMemo(() => feed.data?.pages.flatMap(page => page.articles) ?? emptyArticles, [feed.data])
+  const sources = firstPage?.sources ?? emptySources
+  const patch = (change: Partial<IntelligenceFilters>) => { setView(current => ({ ...current, filters: { ...current.filters, ...change } })) }
+  const refresh = async () => { setRefreshKey(value => value + 1); await version.refetch() }
   const reset = () => patch({ ...emptyIntelligenceFilters(), category: filters.category })
 
   useEffect(() => { setView(buildingView(window.location.search)); setReady(true) }, [])
@@ -90,7 +107,7 @@ export function BuildingWorkspace() {
     window.history.replaceState(window.history.state, "", `${window.location.pathname}?${params}`)
   }, [ready, unavailable, filters])
   useEffect(() => {
-    const pop = () => { setView(buildingView(window.location.search)); setActiveFilter(undefined); setVisible(40) }
+    const pop = () => { setView(buildingView(window.location.search)); setActiveFilter(undefined) }
     window.addEventListener("popstate", pop)
     return () => window.removeEventListener("popstate", pop)
   }, [])
@@ -108,32 +125,21 @@ export function BuildingWorkspace() {
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("focusin", outside); document.removeEventListener("keydown", escape) }
   }, [activeFilter])
 
-  const filtered = useMemo(() => {
-    const withoutLocation = intelligenceFilter(articles, { ...filters, regions: [], cities: [] })
-    return filters.regions.length || filters.cities.length ? withoutLocation.filter(article => filters.regions.includes(article.region) || filters.cities.includes(article.city)) : withoutLocation
-  }, [articles, filters])
-  const counts = useMemo(() => Object.fromEntries(Object.keys(categories).map(category => [category, articles.filter(article => article.category === category || (article.relatedCategories ?? []).includes(category)).length])), [articles])
-  const locationGroups = useMemo<LocationGroup[]>(() => {
-    const grouped = new Map<string, Set<string>>()
-    for (const item of [...sources, ...articles]) {
-      const region = item.region?.trim()
-      if (!region) continue
-      const cities = grouped.get(region) ?? new Set<string>()
-      if (item.city?.trim() && item.city.trim() !== region) cities.add(item.city.trim())
-      grouped.set(region, cities)
-    }
-    return [...grouped.entries()].sort(([a], [b]) => a === b ? 0 : a === "全国" ? -1 : b === "全国" ? 1 : a.localeCompare(b, "zh-CN")).map(([region, cities]) => ({ region, cities: [...cities].sort((a, b) => a.localeCompare(b, "zh-CN")) }))
-  }, [sources, articles])
-  const tags = options(articles.flatMap(article => article.tags ?? []))
+  const filtered = articles
+  const totalPublished = firstPage?.totalPublished ?? articles.length
+  const total = firstPage?.total ?? articles.length
+  const counts = firstPage?.facets?.categories ?? {}
+  const locationGroups: LocationGroup[] = firstPage?.facets?.locations ?? []
+  const tags = firstPage?.facets?.tags ?? []
   const sourceOptions = [...options(sources.map(source => source.group)), ...sources.map(source => ({ id: source.id, name: source.name }))]
-  const selected = (["regions", "cities", "types", "sources", "tags"] as const).flatMap(key => filters[key].map(value => ({ key, value, label: key === "sources" ? sourceOptions.find(option => option.id === value)?.name ?? value : value })))
+  const selected = (["regions", "cities", "types", "sources", "tags"] as const).flatMap(key => filters[key].map(value => ({ key, value, label: key === "sources" ? sourceOptions.find(option => option.id === value)?.name ?? value : key === "cities" ? (() => { try { const pair = JSON.parse(value); return Array.isArray(pair) ? pair.join(" / ") : value } catch { return value } })() : value })))
   const toggle = (id: string) => setActiveFilter(current => current === id ? undefined : id)
-  const updatedAt = version.data?.updatedAt ?? feed.data?.updatedAt
-  const newer = !!(version.data && feed.data && version.data.version !== feed.data.version)
+  const updatedAt = version.data?.updatedAt ?? firstPage?.updatedAt
+  const newer = !!(version.data && firstPage && version.data.version !== firstPage.version)
 
   if (unavailable) return <div className="intel-app"><Brand /><section className="intel-main"><div className="intel-empty"><h1>该主题暂未开放</h1><p>本站目前仅提供建筑资讯。其他主题已暂停，后续按需恢复。</p><a className="intel-button" href="/?topic=building">返回建筑情报</a></div></section></div>
   return <div className="intel-app"><Brand /><div className="intel-workspace">
-    <aside className="intel-sidebar"><h2>建筑</h2><p>二级栏目</p><nav aria-label="建筑栏目"><button className={!filters.category ? "is-active" : ""} type="button" onClick={() => patch({ category: "" })}><span>全部信息</span><small>{articles.length}</small></button>{Object.entries(categories).map(([id, name]) => <button type="button" key={id} className={filters.category === id ? "is-active" : ""} onClick={() => patch({ category: id })}><span>{name}</span><small>{counts[id]}</small></button>)}</nav><div className="intel-sidebar-note">一条信息可关联多个栏目，“全部信息”去重展示。</div></aside>
+    <aside className="intel-sidebar"><h2>建筑</h2><p>二级栏目</p><nav aria-label="建筑栏目"><button className={!filters.category ? "is-active" : ""} type="button" onClick={() => patch({ category: "" })}><span>全部信息</span><small>{totalPublished}</small></button>{Object.entries(categories).map(([id, name]) => <button type="button" key={id} className={filters.category === id ? "is-active" : ""} onClick={() => patch({ category: id })}><span>{name}</span><small>{counts[id]}</small></button>)}</nav><div className="intel-sidebar-note">一条信息可关联多个栏目，“全部信息”去重展示。</div></aside>
     <section className="intel-main"><div className="intel-heading"><div><span className="intel-eyebrow">建筑 / {filters.category ? categories[filters.category] : "全部信息"}</span><h1>{filters.category ? categories[filters.category] : "建筑情报"}</h1><p>官方原文与公开来源，按栏目整理的建筑资讯。</p></div><div className="intel-actions"><button type="button" className="intel-button" aria-expanded={showSources} onClick={() => setShowSources(!showSources)}><Icon kind="sources" />信息源 <small>{sources.length}</small></button><button type="button" className="intel-button intel-primary" disabled={feed.isFetching} onClick={() => void refresh()}><Icon kind="refresh" />{feed.isFetching ? "读取中" : "刷新"}</button></div></div>
       {showSources && <SourcePanel sources={sources} />}
       <div className="intel-controls"><form className="intel-search" onSubmit={event => event.preventDefault()} role="search"><Icon kind="search" /><input type="search" aria-label="搜索当前栏目及筛选条件内的信息" placeholder="在当前栏目与筛选条件内搜索标题、摘要、文号…" maxLength={200} value={filters.q} onChange={event => patch({ q: event.target.value })} /><kbd>当前范围</kbd></form>
@@ -141,14 +147,14 @@ export function BuildingWorkspace() {
         {!!tags.length && <div className="intel-quick-tags"><span>内容标签</span>{tags.slice(0, 8).map(tag => <button type="button" key={tag.id} className={filters.tags.includes(tag.id) ? "is-active" : ""} onClick={() => patch({ tags: filters.tags.includes(tag.id) ? filters.tags.filter(value => value !== tag.id) : [...filters.tags, tag.id] })}>{tag.name}</button>)}</div>}
         {(selected.length > 0 || filters.days > 0 || filters.importance > 0 || filters.q) && <div className="intel-selected"><span>已选</span>{selected.map(item => <button type="button" key={`${item.key}:${item.value}`} onClick={() => patch({ [item.key]: filters[item.key].filter(value => value !== item.value) })}>{item.label}<span aria-label="移除">×</span></button>)}{filters.days > 0 && <button type="button" onClick={() => patch({ days: 0 })}>最近 {filters.days} 天 ×</button>}{filters.importance > 0 && <button type="button" onClick={() => patch({ importance: 0 })}>{filters.importance === 80 ? "重点关注" : "值得关注及以上"} ×</button>}{filters.q && <button type="button" onClick={() => patch({ q: "" })}>搜索：{filters.q} ×</button>}<button type="button" className="intel-text-button" onClick={reset}>清除筛选</button></div>}
       </div>
-      <div className="intel-results-bar"><p><strong>{filtered.length}</strong> 条信息 <span> / 已发布 {articles.length} 条</span></p><label>排序 <select aria-label="结果排序" value={filters.sort} onChange={event => patch({ sort: event.target.value as IntelligenceFilters["sort"] })}><option value="latest">最新发布</option><option value="recommended">推荐</option><option value="importance">重要度</option></select></label></div>
+      <div className="intel-results-bar"><p><strong>{total}</strong> 条信息 <span> / 已发布 {totalPublished} 条</span></p><label>排序 <select aria-label="结果排序" value={filters.sort} onChange={event => patch({ sort: event.target.value as IntelligenceFilters["sort"] })}><option value="latest">最新发布</option><option value="recommended">推荐</option><option value="importance">重要度</option></select></label></div>
       <div className="intel-sync-status" role="status"><span>最近成功发布：{updatedAt ? new Date(updatedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }) : "待确认"}</span>{version.isError && <span>暂时无法检查更新，保留当前内容。</span>}{newer && <button type="button" className="intel-text-button" disabled={feed.isFetching} onClick={() => void refresh()}>有新资讯，点击更新</button>}</div>
       {feed.isError && <div className="intel-warning" role="alert">{feed.error.message}{articles.length > 0 && "，当前保留上次读取的内容。"}</div>}
-      {feed.data?.truncated && <div className="intel-warning">当前检索范围为最近入库的最多 5,000 条，更早内容暂未纳入。</div>}
+      {feed.isFetchNextPageError && <div className="intel-warning">继续加载失败。资讯版本可能已更新，请点击上方“刷新”后重试。</div>}
       {(!ready || feed.isFetching) && !articles.length && <div className="intel-empty">正在读取建筑资讯…</div>}
-      {ready && !feed.isFetching && !feed.isError && !filtered.length && <div className="intel-empty"><h2>{articles.length ? "当前条件下没有结果" : "暂无已发布资讯"}</h2><p>{articles.length ? "可减少筛选条件或清除搜索词；发布日期未核实的内容不出现在限定日期的结果中。" : "后台尚未发布可展示的建筑资讯，请稍后刷新。"}</p>{articles.length > 0 && <button type="button" className="intel-button" onClick={reset}>清除筛选</button>}</div>}
-      <div className="intel-feed">{filtered.slice(0, visible).map(article => <ArticleCard key={article.key} article={article} />)}</div>
-      {filtered.length > visible && <button type="button" className="intel-load-more" onClick={() => setVisible(value => value + 40)}>显示更多（还有 {filtered.length - visible} 条）</button>}
+      {ready && !feed.isFetching && !feed.isError && !total && <div className="intel-empty"><h2>{totalPublished ? "当前条件下没有结果" : "暂无已发布资讯"}</h2><p>{totalPublished ? "可减少筛选条件或清除搜索词；发布日期未核实的内容不出现在限定日期的结果中。" : "后台尚未发布可展示的建筑资讯，请稍后刷新。"}</p>{totalPublished > 0 && <button type="button" className="intel-button" onClick={reset}>清除筛选</button>}</div>}
+      <div className="intel-feed">{filtered.map(article => <ArticleCard key={article.key} article={article} />)}</div>
+      {feed.hasNextPage && <button type="button" className="intel-load-more" disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>{feed.isFetchingNextPage ? "正在加载…" : `显示更多（还有 ${Math.max(0, total - articles.length)} 条）`}</button>}
       <p className="intel-disclaimer">筛选中的地区指发布机构所在地，不等同于政策适用范围。发布日期不明的内容保持未提供；摘要与分类由 AI 辅助生成，具体条款以原文为准。</p>
     </section>
   </div></div>

@@ -14,7 +14,7 @@ if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Attac
 const root = resolve(import.meta.dirname, "../..")
 const outputDir = resolve(root, ".data/mac-batch")
 await mkdir(outputDir, { recursive: true })
-const snapshot = JSON.parse(await readFile(resolve(root, "data/intelligence-snapshot.json"), "utf8"))
+const snapshot = JSON.parse(await readFile(resolve(root, ".data/mac-batch/published.json"), "utf8"))
 let batch: any = { articles: [], decisions: [], states: [] }
 try {
   batch = JSON.parse(await readFile(resolve(outputDir, "result.json"), "utf8"))

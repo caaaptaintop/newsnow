@@ -9,11 +9,13 @@ for (let i = 0; i < 6; i++) {
   const response = await request("/api/intelligence?topic=building")
   if (response.ok) {
     const candidate = await response.json()
-    if (candidate.topic === "building" && /^[a-f0-9]{64}$/.test(candidate.version ?? "")) { data = candidate; break }
+    if (candidate.topic === "building" && /^\d+$/.test(candidate.version ?? "")) { data = candidate; break }
   }
   await sleep(5000)
 }
 assert(data, "building-only deployment did not become ready")
+assert(data.articles.length <= 50, "real server-side page size");
+assert(data.totalPublished >= data.articles.length, "database total");
 assert(data.articles.length > 0, "existing building metadata must not disappear")
 assert.equal(data.sources.length, 54)
 assert(data.articles.every(article => article.topic === "building"))

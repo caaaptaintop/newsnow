@@ -39,6 +39,7 @@ export function runWorker(root, run = command, now = Date.now()) {
     save()
     if (call("git", ["branch", "--show-current"]).trim() !== "main" || call("git", ["status", "--porcelain"]).trim()) throw new Error("Checkout must be clean and on main")
     call("git", ["pull", "--ff-only", "origin", "main"])
+    call("node", ["tools/ai-bridge/publisher.mjs", "prepare"], 300000)
     if (!/Logged in using ChatGPT/.test(call("codex", ["login", "status"]))) throw new Error("ChatGPT login required")
     for (const source of workerSources) {
       call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/mac-batch.ts", "--source", source, "--limit", "12", "--model", workerModel], 1800000)
@@ -50,14 +51,8 @@ export function runWorker(root, run = command, now = Date.now()) {
     call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/backfill-attachments.ts", "--limit", "24"], 600000)
     if (existsSync(resolve(directory, "result.json"))) {
       call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/apply-batch.ts"])
-      if (call("git", ["diff", "--name-only", "--", "data/intelligence-snapshot.json", "shared/intelligence-snapshot.ts"]).trim()) {
-        call("git", ["diff", "--check"])
-        call("git", ["add", "data/intelligence-snapshot.json", "shared/intelligence-snapshot.ts"])
-        call("git", ["commit", "-m", "chore(data): publish Mac Luna subscription batch"])
-      }
     }
-    // Also recovers a previously committed batch whose push failed, without reclassifying it.
-    call("git", ["push", "origin", "main"])
+    // Metadata publication is independent of code deployments.
     status.state = "complete"
     status.finishedAt = Date.now()
     status.head = call("git", ["rev-parse", "HEAD"]).trim()

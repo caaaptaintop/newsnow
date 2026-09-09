@@ -34,6 +34,7 @@ export async function relayAttachment(input: {
   fetcher?: typeof fetch
   signal?: AbortSignal
   timeoutMs?: number
+  onComplete?: (bytes: number, failed: boolean) => void
   maxBytes?: number
 }): Promise<Response> {
   const controller = new AbortController()
@@ -42,9 +43,11 @@ export async function relayAttachment(input: {
   input.signal?.addEventListener("abort", abort, { once: true })
   if (input.signal?.aborted) abort()
   let finished = false
-  const finish = () => {
+  let total = 0
+  const finish = (failed = false) => {
     if (finished) return
     finished = true
+    input.onComplete?.(total, failed)
     clearTimeout(timeout)
     input.signal?.removeEventListener("abort", abort)
   }
@@ -84,26 +87,25 @@ export async function relayAttachment(input: {
     headers.set("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(filename)}`)
     // Never copy Content-Encoding, Content-Length, Set-Cookie, ETag or upstream cache headers.
     const reader = upstream.body.getReader()
-    let total = 0
     const stream = new ReadableStream<Uint8Array>({
       async pull(output) {
         try {
           const { done, value } = await reader.read()
           if (done) { finish(); output.close(); return }
+          if (total + value.byteLength > maxBytes) throw new AttachmentRelayError(413, "附件超过预览上限，请下载原文件")
           total += value.byteLength
-          if (total > maxBytes) throw new AttachmentRelayError(413, "附件超过预览上限，请下载原文件")
           output.enqueue(value)
         } catch (error) {
-          finish(); controller.abort()
+          finish(true); controller.abort()
           void reader.cancel().catch(() => {})
           output.error(error)
         }
       },
-      async cancel() { finish(); controller.abort(); await reader.cancel().catch(() => {}) },
+      async cancel() { finish(true); controller.abort(); await reader.cancel().catch(() => {}) },
     })
     return new Response(stream, { status: 200, headers })
   } catch (error) {
-    finish(); controller.abort()
+    finish(true); controller.abort()
     if (error instanceof AttachmentRelayError) throw error
     throw new AttachmentRelayError(502, "原站附件读取失败或超时，请从原网页打开")
   }

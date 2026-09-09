@@ -8,5 +8,9 @@ export interface PublicIntelligenceFeed {
   updatedAt?: number
   articles: PublicIntelligenceArticle[]
   sources: PublicIntelligenceSource[]
+  total?: number
+  totalPublished?: number
+  nextCursor?: string | null
+  facets?: { categories: Record<string, number>, locations: { region: string, cities: string[] }[], tags: { id: string, name: string }[] }
   truncated: boolean
 }
