@@ -9,6 +9,8 @@ type Preview = { html?: string, blobUrl?: string, format: string, filename: stri
 
 export default function AttachmentReader({ target, onClose }: { target: AttachmentPreviewTarget, onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
+  const closePreview = useRef(onClose)
+  closePreview.current = onClose
   const headingId = useId()
   const [stage, setStage] = useState("正在准备预览…")
   const [error, setError] = useState("")
@@ -19,8 +21,15 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
     const element = dialog.current!
     const previous = document.documentElement.style.overflow
     const focused = document.activeElement as HTMLElement | null
+    const handleNativeClose = () => closePreview.current()
+    element.addEventListener("close", handleNativeClose)
     element.showModal(); document.documentElement.style.overflow = "hidden"
-    return () => { element.close(); document.documentElement.style.overflow = previous; focused?.focus() }
+    return () => {
+      element.removeEventListener("close", handleNativeClose)
+      if (element.open) element.close()
+      document.documentElement.style.overflow = previous
+      focused?.focus()
+    }
   }, [])
   useEffect(() => {
     const controller = new AbortController()
@@ -49,7 +58,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
     return () => { controller.abort(); if (blobUrl) URL.revokeObjectURL(blobUrl) }
   }, [target, attempt])
   const frame = useMemo(() => preview?.html ? previewFrameHtml(preview.html, "", zoom) : "", [preview?.html, zoom])
-  return createPortal(<dialog ref={dialog} className="intel-preview-dialog" aria-labelledby={headingId} onCancel={event => { event.preventDefault(); onClose() }}>
+  return createPortal(<dialog ref={dialog} className="intel-preview-dialog" aria-labelledby={headingId}>
     <header className="intel-preview-header"><div><h2 id={headingId}>{preview?.filename ?? target.title}</h2><p>{target.sourceName} · 按需读取，不保存附件</p></div><button type="button" aria-label="关闭附件预览" onClick={onClose}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
     <nav className="intel-preview-toolbar" aria-label="附件预览操作">
       {preview?.html && <label>缩放 <select value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[60, 80, 100, 120, 150].map(value => <option key={value} value={value}>{value}%</option>)}</select></label>}
