@@ -80,3 +80,11 @@ it("refuses production DB binding when automatic preview builds can inherit it",
   await assert.rejects(releaseBuilding(f.options), /Automatic preview/)
   assert(!f.calls.some(c => c[1] === "PATCH"))
 })
+
+it("never emits raw masking commands into tee-captured artifact logs", async () => {
+  const f = fixture()
+  f.options.env.GITHUB_ACTIONS = "true"
+  await releaseBuilding(f.options)
+  assert(!f.logs.some(line => line.startsWith("::add-mask::")))
+  assert(!/[a-f0-9]{64}/.test(f.logs.join("\n")), "transient secrets must not enter file logs")
+})
