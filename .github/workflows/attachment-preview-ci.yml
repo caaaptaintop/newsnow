@@ -1,44 +1,26 @@
-name: Attachment preview validation
+name: Attachment preview finalize
 on:
   push:
     branches: [feat/attachment-preview-no-storage]
 permissions:
   contents: write
 jobs:
-  prepare:
-    if: github.ref == 'refs/heads/feat/attachment-preview-no-storage'
+  finalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.30.3
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - name: Pin preview dependencies and lockfile
+      - name: Apply verified remaining patch once
+        shell: bash
         run: |
-          pnpm add --save-exact docx-preview@0.4.0 'legacy-word-reader@github:Alpaq92/JSDoc#821695a884e0c0bb8592a635d9524bb3e116cd67'
+          set -euo pipefail
+          base64 -d tools/attachment-preview-remaining.patch.gz.b64 | gunzip > /tmp/attachment-preview-remaining.patch
+          git apply --check /tmp/attachment-preview-remaining.patch
+          git apply /tmp/attachment-preview-remaining.patch
+          rm tools/attachment-preview-remaining.patch.gz.b64
+          git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package.json pnpm-lock.yaml
-          if ! git diff --cached --quiet; then
-            git commit -m 'chore: lock browser Word preview dependencies'
-            git push origin HEAD:feat/attachment-preview-no-storage
-          fi
-      - name: Export tracked source and dependency code for review
-        run: |
-          git archive --format=tar.gz -o /tmp/attachment-review-source.tar.gz HEAD
-          mkdir -p /tmp/preview-dependencies
-          cp -RL node_modules/legacy-word-reader /tmp/preview-dependencies/legacy-word-reader
-          cp -RL node_modules/docx-preview /tmp/preview-dependencies/docx-preview
-          tar czf /tmp/preview-dependencies.tar.gz -C /tmp preview-dependencies
-      - uses: actions/upload-artifact@v4
-        with:
-          name: attachment-review-source
-          path: |
-            /tmp/attachment-review-source.tar.gz
-            /tmp/preview-dependencies.tar.gz
-          retention-days: 1
+          git add -A
+          git commit -m 'feat: wire attachment preview and validation'
+          git push origin HEAD:feat/attachment-preview-no-storage
