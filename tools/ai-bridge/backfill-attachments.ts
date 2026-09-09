@@ -32,13 +32,16 @@ ledger.checked ??= {}
 ledger.failures ??= {}
 
 const sources = new Map(intelligenceSources.filter(source => source.enabled && !source.newsnowId).map(source => [source.id, source]))
+const needsCurrentAttachmentCheck = (article: any) => {
+  const checked = ledger.checked[article.key]
+  const currentCheck = checked && Number(checked.discoveryVersion ?? 1) >= intelligenceAttachmentDiscoveryVersion
+  return sources.has(article.sourceId)
+    && !(article.attachments?.length ?? 0)
+    && !currentCheck
+    && (ledger.failures[article.key]?.attempts ?? 0) < 3
+}
 const candidates = snapshot.articles
-  .filter((article: any) => {
-    const checked = ledger.checked[article.key]
-    const currentCheck = checked && Number(checked.discoveryVersion ?? 1) >= intelligenceAttachmentDiscoveryVersion
-    if (!sources.has(article.sourceId) || (article.attachments?.length ?? 0) > 0 || currentCheck) return false
-    return (ledger.failures[article.key]?.attempts ?? 0) < 3
-  })
+  .filter(needsCurrentAttachmentCheck)
   .sort((a: any, b: any) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0) || (b.collectedAt ?? 0) - (a.collectedAt ?? 0))
   .slice(0, limit)
 
@@ -79,4 +82,4 @@ if (updates.length) {
   await rename(pending, resolve(outputDir, "result.json"))
 }
 
-console.log(JSON.stringify({ checked: candidates.length, restored: updates.length, remainingUnchecked: Math.max(0, snapshot.articles.filter((article: any) => sources.has(article.sourceId) && !(article.attachments?.length ?? 0) && !ledger.checked[article.key] && (ledger.failures[article.key]?.attempts ?? 0) < 3).length) }))
+console.log(JSON.stringify({ checked: candidates.length, restored: updates.length, remainingUnchecked: snapshot.articles.filter(needsCurrentAttachmentCheck).length }))

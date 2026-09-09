@@ -45,8 +45,10 @@ export function runWorker(root, run = command, now = Date.now()) {
       status.completedSources.push(source)
       save()
     }
+    // Run even when the normal collection batch is empty. The backfill can
+    // create result.json itself when a parser upgrade restores old attachments.
+    call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/backfill-attachments.ts", "--limit", "24"], 600000)
     if (existsSync(resolve(directory, "result.json"))) {
-      call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/backfill-attachments.ts", "--limit", "24"], 600000)
       call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/apply-batch.ts"])
       if (call("git", ["diff", "--name-only", "--", "data/intelligence-snapshot.json", "shared/intelligence-snapshot.ts"]).trim()) {
         call("git", ["diff", "--check"])

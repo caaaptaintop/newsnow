@@ -23,6 +23,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Regression tests
         run: pnpm exec vitest run test/intelligence.test.ts test/ai-provider.test.ts
+      - name: Mac worker orchestration tests
+        run: node --test tools/ai-bridge/mac-worker.test.mjs
       - name: Cloudflare production build
         run: pnpm run build
         env:
