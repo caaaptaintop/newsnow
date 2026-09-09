@@ -14,6 +14,7 @@ export interface OfficialCandidate {
 
 const mojibakeTokens = /[鍏鐨鍚涓缁鏂寤璁鏀鍩骞浣浠鍙鍦鎴垮眿锛銆鈥绉瀹璇闃鏃瀛鍙戞湁鏍煎叕鍛婃剰瑙佹爣鍑嗘湇鍔￠」]/g
 const attachmentExtensions = new Set(["pdf", "ofd", "doc", "docx", "docm", "wps", "rtf", "xls", "xlsx", "xlsm", "xlsb", "csv", "ppt", "pptx", "pptm", "zip", "rar", "7z", "txt"])
+export const intelligenceAttachmentDiscoveryVersion = 2
 
 /**
  * Detect the characteristic output produced when UTF-8 Chinese bytes are
@@ -131,10 +132,52 @@ export async function intelligenceFetchHtml(url: string, source: IntelligenceSou
   }
   throw new Error("官网重定向次数过多")
 }
+function decodeStaticJsString(value: string) {
+  return value.replace(/\\(?:u\{([0-9a-f]{1,6})\}|u([0-9a-f]{4})|x([0-9a-f]{2})|([\\'"nrtbfv0]))/gi, (_match, brace: string, unicode: string, hex: string, simple: string) => {
+    const code = brace || unicode || hex
+    if (code) {
+      const value = Number.parseInt(code, 16)
+      return Number.isFinite(value) && value <= 0x10FFFF ? String.fromCodePoint(value) : ""
+    }
+    return ({ "\\": "\\", "'": "'", '"': '"', n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", 0: "\0" } as Record<string, string>)[simple] ?? simple
+  })
+}
+
+function staticDocumentWriteHtml(html: string) {
+  // TRS-style government CMS templates can keep attachment anchors either in
+  // document.write('...') itself or in a static variable such as hasFJ that is
+  // later written to the page. Read string literals only; never evaluate JS.
+  const fragments: string[] = []
+  let total = 0
+  for (const scriptMatch of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)) {
+    const script = scriptMatch[1]
+    if (script.length > 200_000 || !/document\.write(?:ln)?\s*\(/i.test(script)) continue
+    for (const pattern of [/'((?:\\.|[^'\\])*)'/g, /"((?:\\.|[^"\\])*)"/g]) {
+      for (const match of script.matchAll(pattern)) {
+        if (match[1].length > 80_000) continue
+        const decoded = decodeStaticJsString(match[1])
+        if (!/<a\b/i.test(decoded)) continue
+        // attachmentExtension is designed for URLs/titles; normalize the JS
+        // quote boundary before using it as a coarse prefilter. Every actual
+        // href is still resolved and checked by intelligenceAllowedAttachmentUrl.
+        const fileish = attachmentExtension(decoded.replace(/["']/g, " "))
+        const opaque = /<a\b[^>]*href\s*=\s*["'][^"']*(?:download|attachment|file)[^"']*["'][^>]*>[\s\S]{0,240}(?:附件|下载)/i.test(decoded)
+        if (!fileish && !opaque) continue
+        total += decoded.length
+        if (total > 100_000) return fragments.join("\n")
+        fragments.push(`<div data-intelligence-static-write>${decoded}</div>`)
+      }
+    }
+  }
+  return fragments.join("\n")
+}
+
 function loadPage(html: string) {
-  // Some government CMS pages embed static lists in XML CDATA/comments. Never execute scripts.
+  // Some government CMS pages embed static lists in XML CDATA/comments or in
+  // static JS strings. None of these parsing paths execute page scripts.
   const extra = [...html.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)].map(m => m[1]).join("\n")
-  return cheerio.load(`${html}\n${extra}`.replace(/<!--([\s\S]*?)-->/g, (_match, text: string) => /<a\s/i.test(text) ? text : ""))
+  const staticWritten = staticDocumentWriteHtml(html)
+  return cheerio.load(`${html}\n${extra}\n${staticWritten}`.replace(/<!--([\s\S]*?)-->/g, (_match, text: string) => /<a\s/i.test(text) ? text : ""))
 }
 export function intelligenceDiscoverColumns(html: string, source: IntelligenceSource, base = source.home) {
   const $ = loadPage(html)
@@ -206,7 +249,11 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   }
   // Do not treat the entire site navigation as article text when a template is unknown.
   const foundAttachments = new Map<string, { title: string, url: string }>()
-  ;(articleRoot ?? $("body")).find("a[href]").each((_index, el) => {
+  const attachmentLinks = [
+    ...(articleRoot ?? $("body")).find("a[href]").toArray(),
+    ...$("[data-intelligence-static-write] a[href]").toArray(),
+  ]
+  attachmentLinks.forEach((el) => {
     const href = $(el).attr("href") ?? ""
     const url = intelligenceAllowedAttachmentUrl(href, source, candidate.url)
     if (!url) return
