@@ -1,20 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { attachmentExtension, decodeAttachmentText, detectAttachment, publicAttachmentUrl, type AttachmentPreviewTarget } from "@shared/attachment-preview"
+import { decodeAttachmentText, detectAttachment, type AttachmentPreviewTarget } from "@shared/attachment-preview"
+import { originalPdfPreviewUrl } from "@shared/attachment-origin-preview"
 import { intelligenceHttpUrl } from "@shared/intelligence"
 import { loadAttachment } from "@shared/attachment-fetch"
 import { escapePreviewText, previewFrameHtml, renderDocx, renderLegacyDoc, sanitizePreviewHtml } from "./render"
 
 type Preview = { html?: string, blobUrl?: string, format: string, filename: string, via: string }
-
-function originalPdfUrl(target: AttachmentPreviewTarget) {
-  try {
-    const url = publicAttachmentUrl(target.url)
-    return attachmentExtension(url) === "pdf" || attachmentExtension(target.title) === "pdf" ? url : ""
-  } catch {
-    return ""
-  }
-}
 
 export default function AttachmentReader({ target, onClose }: { target: AttachmentPreviewTarget, onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -26,7 +18,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
   const [preview, setPreview] = useState<Preview | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [zoom, setZoom] = useState(100)
-  const originPdf = useMemo(() => originalPdfUrl(target), [target.title, target.url])
+  const originPdf = useMemo(() => originalPdfPreviewUrl(target), [target.title, target.url])
   const browserCanPreviewPdf = typeof navigator === "undefined" || !("pdfViewerEnabled" in navigator) || navigator.pdfViewerEnabled
   useEffect(() => {
     const element = dialog.current!
