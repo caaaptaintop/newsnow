@@ -99,7 +99,7 @@ try {
   assert.equal(await evaluate("document.querySelector('iframe').getAttribute('sandbox')"), "")
   assert.equal(relayRequests.length, 1, "CORS fallback uses metadata-only POST")
   await evaluate("document.querySelector('dialog input').focus()")
-  await send("Input.dispatchKeyEvent", { type: "char", text: "项目名称" })
+  for (const char of "项目名称") await send("Input.dispatchKeyEvent", { type: "char", text: char })
   await until("document.querySelector('dialog input').value === '项目名称'", "document search input")
   await until("document.querySelector('iframe').srcdoc.includes('<mark>项目名称</mark>')", "document search")
   await writeFile("attachment-test-results/doc-desktop.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
