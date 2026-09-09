@@ -1,3 +1,4 @@
+import type { IntelligenceArticle } from "../../shared/intelligence"
 import { BuildingError, buildingHash, buildingLimits, canonicalItems, normalizeBatchItem, publicArticle, type BatchItem } from "../../shared/building-contract"
 import { intelligenceSources } from "../../shared/official-sources"
 import { isPublishedSource } from "../../shared/public-site"
@@ -99,7 +100,7 @@ export async function knownRecords(db:BuildingDB,keys:any){
   for(const r of [...result[0].results,...result[1].results])if(!rows.has(r.key)||rows.get(r.key).at<r.at)rows.set(r.key,r)
   return{records:[...rows.values()]}
 }
-export async function articleById(db:BuildingDB,key:string){
+export async function articleById(db:BuildingDB,key:string):Promise<IntelligenceArticle|undefined>{
   if(!/^building:[a-f0-9]{64}$/.test(key))return undefined
   const row=await db.prepare("SELECT data FROM building_docs_v3 WHERE id=?").bind(key).first<{data:string}>()
   return row?JSON.parse(row.data):undefined

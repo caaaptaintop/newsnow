@@ -20,7 +20,7 @@ let published=0
 for(let i=0;i<items.length;i+=buildingLimits.batchItems){
   const chunk=items.slice(i,i+buildingLimits.batchItems),hash=await buildingHash(JSON.stringify(chunk))
   let outbox=await read(outboxPath,null)
-  if(!outbox||outbox.hash!==hash){const version=await publisherRequest({action:"version"});outbox={hash,batchId:`mac_${crypto.randomUUID()}`,baseRevision:version.revision,items:chunk};await atomicJson(outboxPath,outbox)}
+  if(!outbox||outbox.hash!==hash){const version=await publisherRequest({action:"version"});if(!version||typeof version!=="object"||!("revision" in version)||!Number.isSafeInteger(version.revision))throw new Error("发布版本响应无效");outbox={hash,batchId:`mac_${crypto.randomUUID()}`,baseRevision:version.revision,items:chunk};await atomicJson(outboxPath,outbox)}
   try{await publisherRequest({action:"publish",batchId:outbox.batchId,baseRevision:outbox.baseRevision,items:outbox.items})}catch(error:any){if(error.statusCode===409)await atomicJson(outboxPath,null);throw error}
   for(const item of chunk)ledger[`${item.kind}:${item.key}`]=JSON.stringify(item)
   await atomicJson(ledgerPath,ledger);await atomicJson(outboxPath,null);published+=chunk.length

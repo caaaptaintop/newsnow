@@ -98,7 +98,7 @@ describe("SQL pagination and full-range filters",()=>{
     const first=await readPage(memory.db,params,now);expect(first.total).toBe(2);params.set("cursor",first.nextCursor!)
     const second=await readPage(memory.db,params,now);expect(second.articles[0].key).not.toBe(first.articles[0].key)
   })
-  it.each([{limit:"101"},{sort:"bad"},{days:"3"},{category:"constructor"},{cursor:"broken"}])("rejects invalid queries %j",async query=>{await publish([article(1)]);await expect(readPage(memory.db,new URLSearchParams(query),now)).rejects.toMatchObject({statusCode:400})})
+  it.each([{limit:"101"},{sort:"bad"},{days:"3"},{category:"constructor"},{cursor:"broken"}])("rejects invalid queries %j",async query=>{await publish([article(1)]);await expect(readPage(memory.db,new URLSearchParams(Object.entries(query).filter((entry): entry is [string,string] => typeof entry[1] === "string")),now)).rejects.toMatchObject({statusCode:400})})
 })
 describe("durable relay limits",()=>{
   it("enforces concurrent reservations with idempotent settlement",async()=>{

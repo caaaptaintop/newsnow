@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import handler from "../server/api/intelligence/attachment.post"
-import { buildingDB, articleById } from "../server/building/store"
+import { articleById } from "../server/building/store"
 import { reserveRelay } from "../server/building/relay-budget"
 import { relayAttachment } from "../server/utils/attachment-relay"
 

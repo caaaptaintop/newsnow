@@ -2,13 +2,17 @@ import { getRequestURL,setHeader } from "h3"
 import { buildingHash } from "../../shared/building-contract"
 import { buildingDB,buildingMeta } from "./store"
 import { readPage,readQuery,readVersion } from "./read"
+interface EdgeCache {
+  match(request: Request): Promise<Response | undefined>
+  put(request: Request, response: Response): Promise<void>
+}
 const entries=new Map<string,{expires:number,value:Promise<any>}>()
 export async function cachedBuildingPage(event:any){
   const db=buildingDB(event),params=getRequestURL(event).searchParams,q=readQuery(params),state=await buildingMeta(db)
   const key=await buildingHash(JSON.stringify(["building-v3.1",state.revision,q]))
   const previous=entries.get(key)
   if(previous&&previous.expires>Date.now()){setHeader(event,"X-Intelligence-Cache","memory");return previous.value}
-  const cache=(globalThis.caches as any)?.default as Cache|undefined
+  const cache=(globalThis as typeof globalThis & { caches?: { default: EdgeCache } }).caches?.default
   const cacheKey=new Request(`${getRequestURL(event).origin}/__building_cache/${key}`)
   if(cache&&!q.filters.q){try{const hit=await cache.match(cacheKey);if(hit){setHeader(event,"X-Intelligence-Cache","edge");return await hit.json()}}catch{/* Cache is disposable. */}}
   const pending=readPage(db,params)
