@@ -77,11 +77,11 @@ async function until(expression, label) {
 async function open(key) {
   const filename = fixtures[key].filename
   await evaluate(`document.querySelector('.intel-original-attachments').open=true; [...document.querySelectorAll('.intel-preview-open')].find(b=>b.textContent.includes(${JSON.stringify(filename)})).click()`)
-  await until("!!document.querySelector('dialog[open]')", "dialog open")
+  await until("!!document.querySelector('.intel-preview-dialog[open]')", "attachment dialog open")
 }
 async function close() {
-  await evaluate("document.querySelector('[aria-label=\"关闭附件预览\"]').click()")
-  await until("!document.querySelector('dialog')", "dialog closed")
+  await evaluate("document.querySelector('.intel-preview-dialog [aria-label=\"关闭附件预览\"]').click()")
+  await until("!document.querySelector('.intel-preview-dialog')", "attachment dialog closed")
 }
 await mkdir("attachment-test-results", { recursive: true })
 try {
@@ -93,10 +93,10 @@ try {
   await until("document.body?.innerText?.includes('附件预览自动验收')", "workspace hydration")
   assert.equal(relayRequests.length, 0, "no attachment prefetch")
   await open("doc")
-  await until("document.querySelector('iframe[title=\"附件阅读预览\"]')?.srcdoc.includes('测试工程')", "binary DOC in worker")
-  const html = await evaluate("document.querySelector('iframe').srcdoc")
+  await until("document.querySelector('.intel-preview-dialog iframe[title=\"附件阅读预览\"]')?.srcdoc.includes('测试工程')", "binary DOC in worker")
+  const html = await evaluate("document.querySelector('.intel-preview-dialog iframe').srcdoc")
   assert(html.includes("<table>")); assert(html.includes("智能建造附件预览"))
-  assert.equal(await evaluate("document.querySelector('iframe').getAttribute('sandbox')"), "")
+  assert.equal(await evaluate("document.querySelector('.intel-preview-dialog iframe').getAttribute('sandbox')"), "")
   assert.equal(relayRequests.length, 1, "CORS fallback uses metadata-only POST")
   await writeFile("attachment-test-results/doc-desktop.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
   await close()
@@ -104,40 +104,40 @@ try {
   for (const key of ["docx", "text"]) {
     const before = relayRequests.length
     await open(key)
-    await until("!!document.querySelector('iframe[srcdoc]')", `${key} preview`)
+    await until("!!document.querySelector('.intel-preview-dialog iframe[srcdoc]')", `${key} preview`)
     assert.equal(relayRequests.length, before, "CORS-enabled origin should read directly")
-    assert((await evaluate("document.querySelector('iframe').srcdoc")).includes(key === "docx" ? "DOCX 预览测试" : "中文文本预览"))
+    assert((await evaluate("document.querySelector('.intel-preview-dialog iframe').srcdoc")).includes(key === "docx" ? "DOCX 预览测试" : "中文文本预览"))
     await close()
   }
   await open("html")
-  await until("!!document.querySelector('iframe[srcdoc]')", "Word HTML sandbox")
-  assert(!(await evaluate("document.querySelector('iframe').srcdoc")).includes("<script>"))
+  await until("!!document.querySelector('.intel-preview-dialog iframe[srcdoc]')", "Word HTML sandbox")
+  assert(!(await evaluate("document.querySelector('.intel-preview-dialog iframe').srcdoc")).includes("<script>"))
   await sleep(300)
   assert.equal(leaks.length, 0, "no external document resource requests")
   assert.equal(await evaluate("Boolean(window.hacked)"), false)
   await close()
   for (const key of ["bad", "rtf"]) {
     await open(key)
-    await until("document.querySelector('dialog')?.innerText.includes('无法在线预览')", `${key} truthful error`)
-    assert(await evaluate("!!document.querySelector('dialog a.intel-preview-primary')"))
+    await until("document.querySelector('.intel-preview-dialog')?.innerText.includes('无法在线预览')", `${key} truthful error`)
+    assert(await evaluate("!!document.querySelector('.intel-preview-dialog a.intel-preview-primary')"))
     await close()
   }
   for (const key of ["pdf", "image"]) {
     await open(key)
-    await until(key === "pdf" ? "document.querySelector('iframe')?.src.startsWith('blob:')" : "document.querySelector('.intel-preview-image img')?.src.startsWith('blob:')", `${key} blob preview`)
-    const blob = await evaluate(key === "pdf" ? "document.querySelector('iframe').src" : "document.querySelector('.intel-preview-image img').src")
+    await until(key === "pdf" ? "document.querySelector('.intel-preview-dialog iframe')?.src.startsWith('blob:')" : "document.querySelector('.intel-preview-dialog .intel-preview-image img')?.src.startsWith('blob:')", `${key} blob preview`)
+    const blob = await evaluate(key === "pdf" ? "document.querySelector('.intel-preview-dialog iframe').src" : "document.querySelector('.intel-preview-dialog .intel-preview-image img').src")
     await close()
     assert(await evaluate(`window.__revoked.includes(${JSON.stringify(blob)})`), "blob URL revoked on close")
   }
   await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
   await open("doc")
-  await until("!!document.querySelector('iframe[srcdoc]')", "mobile DOC preview")
-  assert(await evaluate("document.querySelector('dialog').getBoundingClientRect().width <= 390"))
+  await until("!!document.querySelector('.intel-preview-dialog iframe[srcdoc]')", "mobile DOC preview")
+  assert(await evaluate("document.querySelector('.intel-preview-dialog').getBoundingClientRect().width <= 390"))
   await writeFile("attachment-test-results/doc-mobile.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
   await close()
   assert.equal(downloads.length, 0, "preview must not trigger browser downloads")
   assert.equal(exceptions.length, 0, exceptions.join("\n"))
-  const report = { result: "pass", cases: ["no prefetch", "binary Chinese DOC", "table structure", "CORS relay", "DOCX direct", "text direct", "search", "sandbox", "no external resources", "error fallback", "PDF blob", "image blob", "blob cleanup", "Escape", "mobile", "no downloads"], relayRequests: relayRequests.length, downloads, leaks, exceptions }
+  const report = { result: "pass", cases: ["no prefetch", "binary Chinese DOC", "table structure", "CORS relay", "DOCX direct", "text direct", "sandbox", "no external resources", "error fallback", "PDF blob", "image blob", "blob cleanup", "close cleanup", "mobile", "no downloads"], relayRequests: relayRequests.length, downloads, leaks, exceptions }
   await writeFile("attachment-test-results/report.json", JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2))
 } catch (error) {
   await writeFile("attachment-test-results/failure.txt", String(error) + "\n" + exceptions.join("\n"))
