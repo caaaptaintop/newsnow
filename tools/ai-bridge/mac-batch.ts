@@ -7,6 +7,7 @@ import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceVersion
 import { buildingRecallScore } from "../../shared/building-recall"
 import { collectSource } from "./collect-source"
 import { classifyBatch } from "./classify-batch"
+import { verifyPublicationDate } from "./publication-date"
 import { localCodex } from "./local-codex.mjs"
 
 const args = process.argv.slice(2)
@@ -120,6 +121,11 @@ try {
           if (!decision.keep) return []
           return [{ key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence: "title", model, analysisVersion: intelligenceVersion }]
         })
+        for (let i = 0; i < articles.length; i += 5) {
+          await Promise.all(articles.slice(i, i + 5).map(async (article) => {
+            Object.assign(article, await verifyPublicationDate(source, article, true))
+          }))
+        }
         state.accepted = articles.length
         const result = { ...previous, generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...articles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...selected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
         const pending = resolve(outputDir, "result.pending.json")

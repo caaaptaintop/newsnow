@@ -109,6 +109,13 @@ jobs:
 
           echo "Workers AI binding prepared; durable intelligence uses repository snapshots."
 
+      - name: Synchronize verified publication dates to existing D1 records
+        shell: bash
+        run: |
+          node tools/ai-bridge/publication-sql.mjs data/intelligence-snapshot.json publication-dates.sql
+          pnpm dlx wrangler@${WRANGLER_VERSION} --version
+          pnpm dlx wrangler@${WRANGLER_VERSION} d1 execute newsnow-db --remote --file publication-dates.sql --yes
+
       - name: Deploy to Cloudflare Pages
         id: cloudflare_deploy
         shell: bash

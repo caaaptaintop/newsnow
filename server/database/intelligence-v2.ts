@@ -168,7 +168,7 @@ export const intelligenceSaveV2 = `INSERT INTO intelligence_documents_v1 (id, to
 
 // Legacy rows remain visible until each bounded backfill has migrated them.
 export const intelligenceReadV2 = `SELECT data FROM (
-  SELECT id, topic, published, collected, data FROM intelligence_feed_v2 WHERE topic=?
+  SELECT f.id, f.topic, f.published, f.collected, CASE WHEN json_extract(old.data, '$.publicationDate') IS NULL THEN f.data ELSE json_set(f.data, '$.publicationDate', json_extract(old.data, '$.publicationDate')) END AS data FROM intelligence_feed_v2 f LEFT JOIN intelligence_documents_v1 old ON old.id=f.id WHERE f.topic=?
   UNION ALL
   SELECT old.id, old.topic, old.published, old.collected, old.data FROM intelligence_documents_v1 old
     WHERE old.topic=? AND NOT EXISTS (SELECT 1 FROM intelligence_documents_v2 d WHERE d.id=old.id)
