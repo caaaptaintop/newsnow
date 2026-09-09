@@ -87,7 +87,8 @@ export async function intelligenceFeed(event: any, topic: IntelligenceTopic): Pr
   const runtimeStates = intelligenceSnapshot.pipeline === "mac" ? [] : await Promise.all(sources.map(async s => await store.get<IntelligenceSourceState>(`source:${s.id}`))).then(values => values.filter((value): value is IntelligenceSourceState => !!value))
   const runtimeArticles = await store.articles(topic)
   const snapshotArticles = intelligenceSnapshot.articles.filter(article => article.topic === topic)
-  const mergedArticles = intelligenceDedupe([...runtimeArticles, ...snapshotArticles])
+  // Mac snapshots include verified metadata corrections; legacy database copies must not replace them.
+  const mergedArticles = intelligenceDedupe(intelligenceSnapshot.pipeline === "mac" ? [...snapshotArticles, ...runtimeArticles] : [...runtimeArticles, ...snapshotArticles])
   return {
     version: intelligenceVersion,
     pipeline: intelligenceSnapshot.pipeline,
