@@ -4,6 +4,7 @@ import { hackernewsFeed } from "../server/utils/hackernews-feed"
 import { collectSource } from "../tools/ai-bridge/collect-source"
 import { mergeBatch } from "../tools/ai-bridge/merge-batch"
 import { classifyBatch } from "../tools/ai-bridge/classify-batch"
+import { enrichOfficialArticleMetadata } from "../tools/ai-bridge/enrich-article"
 import { buildingRecallScore } from "../shared/building-recall"
 import { intelligenceVersion } from "../shared/intelligence"
 
@@ -39,6 +40,27 @@ it("mac batch rejects forged keys and unapproved classifications, strips raw con
   const merged = mergeBatch(snapshot, { ...batch, articles: [{ ...article, body: "not persisted", html: "not persisted" }] })
   expect(merged.articles[0]).not.toHaveProperty("body")
   expect(merged.articles[0]).not.toHaveProperty("html")
+})
+it("mac page enrichment retains Word attachment metadata without storing body HTML", async () => {
+  const source = { id: "official-test", home: "https://example.gov.cn/" } as any
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(`<div class="TRS_Editor">${"住房城乡建设主管部门公开征求智能建造标准意见。".repeat(8)}<a href="/files/opinion.docx">意见反馈表.docx</a></div>`, { headers: { "content-type": "text/html; charset=utf-8" } })))
+  try {
+    const metadata = await enrichOfficialArticleMetadata(source, { url: "https://example.gov.cn/notice.html" }, { title: "关于征求智能建造标准意见的通知", url: "https://example.gov.cn/notice.html", column: "通知公告", attachments: [] })
+    expect(metadata.attachments).toEqual([{ title: "意见反馈表.docx", url: "https://example.gov.cn/files/opinion.docx" }])
+    expect(metadata).not.toHaveProperty("text")
+    expect(metadata).not.toHaveProperty("html")
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+it("validated attachment backfills update existing articles without reclassification", () => {
+  const existing = { ...article, key: "existing", attachments: [] }
+  const snapshot = { articles: [existing], states: [], generatedAt: 1 }
+  const update = { key: "existing", attachments: [{ title: "意见表.docx", url: "https://zjw.sh.gov.cn/files/opinion.docx" }] }
+  const merged = mergeBatch(snapshot, { articles: [], decisions: [], attachmentUpdates: [update] })
+  expect(merged.articles[0].attachments).toEqual(update.attachments)
+  expect(mergeBatch(merged, { articles: [], decisions: [], attachmentUpdates: [update] })).toEqual(merged)
+  expect(() => mergeBatch(snapshot, { articles: [], decisions: [], attachmentUpdates: [{ key: "existing", attachments: [{ title: "bad", url: "javascript:alert(1)" }] }] })).toThrow("Invalid attachment update")
 })
 it("shared recall excludes routine safety notices while retaining target topics", () => {
   expect(buildingRecallScore({ title: "建筑工地安全检查情况通报" })).toBe(0)
