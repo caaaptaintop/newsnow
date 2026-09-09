@@ -30,18 +30,15 @@ it("background worker uses Luna low and only publishes after the complete source
     rmSync(root, { recursive: true, force: true })
   }
 })
-it("failed collection blocks publication and pauses automatic attempts for an hour", () => {
+it("failed collection preserves its error and allows the next scheduled attempt", () => {
   const root = mkdtempSync(join(tmpdir(), "newsnow-worker-test-"))
   try {
     const result = runWorker(root, () => {
       throw new Error("offline")
     })
     assert.equal(result.state, "error")
-    assert.equal(shouldRun(result, result.retryAfter - 1), false)
+    assert.equal(result.retryAfter, 0)
     assert.equal(shouldRun(result, result.retryAfter), true)
-    assert.equal(runWorker(root, () => {
-      throw new Error("must not run")
-    }).skipped, "cooldown")
     const stored = JSON.parse(readFileSync(join(root, ".data/mac-batch/worker-status.json"), "utf8"))
     assert.equal(stored.error, "offline")
     writeFileSync(join(root, ".data/mac-batch/worker-status.json"), "{}")

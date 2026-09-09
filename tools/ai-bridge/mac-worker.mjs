@@ -61,7 +61,8 @@ export function runWorker(root, run = command, now = Date.now()) {
   } catch (error) {
     status.state = "error"
     status.error = error.message
-    status.retryAfter = Date.now() + 3600000
+    // launchd already spaces attempts by 15 minutes; do not add an hour after wake.
+    status.retryAfter = 0
     status.finishedAt = Date.now()
   } finally {
     save()
