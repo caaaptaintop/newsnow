@@ -60,6 +60,12 @@ jobs:
           print('\n'.join(bad))
           sys.exit(bool(bad))
           PYTYPE
+      - name: Install Chinese fonts for visual regression evidence
+        run: |
+          if ! fc-list :lang=zh | grep -q .; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fi
       - name: Building browser interaction regressions
         shell: bash
         run: |
