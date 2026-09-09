@@ -2,6 +2,7 @@ import { readSettings, savedProfileAI, settingsEnabled } from "../utils/ai-setti
 
 export default defineEventHandler(async (event) => {
   const path = getRequestURL(event).pathname
+  if (/^\/api\/intelligence\/attachment\/?$/.test(path)) return // Preview must not initialize AI settings or providers.
   if (!(path.startsWith("/api/intelligence") || path.startsWith("/api/topics/health")) || path.startsWith("/api/intelligence/ai/")) return
   if (!settingsEnabled(event)) return
   try {
