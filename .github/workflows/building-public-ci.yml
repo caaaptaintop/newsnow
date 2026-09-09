@@ -33,13 +33,57 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Existing unit regressions
-        run: pnpm exec vitest run test/intelligence.test.ts test/ai-provider.test.ts test/attachment-preview.test.ts
+        run: pnpm exec vitest run test
       - name: Existing Mac orchestration regressions
         run: node --test tools/ai-bridge/mac-worker.test.mjs
       - name: Cloudflare production build
         run: pnpm run build
         env:
           CF_PAGES: 1
+      - name: Reject changed-file type errors
+        shell: bash
+        run: |
+          pnpm exec tsc --noEmit -p tsconfig.node.json > typecheck-node.txt 2>&1 || true
+          pnpm exec tsc --noEmit -p tsconfig.app.json > typecheck-app.txt 2>&1 || true
+          python - <<'PYTYPE'
+          import re, subprocess, sys
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'origin/main...HEAD'], text=True).splitlines())
+          bad, inherited = [], []
+          for path in ('typecheck-node.txt', 'typecheck-app.txt'):
+              for line in open(path):
+                  match = re.match(r'^([^\s(]+)\(\d+,\d+\): error TS', line)
+                  if match:
+                      (bad if match.group(1) in changed else inherited).append(line.rstrip())
+                  elif 'error TS' in line:
+                      bad.append(line.rstrip())
+          print(f'Changed-file errors: {len(bad)}; inherited errors: {len(inherited)}')
+          print('\n'.join(bad))
+          sys.exit(bool(bad))
+          PYTYPE
+      - name: Building browser interaction regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
+          "$CHROME" --headless=new --no-sandbox --disable-dev-shm-usage --remote-debugging-port=9222 --user-data-dir="$(mktemp -d)" about:blank >/tmp/building-chrome.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          node scripts/building-site-smoke.mjs
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: building-validation
+          path: |
+            typecheck-node.txt
+            typecheck-app.txt
+            building-test-results/
+          if-no-files-found: ignore
+          retention-days: 7
   storage-preflight:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
