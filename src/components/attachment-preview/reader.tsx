@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { decodeAttachmentText, detectAttachment, type AttachmentPreviewTarget } from "@shared/attachment-preview"
+import { originalPdfPreviewUrl } from "@shared/attachment-origin-preview"
 import { intelligenceHttpUrl } from "@shared/intelligence"
 import { loadAttachment } from "@shared/attachment-fetch"
 import { escapePreviewText, previewFrameHtml, renderDocx, renderLegacyDoc, sanitizePreviewHtml } from "./render"
@@ -17,6 +18,8 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
   const [preview, setPreview] = useState<Preview | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [zoom, setZoom] = useState(100)
+  const originPdf = useMemo(() => originalPdfPreviewUrl(target), [target.title, target.url])
+  const browserCanPreviewPdf = typeof navigator === "undefined" || !("pdfViewerEnabled" in navigator) || navigator.pdfViewerEnabled
   useEffect(() => {
     const element = dialog.current!
     const closeButton = element.querySelector<HTMLButtonElement>("[data-preview-close-button]")
@@ -74,7 +77,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
     </nav>
     <div className="intel-preview-content" aria-busy={!!stage}>
       {stage && <div className="intel-preview-message" role="status"><p>{stage}</p><button type="button" onClick={onClose}>取消预览</button></div>}
-      {error && <div className="intel-preview-message" role="alert"><h3>无法在线预览</h3><p>{error}</p><p>不会改用服务器转换、上传到第三方查看器或自动下载。</p><button type="button" onClick={() => setAttempt(value => value + 1)}>重试预览</button></div>}
+      {error && <div className="intel-preview-message" role="alert"><h3>无法在线预览</h3><p>{error}</p><p>不会改用服务器转换、上传到第三方查看器或自动下载。</p>{originPdf && browserCanPreviewPdf && <><a data-preview-origin-pdf className="intel-preview-origin-link" href={originPdf} target="_blank" rel="noreferrer">在新标签页预览原站 PDF</a><p>此方式由浏览器直接读取政府网站 PDF，不经过本站附件转发；部分政府网站禁止跨站嵌入，因此使用新标签页。</p></>}<button type="button" onClick={() => setAttempt(value => value + 1)}>重试本站预览</button></div>}
       {preview?.html && <iframe title="附件阅读预览" sandbox="" referrerPolicy="no-referrer" srcDoc={frame} />}
       {preview?.blobUrl && preview.format === "pdf" && <iframe title="PDF 附件预览" referrerPolicy="no-referrer" src={preview.blobUrl} />}
       {preview?.blobUrl && preview.format === "image" && <div className="intel-preview-image"><img src={preview.blobUrl} alt={preview.filename} /></div>}
