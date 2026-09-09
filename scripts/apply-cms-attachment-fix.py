@@ -6,6 +6,7 @@ old = 'const attachmentExtensions = new Set(["pdf", "ofd", "doc", "docx", "docm"
 if 'intelligenceAttachmentDiscoveryVersion' not in s:
     if old not in s: raise SystemExit('attachment extension anchor missing')
     s = s.replace(old, old + 'export const intelligenceAttachmentDiscoveryVersion = 2\n', 1)
+
 old_load = '''function loadPage(html: string) {
   // Some government CMS pages embed static lists in XML CDATA/comments. Never execute scripts.
   const extra = [...html.matchAll(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/g)].map(m => m[1]).join("\\n")
@@ -24,22 +25,23 @@ new_load = r'''function decodeStaticJsString(value: string) {
 }
 
 function staticDocumentWriteHtml(html: string) {
-  // Some TRS/government CMS templates keep attachment anchors only inside
-  // document.write('...') literals. Extract those literals statically; never
-  // evaluate JavaScript or concatenate dynamic expressions.
+  // TRS-style government CMS templates can keep attachment anchors either in
+  // document.write('...') itself or in a static variable such as hasFJ that is
+  // later written to the page. Read string literals only; never evaluate JS.
   const fragments: string[] = []
   let total = 0
   for (const scriptMatch of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)) {
     const script = scriptMatch[1]
     if (script.length > 200_000 || !/document\.write(?:ln)?\s*\(/i.test(script)) continue
-    for (const pattern of [
-      /document\.write(?:ln)?\(\s*'((?:\\.|[^'\\])*)'\s*\)/gi,
-      /document\.write(?:ln)?\(\s*"((?:\\.|[^"\\])*)"\s*\)/gi,
-    ]) {
+    for (const pattern of [/'((?:\\.|[^'\\])*)'/g, /"((?:\\.|[^"\\])*)"/g]) {
       for (const match of script.matchAll(pattern)) {
+        if (match[1].length > 80_000) continue
         const decoded = decodeStaticJsString(match[1])
         if (!/<a\b/i.test(decoded)) continue
-        const fileish = attachmentExtension(decoded)
+        // attachmentExtension is designed for URLs/titles; normalize the JS
+        // quote boundary before using it as a coarse prefilter. Every actual
+        // href is still resolved and checked by intelligenceAllowedAttachmentUrl.
+        const fileish = attachmentExtension(decoded.replace(/["']/g, " "))
         const opaque = /<a\b[^>]*href\s*=\s*["'][^"']*(?:download|attachment|file)[^"']*["'][^>]*>[\s\S]{0,240}(?:附件|下载)/i.test(decoded)
         if (!fileish && !opaque) continue
         total += decoded.length
@@ -53,7 +55,7 @@ function staticDocumentWriteHtml(html: string) {
 
 function loadPage(html: string) {
   // Some government CMS pages embed static lists in XML CDATA/comments or in
-  // literal document.write calls. None of these paths execute page scripts.
+  // static JS strings. None of these parsing paths execute page scripts.
   const extra = [...html.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)].map(m => m[1]).join("\n")
   const staticWritten = staticDocumentWriteHtml(html)
   return cheerio.load(`${html}\n${extra}\n${staticWritten}`.replace(/<!--([\s\S]*?)-->/g, (_match, text: string) => /<a\s/i.test(text) ? text : ""))
@@ -62,6 +64,7 @@ function loadPage(html: string) {
 if 'function staticDocumentWriteHtml' not in s:
     if old_load not in s: raise SystemExit('loadPage anchor missing')
     s = s.replace(old_load, new_load, 1)
+
 old_scope = '''  const foundAttachments = new Map<string, { title: string, url: string }>()
   ;(articleRoot ?? $("body")).find("a[href]").each((_index, el) => {
 '''
@@ -92,6 +95,16 @@ if 'static CMS document.write' not in s:
     expect(parsed.attachments).toEqual([
       { title: "附件1-南京市城市更新条例（草案）》征求意见稿.pdf", url: `${njSource.home}zmhd/dczj/202609/P020260903657491913704.pdf` },
       { title: "附件2-关于《南京市城市更新条例（草案）》（征求意见稿）起草情况的说明.pdf", url: `${njSource.home}zmhd/dczj/202609/P020260903657496859244.pdf` },
+    ])
+  })
+
+  it("extracts attachment anchors stored in a static hasFJ variable", () => {
+    const cqSource = { id: "official-chongqing", home: "https://zfcxjw.cq.gov.cn/" } as any
+    const candidate = { title: "关于公布重庆市智能建造试点名单的通知", url: `${cqSource.home}zwxx_166/gsgg/202609/t20260903_16027723.html`, column: "公示公告", attachments: [] }
+    const html = `<div class="TRS_Editor">${"重庆市住房城乡建设主管部门公布智能建造试点名单。".repeat(8)}</div><script>var hasFJ='<a href="./P020260903553980549840.docx">附件1：重庆市第六批智能建造试点企业名单.docx</a><BR/><a href="./P020260903553980810778.docx">附件2：重庆市第七批智能建造试点项目名单.docx</a>'; if(hasFJ!=''){var FJarr=hasFJ.split("<BR/>"); document.write('<div>附件下载：</div>'); for(var i=1;i<=FJarr.length;i++){document.write(i+"."+FJarr[i-1]+"<br/>");}}</script>`
+    expect(intelligenceParseArticle(html, candidate, cqSource).attachments.map(item => item.url)).toEqual([
+      `${cqSource.home}zwxx_166/gsgg/202609/P020260903553980549840.docx`,
+      `${cqSource.home}zwxx_166/gsgg/202609/P020260903553980810778.docx`,
     ])
   })
 
