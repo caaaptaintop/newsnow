@@ -19,24 +19,19 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
   const [zoom, setZoom] = useState(100)
   useEffect(() => {
     const element = dialog.current!
-    const closeForm = element.querySelector<HTMLFormElement>("[data-preview-close-form]")
+    const closeButton = element.querySelector<HTMLButtonElement>("[data-preview-close-button]")
     const previous = document.documentElement.style.overflow
     const focused = document.activeElement as HTMLElement | null
     const requestUnmount = (event?: Event) => {
       event?.preventDefault()
       closePreview.current()
     }
-    const handleNativeClose = () => closePreview.current()
-    const handleNativeCancel = (event: Event) => requestUnmount(event)
-    const handleCloseSubmit = (event: Event) => requestUnmount(event)
-    element.addEventListener("close", handleNativeClose)
-    element.addEventListener("cancel", handleNativeCancel)
-    closeForm?.addEventListener("submit", handleCloseSubmit)
+    element.addEventListener("cancel", requestUnmount)
+    closeButton?.addEventListener("click", requestUnmount)
     element.showModal(); document.documentElement.style.overflow = "hidden"
     return () => {
-      closeForm?.removeEventListener("submit", handleCloseSubmit)
-      element.removeEventListener("cancel", handleNativeCancel)
-      element.removeEventListener("close", handleNativeClose)
+      closeButton?.removeEventListener("click", requestUnmount)
+      element.removeEventListener("cancel", requestUnmount)
       if (element.open) element.close()
       document.documentElement.style.overflow = previous
       focused?.focus()
@@ -70,7 +65,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
   }, [target, attempt])
   const frame = useMemo(() => preview?.html ? previewFrameHtml(preview.html, "", zoom) : "", [preview?.html, zoom])
   return createPortal(<dialog ref={dialog} className="intel-preview-dialog" aria-labelledby={headingId}>
-    <header className="intel-preview-header"><div><h2 id={headingId}>{preview?.filename ?? target.title}</h2><p>{target.sourceName} · 按需读取，不保存附件</p></div><form method="dialog" data-preview-close-form><button type="submit" aria-label="关闭附件预览"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></form></header>
+    <header className="intel-preview-header"><div><h2 id={headingId}>{preview?.filename ?? target.title}</h2><p>{target.sourceName} · 按需读取，不保存附件</p></div><button type="button" data-preview-close-button aria-label="关闭附件预览"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
     <nav className="intel-preview-toolbar" aria-label="附件预览操作">
       {preview?.html && <label>缩放 <select value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[60, 80, 100, 120, 150].map(value => <option key={value} value={value}>{value}%</option>)}</select></label>}
       <span className="intel-preview-toolbar-spacer" />
