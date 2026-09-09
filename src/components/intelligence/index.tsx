@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { intelligenceTopics, intelligenceContentTypes, emptyIntelligenceFilters, intelligenceFilter, intelligenceHttpUrl, type IntelligenceArticle, type IntelligenceFeed, type IntelligenceFilters, type IntelligenceSource, type IntelligenceSourceState, type IntelligenceTopic } from "@shared/intelligence"
 import { AttachmentList } from "../attachment-preview"
@@ -36,15 +36,33 @@ function Icon({ kind }: { kind: "search" | "refresh" | "external" | "sources" })
     {kind === "sources" && <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 4 16 4 16 0V5M4 12v7c0 4 16 4 16 0v-7" /></>}
   </svg>
 }
-function MultiFilter({ title, options, value, onChange }: { title: string, options: { id: string, name: string }[], value: string[], onChange: (values: string[]) => void }) {
-  return <details className="intel-filter">
-    <summary>{title}{value.length > 0 && <span className="intel-filter-count">{value.length}</span>}<span className="intel-caret">⌄</span></summary>
-    <div className="intel-filter-menu">
-      <button type="button" className="intel-text-button" onClick={() => onChange([])}>不限{title}</button>
-      {!options.length && <p className="intel-muted">当前没有可用选项</p>}
-      {options.map(option => <label key={option.id}><input type="checkbox" checked={value.includes(option.id)} onChange={e => onChange(e.target.checked ? [...value, option.id] : value.filter(v => v !== option.id))} /><span>{option.name}</span></label>)}
-    </div>
-  </details>
+type FilterOption = { id: string, name: string }
+type LocationGroup = { region: string, cities: string[] }
+function FilterShell({ title, count, open, onToggle, menuClassName = "", children }: { title: string, count: number, open: boolean, onToggle: () => void, menuClassName?: string, children: ReactNode }) {
+  return <div className="intel-filter">
+    <button type="button" className="intel-filter-trigger" aria-haspopup="true" aria-expanded={open} onClick={onToggle}>{title}{count > 0 && <span className="intel-filter-count">{count}</span>}<span className="intel-caret">⌄</span></button>
+    {open && <div className={`intel-filter-menu${menuClassName ? ` ${menuClassName}` : ""}`}>{children}</div>}
+  </div>
+}
+function MultiFilter({ title, options, value, open, onToggle, onChange }: { title: string, options: FilterOption[], value: string[], open: boolean, onToggle: () => void, onChange: (values: string[]) => void }) {
+  return <FilterShell title={title} count={value.length} open={open} onToggle={onToggle}>
+    <button type="button" className="intel-text-button" onClick={() => onChange([])}>不限{title}</button>
+    {!options.length && <p className="intel-muted">当前没有可用选项</p>}
+    {options.map(option => <label key={option.id}><input type="checkbox" checked={value.includes(option.id)} onChange={e => onChange(e.target.checked ? [...value, option.id] : value.filter(v => v !== option.id))} /><span>{option.name}</span></label>)}
+  </FilterShell>
+}
+function LocationFilter({ groups, regions, cities, open, onToggle, onChange }: { groups: LocationGroup[], regions: string[], cities: string[], open: boolean, onToggle: () => void, onChange: (regions: string[], cities: string[]) => void }) {
+  return <FilterShell title="发布地区" count={regions.length + cities.length} open={open} onToggle={onToggle} menuClassName="intel-location-menu">
+    <button type="button" className="intel-text-button" onClick={() => onChange([], [])}>不限地区</button>
+    {!groups.length && <p className="intel-muted">当前没有可用选项</p>}
+    {groups.map(group => {
+      const regionChecked = regions.includes(group.region)
+      return <div className="intel-location-group" key={group.region}>
+        <label className="intel-location-region"><input type="checkbox" checked={regionChecked} onChange={e => onChange(e.target.checked ? [...regions, group.region] : regions.filter(region => region !== group.region), e.target.checked ? cities.filter(city => !group.cities.includes(city)) : cities)} /><span>{group.region}</span></label>
+        {!!group.cities.length && <div className="intel-location-cities">{group.cities.map(city => <label className={regionChecked ? "is-disabled" : ""} key={city}><input type="checkbox" disabled={regionChecked} checked={!regionChecked && cities.includes(city)} onChange={e => onChange(regions, e.target.checked ? [...cities, city] : cities.filter(value => value !== city))} /><span>{city}</span></label>)}</div>}
+      </div>
+    })}
+  </FilterShell>
 }
 function ArticleCard({ article, topic }: { article: IntelligenceArticle, topic: IntelligenceTopic }) {
   const categories: Record<string, string> = intelligenceTopics[topic].categories
@@ -83,6 +101,7 @@ export function IntelligenceWorkspace() {
   const [view, setView] = useState(() => initialView(""))
   const { topic, filters } = view
   const [showSources, setShowSources] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<string>()
   const [syncProgress, setSyncProgress] = useState("")
   const [syncError, setSyncError] = useState("")
   const [busy, setBusy] = useState(false)
@@ -141,6 +160,17 @@ export function IntelligenceWorkspace() {
     window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState)
   }, [])
   useEffect(() => {
+    if (!activeFilter) return
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Element) || !target.closest(".intel-filter")) setActiveFilter(undefined)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setActiveFilter(undefined) }
+    document.addEventListener("pointerdown", closeOutside)
+    document.addEventListener("keydown", closeOnEscape)
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeOnEscape) }
+  }, [activeFilter])
+  useEffect(() => {
     if (macManaged || topic === "health" || !feed.data?.aiEnabled || busy || bootstrapped.current.has(topic)) return
     const pending = feed.data.sources.filter(s => !feed.data!.states.some(st => st.id === s.id && st.checkedAt))
     if (pending.length && !feed.data.articles.length) {
@@ -150,26 +180,41 @@ export function IntelligenceWorkspace() {
   }, [topic, feed.data, busy, sync, macManaged])
   const selectTopic = (next: IntelligenceTopic) => {
     const filters = emptyIntelligenceFilters(); if (next === "health") filters.sort = "recommended"
-    setView({ topic: next, filters }); setVisible(40); setShowSources(false)
+    setView({ topic: next, filters }); setVisible(40); setShowSources(false); setActiveFilter(undefined)
   }
-  const filtered = useMemo(() => intelligenceFilter(articles, filters), [articles, filters])
+  const filtered = useMemo(() => {
+    if (!filters.regions.length && !filters.cities.length) return intelligenceFilter(articles, filters)
+    const withoutLocation = intelligenceFilter(articles, { ...filters, regions: [], cities: [] })
+    return withoutLocation.filter(article => filters.regions.includes(article.region) || filters.cities.includes(article.city))
+  }, [articles, filters])
   const counts = useMemo(() => Object.fromEntries(Object.keys(categories).map(c => [c, articles.filter(a => a.category === c || (a.relatedCategories ?? []).includes(c)).length])), [articles, categories])
   const opts = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN")).map(v => ({ id: v, name: v }))
-  const regionOptions = opts([...sourceList.map(s => s.region), ...articles.map(a => a.region)])
-  const cityOptions = opts([...sourceList, ...articles].filter(s => !filters.regions.length || filters.regions.includes(s.region)).map(s => s.city))
+  const locationGroups = useMemo<LocationGroup[]>(() => {
+    const grouped = new Map<string, Set<string>>()
+    for (const item of [...sourceList, ...articles]) {
+      const region = item.region?.trim()
+      if (!region) continue
+      const regionCities = grouped.get(region) ?? new Set<string>()
+      const city = item.city?.trim()
+      if (city && city !== region) regionCities.add(city)
+      grouped.set(region, regionCities)
+    }
+    return [...grouped.entries()].sort(([a], [b]) => a === "全国" ? -1 : b === "全国" ? 1 : a.localeCompare(b, "zh-CN")).map(([region, regionCities]) => ({ region, cities: [...regionCities].sort((a, b) => a.localeCompare(b, "zh-CN")) }))
+  }, [sourceList, articles])
   const tags = opts(articles.flatMap(a => a.tags ?? []))
   const sourceOptions = [...opts(sourceList.map(s => s.group)), ...sourceList.map(s => ({ id: s.id, name: s.name }))]
   const labelFor = (key: string, value: string) => key === "sources" ? sourceOptions.find(o => o.id === value)?.name ?? value : value
   const selected = (["regions", "cities", "types", "sources", "tags"] as const).flatMap(key => filters[key].map(value => ({ key, value, label: labelFor(key, value) })))
   const reset = () => patchFilters({ ...emptyIntelligenceFilters(), category: filters.category, sort: topic === "health" ? "recommended" : "latest" })
   const statusSummary = `${states.filter(s => s.status === "ok").length} 完成 · ${states.filter(s => s.status === "partial").length} 部分完成 · ${states.filter(s => s.status === "error").length} 失败 · ${states.filter(s => s.status === "pending").length} 待采集`
+  const toggleFilter = (id: string) => setActiveFilter(current => current === id ? undefined : id)
   return <div className="intel-app">
     <header className="intel-topbar"><a href="/" className="intel-brand"><span className="intel-brand-mark">情</span><span>个人信息情报站<small>CAPX · INTELLIGENCE</small></span></a><nav aria-label="一级主题">{topicIds.map(id => <button type="button" key={id} aria-current={topic === id ? "page" : undefined} className={topic === id ? "is-active" : ""} onClick={() => selectTopic(id)}>{intelligenceTopics[id].name}</button>)}</nav><a href="/c/hottest" className="intel-legacy-link">原始热榜</a></header>
     <div className="intel-workspace"><aside className="intel-sidebar"><h2>{intelligenceTopics[topic].name}</h2><p>二级栏目</p><nav aria-label="二级栏目"><button className={!filters.category ? "is-active" : ""} type="button" onClick={() => patchFilters({ category: "" })}><span>全部信息</span><small>{articles.length}</small></button>{Object.entries(categories).map(([id, name]) => <button type="button" key={id} className={filters.category === id ? "is-active" : ""} onClick={() => patchFilters({ category: id })}><span>{name}</span><small>{counts[id]}</small></button>)}</nav><div className="intel-sidebar-note">一条信息可关联多个栏目，“全部信息”去重展示。{topic === "health" && "运动健康保留健宁原有八条选题线。"}</div></aside>
     <section className="intel-main"><div className="intel-heading"><div><span className="intel-eyebrow">{intelligenceTopics[topic].name} / {filters.category ? categories[filters.category] : "全部信息"}</span><h1>{filters.category ? categories[filters.category] : topic === "health" ? "健宁热点选题" : `${intelligenceTopics[topic].name}情报`}</h1><p>{topic === "health" ? "保留事实桥梁、八条选题线与建议切入，不用关键词替代选题判断。" : "官方原文与可信来源，经过 AI 分析后按栏目组织。"}</p></div><div className="intel-actions"><button type="button" className="intel-button" aria-expanded={showSources} onClick={() => setShowSources(!showSources)}><Icon kind="sources" />信息源 <small>{sourceList.length}</small></button><button type="button" className="intel-button intel-primary" disabled={busy || (topic === "health" && health.loading) || !sourceList.length} onClick={() => liveHealth ? void health.refresh() : void sync(sourceList.map(s => s.id), topic)}><Icon kind="refresh" />{busy ? "采集中" : macManaged ? "读取最新结果" : "同步信息"}</button></div></div>
       {showSources && <SourcePanel macManaged={macManaged} sources={sourceList} states={states} busy={busy || health.loading} onSync={id => liveHealth ? void health.refresh() : void sync([id], topic)} />}
       <div className="intel-controls"><form className="intel-search" onSubmit={e => e.preventDefault()} role="search"><Icon kind="search" /><input type="search" aria-label="搜索当前栏目及筛选条件内的信息" placeholder="在当前栏目与筛选条件内搜索标题、摘要、文号…" maxLength={200} value={filters.q} onChange={e => patchFilters({ q: e.target.value })} /><kbd>当前范围</kbd></form>
-        <div className="intel-filter-row"><MultiFilter title="发布地区" options={regionOptions} value={filters.regions} onChange={regions => { const allowed = [...sourceList, ...articles].filter(s => !regions.length || regions.includes(s.region)).map(s => s.city); patchFilters({ regions, cities: filters.cities.filter(c => allowed.includes(c)) }) }} /><MultiFilter title="发布城市" options={cityOptions} value={filters.cities} onChange={cities => patchFilters({ cities })} /><MultiFilter title="类型" options={intelligenceContentTypes.map(t => ({ id: t, name: t }))} value={filters.types} onChange={types => patchFilters({ types })} /><MultiFilter title="来源" options={sourceOptions} value={filters.sources} onChange={sources => patchFilters({ sources })} /><label className="intel-select"><span>时间</span><select aria-label="发布时间" value={filters.days} onChange={e => patchFilters({ days: Number(e.target.value) })}><option value="0">不限时间</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近一年</option></select></label>{topic !== "health" && <label className="intel-select"><span>重要度</span><select aria-label="重要度" value={filters.importance} onChange={e => patchFilters({ importance: Number(e.target.value) })}><option value="0">全部</option><option value="60">值得关注及以上</option><option value="80">重点关注</option></select></label>}<MultiFilter title="标签" options={tags} value={filters.tags} onChange={tags => patchFilters({ tags })} /></div>
+        <div className="intel-filter-row"><LocationFilter groups={locationGroups} regions={filters.regions} cities={filters.cities} open={activeFilter === "location"} onToggle={() => toggleFilter("location")} onChange={(regions, cities) => patchFilters({ regions, cities })} /><MultiFilter title="类型" options={intelligenceContentTypes.map(t => ({ id: t, name: t }))} value={filters.types} open={activeFilter === "types"} onToggle={() => toggleFilter("types")} onChange={types => patchFilters({ types })} /><MultiFilter title="来源" options={sourceOptions} value={filters.sources} open={activeFilter === "sources"} onToggle={() => toggleFilter("sources")} onChange={sources => patchFilters({ sources })} /><label className="intel-select"><span>时间</span><select aria-label="发布时间" value={filters.days} onChange={e => patchFilters({ days: Number(e.target.value) })}><option value="0">不限时间</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option><option value="365">最近一年</option></select></label>{topic !== "health" && <label className="intel-select"><span>重要度</span><select aria-label="重要度" value={filters.importance} onChange={e => patchFilters({ importance: Number(e.target.value) })}><option value="0">全部</option><option value="60">值得关注及以上</option><option value="80">重点关注</option></select></label>}<MultiFilter title="标签" options={tags} value={filters.tags} open={activeFilter === "tags"} onToggle={() => toggleFilter("tags")} onChange={tags => patchFilters({ tags })} /></div>
         {tags.length > 0 && <div className="intel-quick-tags"><span>内容标签</span>{tags.slice(0, 8).map(tag => <button type="button" key={tag.id} className={filters.tags.includes(tag.id) ? "is-active" : ""} onClick={() => patchFilters({ tags: filters.tags.includes(tag.id) ? filters.tags.filter(t => t !== tag.id) : [...filters.tags, tag.id] })}>{tag.name}</button>)}</div>}
         {(selected.length > 0 || filters.days > 0 || filters.importance > 0 || filters.q) && <div className="intel-selected"><span>已选</span>{selected.map(s => <button type="button" key={`${s.key}:${s.value}`} onClick={() => patchFilters({ [s.key]: filters[s.key].filter(v => v !== s.value) })}>{s.label}<span aria-label="移除">×</span></button>)}{filters.days > 0 && <button type="button" onClick={() => patchFilters({ days: 0 })}>最近 {filters.days} 天 ×</button>}{filters.importance > 0 && <button type="button" onClick={() => patchFilters({ importance: 0 })}>{filters.importance === 80 ? "重点关注" : "值得关注及以上"} ×</button>}{filters.q && <button type="button" onClick={() => patchFilters({ q: "" })}>搜索：{filters.q} ×</button>}<button type="button" className="intel-text-button" onClick={reset}>清除筛选</button></div>}
       </div>
@@ -184,7 +229,7 @@ export function IntelligenceWorkspace() {
       {!loading && !filtered.length && <div className="intel-empty"><h2>{busy && activeSyncTopic === topic ? "正在采集并分析" : articles.length ? "当前条件下没有结果" : "暂无已入库信息"}</h2><p>{articles.length ? "可减少筛选条件或清除搜索词；未提供发布日期的内容不出现在限定日期的结果中。" : macManaged ? "后台尚未发布此主题的新结果；请查看来源状态，未完成部分将在后续批次继续处理。" : topic === "health" ? "本轮未产生可展示的 AI 选题；请检查信息源与 AI 状态。" : "来源清单已配置。点击“同步信息”执行采集，成功分析后的内容会显示在这里；不会填入演示新闻。"}</p>{articles.length > 0 && <button type="button" className="intel-button" onClick={reset}>清除筛选</button>}</div>}
       <div className="intel-feed">{filtered.slice(0, visible).map(article => <ArticleCard key={article.key} article={article} topic={topic} />)}</div>
       {filtered.length > visible && <button type="button" className="intel-load-more" onClick={() => setVisible(v => v + 40)}>显示更多（还有 {filtered.length - visible} 条）</button>}
-      <p className="intel-disclaimer">筛选中的地区与城市指发布机构所在地，不等同于政策适用范围。发布日期不明的内容保持未提供；摘要与分类由 AI 辅助生成，具体条款以原文为准。</p>
+      <p className="intel-disclaimer">筛选中的地区指发布机构所在地，不等同于政策适用范围。发布日期不明的内容保持未提供；摘要与分类由 AI 辅助生成，具体条款以原文为准。</p>
     </section></div>
   </div>
 }
