@@ -1,7 +1,9 @@
+import { publicSite } from "@shared/public-site"
 import process from "node:process"
 import { jwtVerify } from "jose"
 
 export default defineEventHandler(async (event) => {
+  if (publicSite.readOnly) { event.context.disabledLogin = true; return }
   const url = getRequestURL(event)
   if (!url.pathname.startsWith("/api")) return
   if (["JWT_SECRET", "G_CLIENT_ID", "G_CLIENT_SECRET"].find(k => !process.env[k])) {

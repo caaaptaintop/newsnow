@@ -1,5 +1,5 @@
 import { createError, defineEventHandler, getRequestURL, setHeaders } from "h3"
-import { publicSite, isPublishedTopic } from "@shared/public-site"
+import { isPublishedTopic, publicSite } from "@shared/public-site"
 import { publicIntelligenceFeed } from "../../utils/public-intelligence"
 
 export default defineEventHandler(async (event) => {
@@ -8,5 +8,6 @@ export default defineEventHandler(async (event) => {
   if (topics.length > 1) throw createError({ statusCode: 400, message: "只能选择一个主题" })
   const topic = topics[0] ?? publicSite.defaultTopic
   if (!isPublishedTopic(topic)) throw createError({ statusCode: 404, message: "该主题暂未开放" })
-  return publicIntelligenceFeed(topic)
+  const { version, updatedAt } = await publicIntelligenceFeed(topic)
+  return { topic, version, updatedAt }
 })

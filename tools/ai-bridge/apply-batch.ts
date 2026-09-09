@@ -1,12 +1,23 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { isPublishedSource, isPublishedTopic } from "../../shared/public-site"
+import { intelligenceSources } from "../../shared/official-sources"
 import { mergeBatch } from "./merge-batch"
 
 const root = resolve(import.meta.dirname, "../..")
 const path = resolve(root, "data/intelligence-snapshot.json")
 const snapshot = JSON.parse(await readFile(path, "utf8"))
 const batch = JSON.parse(await readFile(resolve(root, ".data/mac-batch/result.json"), "utf8"))
-const result = mergeBatch(snapshot, batch)
+const enabledIds = new Set(intelligenceSources.filter(isPublishedSource).map(source => source.id))
+const publishedKeys = new Set(snapshot.articles.filter((article: any) => isPublishedTopic(article.topic)).map((article: any) => article.key))
+const activeBatch = {
+  ...batch,
+  articles: batch.articles.filter((article: any) => isPublishedTopic(article.topic) && enabledIds.has(article.sourceId)),
+  decisions: batch.decisions.filter((decision: any) => enabledIds.has(decision.sourceId)),
+  states: (batch.states ?? []).filter((state: any) => enabledIds.has(state.id)),
+  attachmentUpdates: (batch.attachmentUpdates ?? []).filter((update: any) => publishedKeys.has(update.key)),
+}
+const result = mergeBatch(snapshot, activeBatch)
 const added = result.articles.length - snapshot.articles.length
 if (JSON.stringify(result) !== JSON.stringify(snapshot)) {
   const payload = JSON.stringify(result)

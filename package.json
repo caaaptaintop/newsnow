@@ -12,7 +12,7 @@
   "homepage": "https://github.com/ourongxing/newsnow",
   "scripts": {
     "dev": "npm run presource && cross-env NODE_OPTIONS=--use-env-proxy vite dev",
-    "build": "npm run presource && vite build",
+    "build": "npm run presource && tsx scripts/prepare-public-snapshot.ts && vite build && node scripts/finalize-public-build.mjs",
     "lint": "eslint",
     "presource": "tsx ./scripts/favicon.ts && tsx ./scripts/source.ts",
     "start": "node --env-file .env.server dist/output/server/index.mjs",

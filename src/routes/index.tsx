@@ -1,3 +1,3 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { IntelligenceWorkspace } from "~/components/intelligence"
-export const Route = createFileRoute("/")({ component: IntelligenceWorkspace })
+import { BuildingWorkspace } from "~/components/intelligence/building"
+export const Route = createFileRoute("/")({ component: BuildingWorkspace })

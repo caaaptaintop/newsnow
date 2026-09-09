@@ -13,7 +13,7 @@ vi.mock("h3", () => ({
   sendStream: (_event: any, body: unknown) => body,
 }))
 vi.mock("../server/utils/intelligence-store", () => ({ getIntelligenceStore: vi.fn(async () => ({ articles: async () => [] })) }))
-vi.mock("../shared/intelligence-snapshot", () => ({ intelligenceSnapshot: { pipeline: "mac", articles: [{ topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] }] } }))
+vi.mock("../shared/intelligence-snapshot", () => ({ intelligenceSnapshot: { pipeline: "mac", articles: [{ topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] }, { topic: "health", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }] }] } }))
 vi.mock("../server/utils/attachment-relay", async (original) => ({ ...await original<typeof import("../server/utils/attachment-relay")>(), relayAttachment: vi.fn(async () => new Response("document bytes")) }))
 const body = { topic: "building", articleKey: "known", url: "https://demo.gov.cn/download?id=1" }
 const event = (data: unknown = body, headers = {}) => ({ body: JSON.stringify(data), headers: { "content-type": "application/json", origin: "https://news.example.com", ...headers }, context: {}, responseHeaders: {} })

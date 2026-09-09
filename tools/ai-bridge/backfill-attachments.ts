@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import process from "node:process"
+import { isPublishedSource } from "../../shared/public-site"
 import { intelligenceSources } from "../../shared/official-sources"
 import { enrichOfficialArticleMetadata } from "./enrich-article"
 import { intelligenceAttachmentDiscoveryVersion } from "../../server/utils/intelligence-parser"
@@ -31,7 +32,7 @@ try {
 ledger.checked ??= {}
 ledger.failures ??= {}
 
-const sources = new Map(intelligenceSources.filter(source => source.enabled && !source.newsnowId).map(source => [source.id, source]))
+const sources = new Map(intelligenceSources.filter(source => isPublishedSource(source) && !source.newsnowId).map(source => [source.id, source]))
 const needsCurrentAttachmentCheck = (article: any) => {
   const checked = ledger.checked[article.key]
   const currentCheck = checked && Number(checked.discoveryVersion ?? 1) >= intelligenceAttachmentDiscoveryVersion

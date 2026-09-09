@@ -1,3 +1,4 @@
+import { isPublishedSource } from "../../shared/public-site"
 import { createHash } from "node:crypto"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceHttpUrl, intelligenceVersion } from "../../shared/intelligence"
 import { intelligenceMetadataOnly } from "../../shared/intelligence-storage"
@@ -29,7 +30,7 @@ export function mergeBatch(snapshot: any, batch: any) {
   const added: IntelligenceArticle[] = []
   for (const article of batch.articles) {
     if (existing.has(article.key)) continue
-    const source = intelligenceSources.find(s => s.id === article.sourceId && s.enabled)
+    const source = intelligenceSources.find(s => s.id === article.sourceId && isPublishedSource(s))
     const key = `${source?.topic}:${createHash("sha256").update(intelligenceCanonicalUrl(article.url)).digest("hex")}`
     const decision = batch.decisions.find((d: any) => d.key === key && d.title === article.title && d.keep === true)
     if (!source || key !== article.key || source.topic !== article.topic || article.analysisVersion !== intelligenceVersion
@@ -44,6 +45,8 @@ export function mergeBatch(snapshot: any, batch: any) {
   const states = new Map((snapshot.states ?? []).map((s: any) => [s.id, s]))
   let changed = added.length > 0 || attachmentUpdates.size > 0 || (batch.pipeline === "mac" && snapshot.pipeline !== "mac")
   for (const state of batch.states ?? []) {
+    const registered = intelligenceSources.find(source => source.id === state.id)
+    if (registered && !isPublishedSource(registered)) continue
     if (!intelligenceSources.some(s => s.id === state.id) || !["ok", "partial", "error"].includes(state.status) || !Number.isFinite(state.checkedAt)) throw new Error("Invalid source state")
     const old: any = states.get(state.id)
     if (!old || state.checkedAt > (old.checkedAt ?? 0)) {
