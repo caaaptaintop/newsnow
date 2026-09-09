@@ -9,24 +9,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Remove the retired document-search smoke block
-        shell: python
+      - name: Remove retired document-search smoke lines
+        shell: bash
         run: |
+          set -euo pipefail
+          python - <<'PY'
           from pathlib import Path
-          import subprocess
           p = Path('scripts/attachment-preview-smoke.mjs')
           s = p.read_text()
-          old = '''  await evaluate("document.querySelector('dialog input').focus()")
-  for (const char of "项目名称") await send("Input.dispatchKeyEvent", { type: "char", text: char })
-  await until("document.querySelector('dialog input').value === '项目名称'", "document search input")
-  await until("document.querySelector('iframe').srcdoc.includes('<mark>项目名称</mark>')", "document search")
-'''
-          if old in s:
-              p.write_text(s.replace(old, ''))
-              subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
-              subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-              subprocess.run(['git','add',str(p)], check=True)
-              subprocess.run(['git','commit','-m','test: drop retired document search smoke'], check=True)
-              subprocess.run(['git','push','origin','HEAD:feat/attachment-preview-no-storage'], check=True)
-          elif 'document search input' in s or "<mark>项目名称</mark>" in s:
-              raise SystemExit('unexpected search smoke shape')
+          needles = [
+              "  await evaluate(\"document.querySelector('dialog input').focus()\")\n",
+              "  for (const char of \"项目名称\") await send(\"Input.dispatchKeyEvent\", { type: \"char\", text: char })\n",
+              "  await until(\"document.querySelector('dialog input').value === '项目名称'\", \"document search input\")\n",
+              "  await until(\"document.querySelector('iframe').srcdoc.includes('<mark>项目名称</mark>')\", \"document search\")\n",
+          ]
+          missing = [line for line in needles if line not in s]
+          if missing:
+              if 'document search input' not in s and '<mark>项目名称</mark>' not in s:
+                  raise SystemExit(0)
+              raise SystemExit(f'unexpected search smoke shape: {missing!r}')
+          for line in needles:
+              s = s.replace(line, '')
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/attachment-preview-smoke.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m 'test: drop retired document search smoke'
+            git push origin HEAD:feat/attachment-preview-no-storage
+          fi
