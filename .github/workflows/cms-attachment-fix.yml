@@ -22,7 +22,7 @@ jobs:
       - name: Validate parser and regressions
         run: pnpm exec vitest run test/intelligence.test.ts test/intelligence-attachments.test.ts test/attachment-preview.test.ts test/attachment-route.test.ts
       - name: Verify affected live government pages
-        run: pnpm exec tsx scripts/check-live-cms-attachments.ts
+        run: pnpm exec vite-node scripts/check-live-cms-attachments.ts
       - name: Validate changed TypeScript files
         shell: bash
         run: |
