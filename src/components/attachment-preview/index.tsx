@@ -7,7 +7,7 @@ import "./style.css"
 
 import Reader from "./reader"
 
-export function AttachmentList({ article }: { article: IntelligenceArticle }) {
+export function AttachmentList({ article }: { article: Pick<IntelligenceArticle, "key" | "topic" | "url" | "sourceName" | "attachments"> }) {
   const [selected, setSelected] = useState<AttachmentPreviewTarget | null>(null)
   const attachments = (article.attachments ?? []).flatMap(attachment => {
     const url = intelligenceHttpUrl(attachment.url)

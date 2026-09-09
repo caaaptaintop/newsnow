@@ -1,0 +1,134 @@
+name: Building public site checks
+on:
+  push:
+    branches: [feat/building-public-site]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: building-public-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preserve source baseline for migration review
+        run: git archive --format=tar HEAD | gzip > /tmp/building-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: building-source-review
+          path: /tmp/building-source.tar.gz
+          retention-days: 1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Existing unit regressions
+        run: pnpm exec vitest run test
+      - name: Existing Mac orchestration regressions
+        run: node --test tools/ai-bridge/mac-worker.test.mjs
+      - name: Cloudflare production build
+        run: pnpm run build
+        env:
+          CF_PAGES: 1
+      - name: Reject changed-file type errors
+        shell: bash
+        run: |
+          pnpm exec tsc --noEmit -p tsconfig.node.json > typecheck-node.txt 2>&1 || true
+          pnpm exec tsc --noEmit -p tsconfig.app.json > typecheck-app.txt 2>&1 || true
+          python - <<'PYTYPE'
+          import re, subprocess, sys
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'origin/main...HEAD'], text=True).splitlines())
+          bad, inherited = [], []
+          for path in ('typecheck-node.txt', 'typecheck-app.txt'):
+              for line in open(path):
+                  match = re.match(r'^([^\s(]+)\(\d+,\d+\): error TS', line)
+                  if match:
+                      (bad if match.group(1) in changed else inherited).append(line.rstrip())
+                  elif 'error TS' in line:
+                      bad.append(line.rstrip())
+          print(f'Changed-file errors: {len(bad)}; inherited errors: {len(inherited)}')
+          print('\n'.join(bad))
+          sys.exit(bool(bad))
+          PYTYPE
+      - name: Install Chinese fonts for visual regression evidence
+        run: |
+          if ! fc-list :lang=zh | grep -q .; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fi
+      - name: Building browser interaction regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
+          "$CHROME" --headless=new --no-sandbox --disable-dev-shm-usage --remote-debugging-port=9222 --user-data-dir="$(mktemp -d)" about:blank >/tmp/building-chrome.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          node scripts/building-site-smoke.mjs
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: building-validation
+          path: |
+            typecheck-node.txt
+            typecheck-app.txt
+            building-test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+  storage-preflight:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Pages and D1 availability without changing resources
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { writeFile } from 'node:fs/promises'
+          const token = process.env.CF_TOKEN
+          const account = process.env.CF_ACCOUNT
+          const report = { credentialsConfigured: !!(token && account), pagesReadable: false, d1ListReadable: false, productionD1Binding: false, previewD1Binding: false, databases: [] }
+          if (token && account) {
+            const read = async path => {
+              const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) })
+              const data = await r.json()
+              return { ok: r.ok && data.success, status: r.status, result: data.result, codes: (data.errors ?? []).map(e => e.code) }
+            }
+            const pages = await read('pages/projects/capx-newsnow')
+            report.pagesReadable = !!pages.ok
+            report.pagesStatus = pages.status
+            if (pages.ok) {
+              report.productionD1Binding = !!pages.result?.deployment_configs?.production?.d1_databases?.NEWSNOW_DB?.id
+              report.previewD1Binding = !!pages.result?.deployment_configs?.preview?.d1_databases?.NEWSNOW_DB?.id
+            }
+            const d1 = await read('d1/database')
+            report.d1ListReadable = !!d1.ok
+            report.d1Status = d1.status
+            report.d1ErrorCodes = d1.codes
+            if (d1.ok) report.databases = (d1.result ?? []).map(db => ({ name: db.name, size: db.file_size ?? null }))
+          }
+          await writeFile('/tmp/building-storage-preflight.json', JSON.stringify(report, null, 2))
+          console.log(JSON.stringify(report, null, 2))
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: building-storage-preflight
+          path: /tmp/building-storage-preflight.json
+          retention-days: 1

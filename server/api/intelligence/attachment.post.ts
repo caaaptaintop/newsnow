@@ -1,4 +1,5 @@
 import { createError, defineEventHandler, getHeader, getRequestURL, getRequestWebStream, sendStream, setHeaders } from "h3"
+import { isPublishedTopic } from "@shared/public-site"
 import { intelligenceSnapshot } from "@shared/intelligence-snapshot"
 import { intelligenceTopics, intelligenceHttpUrl, type IntelligenceTopic } from "@shared/intelligence"
 import { intelligenceSources } from "@shared/official-sources"
@@ -33,6 +34,7 @@ export default defineEventHandler(async (event) => {
   try { body = JSON.parse(json) } catch { throw createError({ statusCode: 400, message: "附件定位信息无效" }) }
   if (!body || typeof body.topic !== "string" || !Object.prototype.hasOwnProperty.call(intelligenceTopics, body.topic) || typeof body.articleKey !== "string" || body.articleKey.length > 200 || typeof body.url !== "string" || body.url.length > 4096) throw createError({ statusCode: 400, message: "附件定位信息无效" })
   const topic = body.topic as IntelligenceTopic
+  if (!isPublishedTopic(topic)) throw createError({ statusCode: 404, message: "该主题暂未开放" })
   const snapshot = intelligenceSnapshot.articles.find(article => article.topic === topic && article.key === body.articleKey)
   let article = snapshot
   if (!snapshot || intelligenceSnapshot.pipeline !== "mac") {

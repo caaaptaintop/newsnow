@@ -124,7 +124,7 @@ export function intelligenceDate(value: unknown): number | undefined {
   if (!Number.isFinite(time) || new Date(time + 8 * 3600000).toISOString().slice(0, 10) !== iso) return
   return time
 }
-export function intelligenceFilter(items: IntelligenceArticle[], f: IntelligenceFilters, now = Date.now()) {
+export function intelligenceFilter<T extends Omit<IntelligenceArticle, "model" | "analysisVersion">>(items: T[], f: IntelligenceFilters, now = Date.now()) {
   const words = f.q.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
   return items.filter(a => {
     if (f.category && a.category !== f.category && !a.relatedCategories.includes(f.category)) return false

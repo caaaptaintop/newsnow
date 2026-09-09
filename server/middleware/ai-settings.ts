@@ -1,6 +1,8 @@
+import { publicSite } from "@shared/public-site"
 import { readSettings, savedProfileAI, settingsEnabled } from "../utils/ai-settings"
 
 export default defineEventHandler(async (event) => {
+  if (publicSite.readOnly) return // Public reads must never initialize any AI provider.
   const path = getRequestURL(event).pathname
   if (/^\/api\/intelligence\/attachment\/?$/.test(path)) return // Preview must not initialize AI settings or providers.
   if (!(path.startsWith("/api/intelligence") || path.startsWith("/api/topics/health")) || path.startsWith("/api/intelligence/ai/")) return
