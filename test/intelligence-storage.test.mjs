@@ -191,3 +191,26 @@ test('reserved archive references survive metadata updates without file operatio
   assert.throws(() => db.exec("UPDATE intelligence_attachments_v2 SET storage_status='stored'"))
   db.close()
 })
+
+test('publication evidence survives relational reads and date-only repairs preserve analysis', async () => {
+  const { publicationSql } = await import('../tools/ai-bridge/publication-sql.mjs')
+  const db = database()
+  const article = fixture()
+  save(db, article)
+  const proof = { status: 'verified', basis: 'article', url: article.url, checkedAt: 2000 }
+  const snapshot = { generatedAt: 2000, articles: [{ ...article, publishedAt: 1600000000000, publicationDate: proof }] }
+  const sql = publicationSql(snapshot)
+  db.exec(sql)
+  db.exec(sql)
+  const corrected = read(db)[0]
+  assert.equal(corrected.publishedAt, 1600000000000)
+  assert.deepEqual(corrected.publicationDate, proof)
+  assert.equal(corrected.summary, article.summary)
+  assert.equal(corrected.collectedAt, article.collectedAt)
+  assert.equal(count(db, 'intelligence_publication_backup_v1'), 1)
+  const unknown = { ...proof, status: 'unknown', checkedAt: 3000, reason: 'unavailable' }
+  db.exec(publicationSql({ generatedAt: 3000, articles: [{ ...article, publicationDate: unknown }] }))
+  assert.equal(read(db)[0].publishedAt, null)
+  assert.equal(read(db)[0].publicationDate.status, 'unknown')
+  db.close()
+})

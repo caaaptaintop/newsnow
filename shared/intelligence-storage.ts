@@ -17,6 +17,7 @@ export function intelligenceMetadataOnly(article: IntelligenceArticle): Intellig
     sourceId: article.sourceId, sourceName: article.sourceName, sourceGroup: article.sourceGroup,
     sourceLevel: article.sourceLevel, region: article.region, city: article.city, column: article.column,
     publisher: article.publisher, publishedAt: article.publishedAt ?? undefined,
+    publicationDate: article.publicationDate ? { status: article.publicationDate.status, basis: article.publicationDate.basis, url: article.publicationDate.url, checkedAt: article.publicationDate.checkedAt, reason: article.publicationDate.reason } : undefined,
     collectedAt: article.collectedAt, documentNo: article.documentNo,
     attachments: article.attachments.map(({ title, url }) => ({ title, url })),
     category: article.category, relatedCategories: [...article.relatedCategories], tags: [...article.tags],

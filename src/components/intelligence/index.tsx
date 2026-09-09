@@ -51,7 +51,7 @@ function ArticleCard({ article, topic }: { article: IntelligenceArticle, topic: 
   const tags = article.tags ?? []
   const attachments = article.attachments ?? []
   return <article className="intel-card">
-    <div className="intel-meta"><span className="intel-source-name">{article.sourceName}</span>{article.sourceGroup === "住建官方" && <span className="intel-official">官方</span>}<span>{[article.region, article.city && article.city !== article.region ? article.city : ""].filter(Boolean).join(" / ")}</span><time>{displayDate(article.publishedAt)}</time></div>
+    <div className="intel-meta"><span className="intel-source-name">{article.sourceName}</span>{article.sourceGroup === "住建官方" && <span className="intel-official">官方</span>}<span>{[article.region, article.city && article.city !== article.region ? article.city : ""].filter(Boolean).join(" / ")}</span><time title={article.publicationDate?.basis === "source_id" ? "根据帖子ID编码提取创建时间" : article.publicationDate?.status === "verified" ? "已核对信息源发布时间" : "信息源发布时间尚未核实"}>{!article.publishedAt && article.publicationDate?.reason !== "not_article" ? "发布日期待核实" : displayDate(article.publishedAt)}</time></div>
     <h2>{url ? <a href={url} target="_blank" rel="noreferrer">{article.title}<Icon kind="external" /></a> : article.title}</h2>
     <p className="intel-summary"><span>{topic === "health" ? "建议切入" : article.evidence === "body" ? "AI 摘要" : "标题概述"}</span>{article.summary}</p>
     {topic === "health" && article.reason && <p className="intel-reason">选题判断：{article.reason}</p>}

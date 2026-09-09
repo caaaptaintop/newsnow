@@ -27,6 +27,7 @@ export interface IntelligenceArticle {
   column: string
   publisher?: string
   publishedAt?: number
+  publicationDate?: { status: "verified" | "unknown"; basis?: "article" | "source_api" | "source_list" | "source_id"; url: string; checkedAt: number; reason?: "not_article" | "unavailable" | "not_provided" }
   collectedAt: number
   documentNo?: string
   attachments: { title: string, url: string }[]

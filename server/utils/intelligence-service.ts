@@ -98,7 +98,7 @@ export async function intelligenceFeed(event: any, topic: IntelligenceTopic): Pr
     persistent: true,
     sources,
     states: mergeStates(sources, runtimeStates),
-    articles: mergedArticles.slice(0, 5000),
+    articles: mergedArticles.slice(0, 5000).map(article => intelligenceSnapshot.pipeline === "mac" && article.publicationDate?.status !== "verified" ? { ...article, publishedAt: undefined } : article),
     truncated: mergedArticles.length > 5000,
   }
 }
