@@ -109,12 +109,10 @@ jobs:
 
           echo "Workers AI binding prepared; durable intelligence uses repository snapshots."
 
-      - name: Synchronize verified publication dates to existing D1 records
+      - name: Validate publication evidence before deployment
         shell: bash
         run: |
           node tools/ai-bridge/publication-sql.mjs data/intelligence-snapshot.json publication-dates.sql
-          pnpm dlx wrangler@${WRANGLER_VERSION} --version
-          pnpm dlx wrangler@${WRANGLER_VERSION} d1 execute 1b866a6d-8942-490b-bb6d-3f07fffa9e36 --remote --file publication-dates.sql --yes
 
       - name: Deploy to Cloudflare Pages
         id: cloudflare_deploy
