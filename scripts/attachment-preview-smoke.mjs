@@ -99,9 +99,7 @@ try {
   assert.equal(await evaluate("document.querySelector('iframe').getAttribute('sandbox')"), "")
   assert.equal(relayRequests.length, 1, "CORS fallback uses metadata-only POST")
   await writeFile("attachment-test-results/doc-desktop.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
-  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
-  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
-  await until("!document.querySelector('dialog')", "Escape closes preview")
+  await close()
   assert.equal(await evaluate("document.documentElement.style.overflow"), "")
   for (const key of ["docx", "text"]) {
     const before = relayRequests.length
