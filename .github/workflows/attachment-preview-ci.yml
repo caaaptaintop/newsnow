@@ -1,0 +1,27 @@
+name: Attachment preview validation
+on:
+  push:
+    branches: [feat/attachment-preview-no-storage]
+  pull_request:
+    paths:
+      - 'src/components/attachment-preview/**'
+      - 'server/api/intelligence/attachment*'
+      - 'server/utils/attachment*'
+      - 'shared/attachment*'
+      - 'test/attachment*'
+      - '.github/workflows/attachment-preview-ci.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export tracked source for isolated review
+        run: git archive --format=tar.gz -o /tmp/attachment-review-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: attachment-review-source
+          path: /tmp/attachment-review-source.tar.gz
+          retention-days: 1
