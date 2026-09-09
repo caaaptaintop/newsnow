@@ -1,3 +1,4 @@
+import { publisherKnown } from "./publisher.mjs"
 import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
@@ -39,7 +40,6 @@ try {
 const lock = await import("node:fs/promises").then(fs => fs.open(lockPath, "wx"))
 await lock.writeFile(String(process.pid))
 try {
-  const onlineCache = new Map<string, any>()
   const collectedCache = new Map<string, any>()
   const queue = [...selectedSources]
   await Promise.all(Array.from({ length: 5 }, async () => {
@@ -57,29 +57,16 @@ try {
     let state: any = { id: source.id, checkedAt: Date.now(), status: "error" }
     let warnings: string[] = []
     try {
-      const snapshot = JSON.parse(await readFile(resolve(root, "data/intelligence-snapshot.json"), "utf8"))
+      const snapshot = JSON.parse(await readFile(resolve(root, ".data/mac-batch/published.json"), "utf8"))
       let previous: any = { articles: [], decisions: [] }
       try {
         previous = JSON.parse(await readFile(resolve(outputDir, "result.json"), "utf8"))
       } catch (error: any) {
         if (error.code !== "ENOENT") throw error
       }
-      let online = onlineCache.get(source.topic)
-      if (!online) {
-        let response: Response | undefined
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            response = await fetch(`https://news.capx-ai.com/api/intelligence?topic=${source.topic}`, { signal: AbortSignal.timeout(30000) })
-            break
-          } catch (error) {
-            if (attempt) throw error
-          }
-        }
-        if (!response!.ok && !(source.topic === "health" && response!.status === 400)) throw new Error("Cannot check existing online articles")
-        online = response!.status === 400 ? { articles: [] } : await response!.json()
-        if (!Array.isArray(online.articles)) throw new Error("Online article list unavailable")
-        onlineCache.set(source.topic, online)
-      }
+      const sourceItems = collectedCache.get(source.id)?.items ?? []
+      const keys = sourceItems.map((item: any) => `${source.topic}:${createHash("sha256").update(intelligenceCanonicalUrl(item.url)).digest("hex")}`)
+      const online = { articles: await publisherKnown(keys) }
       const known = new Map<string, string>([...snapshot.articles, ...online.articles, ...previous.articles, ...previous.decisions].map((a: any) => [a.key, a.title]))
       const candidates = new Map<string, any>()
       const collected = collectedCache.get(source.id)

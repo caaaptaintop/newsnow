@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import handler from "../server/api/intelligence/attachment.post"
-import { getIntelligenceStore } from "../server/utils/intelligence-store"
+import { articleById } from "../server/building/store"
+import { reserveRelay } from "../server/building/relay-budget"
 import { relayAttachment } from "../server/utils/attachment-relay"
 
 vi.mock("h3", () => ({
@@ -12,7 +13,8 @@ vi.mock("h3", () => ({
   setHeaders: (event: any, headers: unknown) => { event.responseHeaders = headers },
   sendStream: (_event: any, body: unknown) => body,
 }))
-vi.mock("../server/utils/intelligence-store", () => ({ getIntelligenceStore: vi.fn(async () => ({ articles: async () => [] })) }))
+vi.mock("../server/building/store", () => ({ buildingDB: vi.fn(() => ({})), buildingEnv: () => ({ BUILDING_RATE_SALT: "test-salt" }), articleById: vi.fn(async (_db, key) => key === "known" ? { topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] } : undefined) }))
+vi.mock("../server/building/relay-budget", () => ({ reserveRelay: vi.fn(async () => "lease"), settleRelay: vi.fn(async () => {}) }))
 vi.mock("../shared/intelligence-snapshot", () => ({ intelligenceSnapshot: { pipeline: "mac", articles: [{ topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] }, { topic: "health", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }] }] } }))
 vi.mock("../server/utils/attachment-relay", async (original) => ({ ...await original<typeof import("../server/utils/attachment-relay")>(), relayAttachment: vi.fn(async () => new Response("document bytes")) }))
 const body = { topic: "building", articleKey: "known", url: "https://demo.gov.cn/download?id=1" }
@@ -20,11 +22,12 @@ const event = (data: unknown = body, headers = {}) => ({ body: JSON.stringify(da
 beforeEach(() => vi.clearAllMocks())
 
 describe("indexed attachment authorization", () => {
-  it("uses exact indexed metadata and never initializes storage for a known Mac snapshot item", async () => {
+  it("uses indexed D1 metadata and reserves relay budget before fetching", async () => {
     const request = event()
     const stream = await handler(request as any)
     expect(await new Response(stream as any).text()).toBe("document bytes")
-    expect(getIntelligenceStore).not.toHaveBeenCalled()
+    expect(articleById).toHaveBeenCalledWith(expect.anything(), "known")
+    expect(reserveRelay).toHaveBeenCalledOnce()
     expect(relayAttachment).toHaveBeenCalledWith(expect.objectContaining({ url: body.url, filename: "附件.doc", referer: "https://demo.gov.cn/article" }))
   })
   it("matches canonical Chinese URLs against trusted source metadata", async () => {

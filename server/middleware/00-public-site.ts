@@ -10,7 +10,7 @@ export default defineEventHandler((event) => {
   if (!path.startsWith("/api")) return
   setHeaders(event, { "Cache-Control": "private, no-store", "CDN-Cache-Control": "no-store", "Cloudflare-CDN-Cache-Control": "no-store" })
   // Reject alternate encodings/separators instead of relying on router decoding.
-  if (path.includes("\\") || path.includes("%") || path.includes("//") || !publicApiAllowed(path, event.method)) {
+  if (path.includes("\\") || path.includes("%") || path.includes("//") || !(publicApiAllowed(path, event.method) || (path === "/api/internal/building" && event.method === "POST"))) {
     throw createError({ statusCode: 404, message: "此功能暂未开放" })
   }
   if (event.method === "GET" || event.method === "HEAD") {

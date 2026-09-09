@@ -1,161 +1,72 @@
 name: Build and deploy Cloudflare Pages
-
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
+concurrency:
+  group: building-production-release
+  cancel-in-progress: false
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
   WRANGLER_VERSION: 4.129.0
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
         with:
           version: 10.30.3
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build for Cloudflare Pages
+      - run: pnpm install --frozen-lockfile
+      - name: Build without production snapshots
         run: pnpm run build
         env:
           CF_PAGES: 1
-
-      - name: Verify Cloudflare credentials
+      - name: Release safety regressions
+        run: node --test scripts/building-release.test.mjs
+      - name: Preserve current Pages configuration
         shell: bash
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::Missing GitHub Actions secret CLOUDFLARE_API_TOKEN"
-            exit 1
-          fi
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::Missing CLOUDFLARE_ACCOUNT_ID. Add it either as a repository Secret or repository Variable with exactly that name."
-            exit 1
-          fi
-
-      - name: Download current Pages configuration
-        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" && test -n "$CLOUDFLARE_ACCOUNT_ID"
           rm -f wrangler.toml wrangler.json wrangler.jsonc
           pnpm dlx wrangler@${WRANGLER_VERSION} pages download config capx-newsnow --force
-          test -f wrangler.toml || (echo "::error::Expected wrangler.toml from Pages config download" && exit 1)
-
-      - name: Prepare Pages configuration and Workers AI binding
-        shell: bash
-        run: |
           python - <<'PY'
           from pathlib import Path
           import re
-
-          path = Path("wrangler.toml")
-          text = path.read_text()
-          output_line = 'pages_build_output_dir = "dist/output/public"'
-
-          if re.search(r'^pages_build_output_dir\s*=', text, flags=re.M):
-              text = re.sub(r'^pages_build_output_dir\s*=.*$', output_line, text, flags=re.M)
+          p = Path('wrangler.toml')
+          text = p.read_text()
+          line = 'pages_build_output_dir = "dist/output/public"'
+          if re.search(r'^pages_build_output_dir\s*=', text, re.M):
+              text = re.sub(r'^pages_build_output_dir\s*=.*$', line, text, flags=re.M)
           else:
-              first_table = re.search(r'^\[', text, flags=re.M)
-              if first_table:
-                  pos = first_table.start()
-                  text = text[:pos].rstrip() + f'\n{output_line}\n\n' + text[pos:]
-              else:
-                  text = text.rstrip() + f'\n{output_line}\n'
-
-          if not re.search(r'^\[ai\]\s*$', text, flags=re.M):
-              text = text.rstrip() + '\n\n[ai]\nbinding = "AI"\n'
-          if not re.search(r'^\[env\.production\.ai\]\s*$', text, flags=re.M):
-              text = text.rstrip() + '\n\n[env.production.ai]\nbinding = "AI"\n'
-
-          # Repository snapshots are the durable store. Keep a valid existing D1
-          # binding if an administrator adds one later, but remove an incomplete
-          # NEWSNOW_DB draft so Pages deployment never requires D1 permissions.
-          def remove_incomplete_newsnow_d1(doc: str, table: str) -> str:
-              pattern = re.compile(rf'(?ms)^\[\[{re.escape(table)}\]\]\s*\n(?:(?!^\[).)*(?=^\[|\Z)')
-              pieces = []
-              cursor = 0
-              for match in pattern.finditer(doc):
-                  block = match.group(0)
-                  is_newsnow = re.search(r'^binding\s*=\s*["\']NEWSNOW_DB["\']\s*$', block, flags=re.M)
-                  has_id = re.search(r'^database_id\s*=\s*["\'][^"\']+["\']\s*$', block, flags=re.M)
-                  if is_newsnow and not has_id:
-                      pieces.append(doc[cursor:match.start()])
-                      cursor = match.end()
-              pieces.append(doc[cursor:])
-              return ''.join(pieces)
-
-          text = remove_incomplete_newsnow_d1(text, "d1_databases")
-          text = remove_incomplete_newsnow_d1(text, "env.production.d1_databases")
-          path.write_text(text)
+              text = line + '\n' + text
+          p.write_text(text)
           PY
-
-          echo "Workers AI binding prepared; durable intelligence uses repository snapshots."
-
-      - name: Validate publication evidence before deployment
+      - name: Migrate and verify trusted preview before production activation
         shell: bash
         run: |
-          node tools/ai-bridge/publication-sql.mjs data/intelligence-snapshot.json publication-dates.sql
-
-      - name: Deploy to Cloudflare Pages
-        id: cloudflare_deploy
-        shell: bash
-        run: |
-          set +e
-          pnpm dlx wrangler@${WRANGLER_VERSION} pages deploy dist/output/public --branch main 2>&1 | tee wrangler-deploy.log
-          code=${PIPESTATUS[0]}
-          exit "$code"
-
-      - name: Preserve Cloudflare deploy diagnostics
+          set -o pipefail
+          node scripts/building-release.mjs 2>&1 | tee wrangler-deploy.log
+      - name: Preserve sanitized release evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflare-deploy-diagnostics
-          path: wrangler-deploy.log
+          name: building-release-evidence
+          path: |
+            wrangler-deploy.log
+            /tmp/building-release-evidence.json
+            /tmp/building-release-cleanup.json
           if-no-files-found: ignore
-          retention-days: 1
-
-      - name: Verify production SPA shell
-        shell: bash
-        run: |
-          body_file=$(mktemp)
-          status=""
-          for attempt in 1 2 3 4 5 6; do
-            status=$(curl -sS -L -o "$body_file" -w '%{http_code}' "https://news.capx-ai.com/?shell_smoke=$(date +%s)" || true)
-            if [ "$status" = "200" ] && grep -q '<div id="app"></div>' "$body_file" && grep -Eq '/assets/index-[A-Za-z0-9_-]+\.js' "$body_file"; then
-              break
-            fi
-            echo "SPA shell attempt $attempt/6 failed: HTTP $status"
-            sleep 5
-          done
-          if [ "$status" != "200" ]; then
-            echo "::error::SPA shell returned HTTP $status"
-            head -c 2000 "$body_file" || true
-            exit 1
-          fi
-          if ! grep -q '<div id="app"></div>' "$body_file" || ! grep -Eq '/assets/index-[A-Za-z0-9_-]+\.js' "$body_file"; then
-            echo "::error::SPA shell or client bundle reference is missing"
-            head -c 4000 "$body_file" || true
-            exit 1
-          fi
-          echo "SPA shell OK; real client mounting is checked by Client runtime smoke."
-
-      - name: Verify building-only public runtime
+          retention-days: 7
+      - name: Verify public building endpoints
         run: node scripts/building-production-smoke.mjs

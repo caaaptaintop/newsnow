@@ -6,13 +6,19 @@ const root = resolve("dist/output/public"), requests = [], exceptions = []
 const source = (id, region, city) => ({ id, name: `${city || region}测试来源`, home: `https://${id}.example.gov.cn/`, group: "住建官方", region, city })
 const sources = [source("nanjing", "江苏", "南京"), source("suzhou", "江苏", "苏州"), source("hangzhou", "浙江", "杭州")]
 const articles = sources.map((source, index) => ({ key: `building:fixture-${index}`, topic: "building", title: `${source.city}建筑测试资讯`, url: `${source.home}article`, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: "市级", region: source.region, city: source.city, column: "通知公告", collectedAt: Date.now(), publishedAt: Date.now(), publicationDate: { status: "verified" }, category: "intelligent_construction", relatedCategories: [], tags: ["BIM"], contentType: "通知公告", importance: 80, summary: "仅供浏览器交互测试的合成数据。", evidence: "title", attachments: [] }))
-const feed = { topic: "building", version: "v1", updatedAt: 1788960000000, articles, sources, truncated: false }
+const feed = { topic: "building", version: "v1", updatedAt: 1788960000000, articles, sources, truncated: false,
+ totalPublished:articles.length,nextCursor:null,facets:{categories:{intelligent_construction:3},locations:[{region:"江苏",cities:["南京","苏州"]},{region:"浙江",cities:["杭州"]}],tags:[{id:"BIM",name:"BIM"}]}}
+function filteredFeed(params) {
+ const regions=params.getAll("regions"),cities=params.getAll("cities")
+ const rows=articles.filter(a=>(!regions.length&&!cities.length)||regions.includes(a.region)||cities.includes(JSON.stringify([a.region,a.city]))||cities.includes(a.city))
+ return {...feed,articles:rows,total:rows.length}
+}
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost")
     if (url.pathname.startsWith("/api/")) {
       requests.push(url.pathname)
-      const data = url.pathname === "/api/intelligence" ? feed : url.pathname === "/api/intelligence/version" ? { topic: "building", version: feed.version, updatedAt: feed.updatedAt } : { error: "Unexpected API" }
+      const data = url.pathname === "/api/intelligence" ? filteredFeed(url.searchParams) : url.pathname === "/api/intelligence/version" ? { topic: "building", version: feed.version, updatedAt: feed.updatedAt } : { error: "Unexpected API" }
       res.writeHead(url.pathname === "/api/intelligence" || url.pathname === "/api/intelligence/version" ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify(data)); return
     }
     const pathname = url.pathname === "/" || url.pathname.startsWith("/c/") ? "/index.html" : url.pathname

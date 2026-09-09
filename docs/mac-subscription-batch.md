@@ -1,37 +1,68 @@
-# Mac 订阅批处理
+# 建筑资讯：Mac 采集与 D1 增量发布
 
-Mac 登录系统后由 `com.capx.newsnow.mac-worker` 自动执行，每轮结束后约 15 分钟再检查一轮，处理与发布耗时另计；使用已登录的 ChatGPT 订阅、`gpt-5.6-luna`、`low`。运行期间保持唤醒，电脑离线或休眠时停止更新，网站继续显示已发布内容。
+## 范围
 
-## 当前处理范围
+当前仅启用 `building`。网站公开免登录，不建设访客账户。七个建筑栏目及原有来源保留；其他主题的定义与历史记录保留，但不采集、不分析、不公开返回。
 
-后台从 `shared/official-sources.ts` 读取全部启用来源：建筑 54 个、AI 科技 4 个、财经 2 个、健宁 8 个。公开列表最多 5 个来源并发读取，模型请求顺序执行，每来源每轮最多分析 12 条新候选；未处理完的数量会显示在来源状态中。重复标题与链接不再分析。建筑使用原有召回条件，健宁完整复用原来的八条选题线及“事实桥梁”提示词。
+后台继续使用现有本机 Codex 登录与模型设置。正常阅读、搜索、翻页、刷新或附件预览不触发 AI。Mac 离线或休眠时停止采集，网站继续显示最近已发布数据。
 
-只保存公开标题、链接、日期、来源及 AI 分类摘要，分析证据标记为“仅依据标题”。不保存正文或 HTML，不下载附件，不读取或复制登录凭据。
+## 云端与本机必须分开验收
 
-## 前端行为
+部署工作流先迁移、校验已有建筑元数据，迁移完整性检查通过前，D1 新读取接口不对外返回半成品。可信临时预览使用短期凭据；清理临时凭据、数据库绑定和临时部署后，才允许发布生产版本。旧表和仓库历史不删除，生产构建不包含资讯快照。
 
-四个主题都读取已发布结果，每分钟刷新列表；“读取最新结果”和“刷新状态”只读取结果。模型分析在后台进行，打开健宁页面不会触发旧的实时 AI 请求。页面展示最近发布时间以及各来源的真实采集状态。
+云端上线不代表本机已切换。只有完成下述准备并运行一次真实采集发布，才算本机切换成功。
 
-快照包含 `pipeline: "mac"` 后，旧云端同步工作流停止触发 AI 和写入快照，旧实时刷新接口返回 409。AI 设置页保留的旧供应商配置不代表 Mac 后台模型。
+## 本机切换
 
-## 状态与恢复
+原有独立运行副本通常位于 `~/Library/Application Support/CapxNewsNow/repo`，原任务标签为 `com.capx.newsnow.mac-worker`。先核对真实 launchd plist 的 ProgramArguments、WorkingDirectory 和日志位置；不要假定手动开发副本就是任务使用副本。
 
-- 某个来源失败：保存具体原因，继续处理其他来源并发布成功内容；下轮重试。
-- 栏目不可读但首页有文章：保留首页结果并标为“部分完成”，不声称栏目已经完整覆盖。
-- 模型调用失败：本轮后续模型请求暂停，已有成功结果仍发布，未处理部分保留为“部分完成”。
-- 登录、网络检查、Git 发布失败：任务记录错误，下一次定时检查重试，不额外等待一小时；已有线上内容不清空。
-- 文件锁阻止重复运行，单轮最长 30 分钟；后台使用独立工作副本，避免干扰人工修改。
+先暂停任务调度，等待已运行的旧任务退出；备份本机 `.data/mac-batch` 和任务配置。禁止删除待发布结果、发布回执、文件锁或未知工作区改动。仅在干净的 `main` 上 `git pull --ff-only origin main`，安装锁定依赖。
 
-运行目录：`~/Library/Application Support/CapxNewsNow/repo`。
-状态文件：该目录下 `.data/mac-batch/worker-status.json` 和 `result.json`。
-日志：`~/Library/Application Support/CapxNewsNow/worker.log`。
-
-开发者手动检查单个来源：
+运行：
 
 ```sh
-node_modules/.bin/tsx --tsconfig tsconfig.node.json tools/ai-bridge/mac-batch.ts --source official-shanghai --limit 12
+node tools/ai-bridge/publisher.mjs prepare
 ```
 
-全部来源用 `--source all`；也可用逗号分隔少量来源。读取和分析后，`apply-batch.ts` 同步数据及来源状态到两个仓库快照文件，通过现有 GitHub/Cloudflare 部署发布。即使没有新文章，新的失败或成功状态也会发布。
+首次准备会在 `.data/building-publisher/private-key.pem` 生成 Ed25519 私钥，目录 0700、私钥 0600。私钥不离开本机、不进入 Git 或日志。只将公钥及允许的机器操作登记到 `shared/building-publisher-keys.json`，生成一次配置提交并推送。服务器必须部署公钥后才接受该机器发布；等待期间 prepare 拒绝继续，不调用 AI。
 
-合盖会触发系统休眠，运行时的 caffeinate -i 不能阻止合盖休眠。2026-09-09 的停更已由系统睡眠日志与批次退出时间核实。页面“最近发布”表示成功发布的批次时间，不是 Mac 最近唤醒或尝试时间。
+公钥部署成功后再次 prepare，然后：
+
+```sh
+node tools/ai-bridge/publisher.mjs status
+```
+
+确认数据库为 D1、migrationComplete 为 true，且公钥身份可正常认证，再运行一轮现有 Mac worker。准备失败时不要恢复无限重试式手动运行，不得改为匿名发布或临时关闭签名检查。
+
+如公钥曾登记后被移除，程序不自动重新授权，需维护者核实。私钥缺失时先检查原运行目录及备份，不覆盖既有身份。
+
+## 正常发布链路
+
+`mac-worker.mjs` 拉取代码后先执行 publisher prepare，再检查 Codex 登录，最后采集与分析。采集去重使用后台已发布副本和签名 known 查询，不依赖公开第一页。
+
+`apply-batch.ts` 发送最多 20 条一批的元数据，带版本基线和唯一批次号；一个采集轮次可能包含多个原子批次。发布失败保留待发布结果；收到响应前网络断开时，重试利用回执防重复写入。日常资讯发布不修改两个历史 snapshot 文件，不提交 `chore(data)`，不触发整站部署。
+
+本机 `.data/mac-batch/published.json`、`published-ledger.json`、`publish-outbox.json` 用于同步、去重与恢复，不可作为可随意删除的临时文件。
+
+只保存结构化元数据、摘要和原站附件链接。正文和 HTML 可在分析时临时读取，不持久保存；附件字节不写入文件、数据库、对象存储或缓存。
+
+## 运维
+
+仅有机器凭据的维护者可执行：
+
+```sh
+node tools/ai-bridge/publisher.mjs status
+node tools/ai-bridge/publisher.mjs pause-relay
+node tools/ai-bridge/publisher.mjs resume-relay
+node tools/ai-bridge/publisher.mjs maintain
+```
+
+暂停转发不关闭资讯阅读与原站入口。正常验证不应耗尽线上额度或对原站做压力测试。
+
+默认转发上限：单文件 20 MiB，每 IP 每分钟 6 次、最多同时 2 次；全站每天 2000 次、预留上限 5 GiB、最多同时 20 次。全站额度由 D1 原子预留，完成后幂等结算；不明消耗保留最大预留，不因超时自动退款。该额度是运行保护，不是云账单金额上限。
+
+## 验收证据
+
+记录代码 SHA、公钥 ID（不含私钥）、云端部署状态、本机一次任务起止时间、发布前后内容版本、数据库记录数、发布回执和工作区状态。没有新资讯时明确记录本轮新增 0，不构造假文章或改发布时间制造更新。公钥配置完成后的日常轮次不得出现数据提交或整站部署。
+
+原状态文件通常为 `.data/mac-batch/worker-status.json`，日志通常为 `~/Library/Application Support/CapxNewsNow/worker.log`，以本机任务配置核实为准。恢复原调度前确认没有重复任务或遗留旧进程。

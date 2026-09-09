@@ -1,3 +1,4 @@
+import { locationCityId } from "@shared/building-contract"
 import { useEffect, useState, type ReactNode } from "react"
 
 type FilterOption = { id: string, name: string }
@@ -25,10 +26,10 @@ export function LocationFilter({ groups, regions, cities, open, onToggle, onChan
     {!!groups.length && <div className="intel-location-cascade">
       <div className="intel-location-regions" aria-label="省级地区">{groups.map(group => {
         const regionChecked = regions.includes(group.region)
-        const selectedCityCount = group.cities.filter(city => cities.includes(city)).length
+        const selectedCityCount = group.cities.filter(city => (cities.includes(locationCityId(group.region, city)) || cities.includes(city))).length
         if (!group.cities.length) return <label className="intel-location-region-leaf" key={group.region}><input type="checkbox" checked={regionChecked} onChange={e => onChange(e.target.checked ? [...regions, group.region] : regions.filter(region => region !== group.region), cities)} /><span>{group.region}</span></label>
         return <div className={`intel-location-region-row${activeRegion === group.region ? " is-active" : ""}`} key={group.region}>
-          <label className="intel-location-region-check"><input type="checkbox" aria-label={`选择${group.region}全部地区`} checked={regionChecked} onChange={e => onChange(e.target.checked ? [...regions, group.region] : regions.filter(region => region !== group.region), e.target.checked ? cities.filter(city => !group.cities.includes(city)) : cities)} /></label>
+          <label className="intel-location-region-check"><input type="checkbox" aria-label={`选择${group.region}全部地区`} checked={regionChecked} onChange={e => onChange(e.target.checked ? [...regions, group.region] : regions.filter(region => region !== group.region), e.target.checked ? cities.filter(city => !group.cities.some(name => city === name || city === locationCityId(group.region, name))) : cities)} /></label>
           <button type="button" className="intel-location-region-button" aria-expanded={activeRegion === group.region} onClick={() => setActiveRegion(group.region)}><span>{group.region}</span>{selectedCityCount > 0 && !regionChecked && <span className="intel-location-city-count">{selectedCityCount}</span>}<span className="intel-location-next" aria-hidden="true">›</span></button>
         </div>
       })}</div>
@@ -36,7 +37,7 @@ export function LocationFilter({ groups, regions, cities, open, onToggle, onChan
         {!activeGroup && <div className="intel-location-placeholder">选择左侧省级地区查看城市</div>}
         {activeGroup && <><div className="intel-location-submenu-head"><strong>{activeGroup.region}</strong><span>{regions.includes(activeGroup.region) ? "已选择整个地区" : "选择具体城市"}</span></div><div className="intel-location-city-options">{activeGroup.cities.map(city => {
           const regionChecked = regions.includes(activeGroup.region)
-          return <label className={regionChecked ? "is-disabled" : ""} key={city}><input type="checkbox" disabled={regionChecked} checked={!regionChecked && cities.includes(city)} onChange={e => onChange(regions, e.target.checked ? [...cities, city] : cities.filter(value => value !== city))} /><span>{city}</span></label>
+          return <label className={regionChecked ? "is-disabled" : ""} key={city}><input type="checkbox" disabled={regionChecked} checked={!regionChecked && (cities.includes(locationCityId(activeGroup.region, city)) || cities.includes(city))} onChange={e => onChange(regions, e.target.checked ? [...cities.filter(value => value !== city), locationCityId(activeGroup.region, city)] : cities.filter(value => value !== city && value !== locationCityId(activeGroup.region, city)))} /><span>{city}</span></label>
         })}</div></>}
       </div>
     </div>}
