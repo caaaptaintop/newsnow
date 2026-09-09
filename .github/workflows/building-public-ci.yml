@@ -1,0 +1,84 @@
+name: Building public site checks
+on:
+  push:
+    branches: [feat/building-public-site]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: building-public-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preserve source baseline for migration review
+        run: git archive --format=tar HEAD | gzip > /tmp/building-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: building-source-review
+          path: /tmp/building-source.tar.gz
+          retention-days: 1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Existing unit regressions
+        run: pnpm exec vitest run test/intelligence.test.ts test/ai-provider.test.ts test/attachment-preview.test.ts
+      - name: Existing Mac orchestration regressions
+        run: node --test tools/ai-bridge/mac-worker.test.mjs
+      - name: Cloudflare production build
+        run: pnpm run build
+        env:
+          CF_PAGES: 1
+  storage-preflight:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Pages and D1 availability without changing resources
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { writeFile } from 'node:fs/promises'
+          const token = process.env.CF_TOKEN
+          const account = process.env.CF_ACCOUNT
+          const report = { credentialsConfigured: !!(token && account), pagesReadable: false, d1ListReadable: false, productionD1Binding: false, previewD1Binding: false, databases: [] }
+          if (token && account) {
+            const read = async path => {
+              const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) })
+              const data = await r.json()
+              return { ok: r.ok && data.success, status: r.status, result: data.result, codes: (data.errors ?? []).map(e => e.code) }
+            }
+            const pages = await read('pages/projects/capx-newsnow')
+            report.pagesReadable = !!pages.ok
+            report.pagesStatus = pages.status
+            if (pages.ok) {
+              report.productionD1Binding = !!pages.result?.deployment_configs?.production?.d1_databases?.NEWSNOW_DB?.id
+              report.previewD1Binding = !!pages.result?.deployment_configs?.preview?.d1_databases?.NEWSNOW_DB?.id
+            }
+            const d1 = await read('d1/database')
+            report.d1ListReadable = !!d1.ok
+            report.d1Status = d1.status
+            report.d1ErrorCodes = d1.codes
+            if (d1.ok) report.databases = (d1.result ?? []).map(db => ({ name: db.name, size: db.file_size ?? null }))
+          }
+          await writeFile('/tmp/building-storage-preflight.json', JSON.stringify(report, null, 2))
+          console.log(JSON.stringify(report, null, 2))
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: building-storage-preflight
+          path: /tmp/building-storage-preflight.json
+          retention-days: 1
