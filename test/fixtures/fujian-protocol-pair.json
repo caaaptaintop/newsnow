@@ -1,0 +1,82 @@
+{
+  "source": "repair-d1-before-pair-1.json; captured 2026-09-10 before merge; metadata only",
+  "retained": {
+    "key": "building:3afa533d98d555905f1f125308d81e4402329917cdfa7f59e27ade502207e652",
+    "topic": "building",
+    "title": "关于印发无障碍设施品质提升典型案例（第三批）的通知",
+    "url": "http://zjt.fujian.gov.cn/xxgk/zfxxgkzl/xxgkml/dfxfgzfgzhgfxwj/jskj_3794/202608/t20260828_7206194.htm",
+    "sourceId": "official-fujian",
+    "sourceName": "福建省住房和城乡建设厅",
+    "sourceGroup": "住建官方",
+    "sourceLevel": "省级",
+    "region": "福建",
+    "city": "",
+    "column": "最新文件",
+    "publisher": "福建省住房和城乡建设厅",
+    "publishedAt": 1787904720000,
+    "publicationDate": {
+      "status": "verified",
+      "basis": "article",
+      "url": "http://zjt.fujian.gov.cn/xxgk/zfxxgkzl/xxgkml/dfxfgzfgzhgfxwj/jskj_3794/202608/t20260828_7206194.htm",
+      "checkedAt": 1788919363685
+    },
+    "collectedAt": 1788848838384,
+    "attachments": [],
+    "category": "urban_renewal",
+    "relatedCategories": [
+      "good_housing"
+    ],
+    "tags": [
+      "无障碍设施",
+      "典型案例"
+    ],
+    "contentType": "通知公告",
+    "importance": 70,
+    "summary": "福建省住建厅印发第三批无障碍设施品质提升典型案例，旨在落实无障碍环境建设法，推进城市更新及适老化环境建设。",
+    "reason": "涉及无障碍设施品质提升及城市更新行动。",
+    "evidence": "body",
+    "model": "migration",
+    "analysisVersion": "migration",
+    "otherSources": [
+      {
+        "name": "福建省住房和城乡建设厅",
+        "url": "https://zjt.fujian.gov.cn/xxgk/zfxxgkzl/xxgkml/dfxfgzfgzhgfxwj/jskj_3794/202608/t20260828_7206194.htm"
+      }
+    ]
+  },
+  "pending": {
+    "key": "building:6f206d6eb21b193b707137ce309506293d3c8d58452d6d461824702a883f2939",
+    "topic": "building",
+    "title": "关于印发无障碍设施品质提升典型案例（第三批）的通知",
+    "url": "https://zjt.fujian.gov.cn/xxgk/zfxxgkzl/xxgkml/dfxfgzfgzhgfxwj/jskj_3794/202608/t20260828_7206194.htm",
+    "sourceId": "official-fujian",
+    "sourceName": "福建省住房和城乡建设厅",
+    "sourceGroup": "住建官方",
+    "sourceLevel": "省级",
+    "region": "福建",
+    "city": "",
+    "column": "最新文件",
+    "publisher": "福建省住房和城乡建设厅",
+    "publishedAt": 1787904720000,
+    "publicationDate": {
+      "status": "verified",
+      "basis": "article",
+      "url": "https://zjt.fujian.gov.cn/xxgk/zfxxgkzl/xxgkml/dfxfgzfgzhgfxwj/jskj_3794/202608/t20260828_7206194.htm",
+      "checkedAt": 1789002191417
+    },
+    "collectedAt": 1789002171061,
+    "attachments": [],
+    "category": "good_housing",
+    "relatedCategories": [],
+    "tags": [
+      "无障碍设施"
+    ],
+    "contentType": "通知公告",
+    "importance": 70,
+    "summary": "发布无障碍设施品质提升典型案例（第三批）。",
+    "reason": "涉及建筑设施品质提升，与好房子主题相关。",
+    "evidence": "title",
+    "model": "gpt-5.6-luna",
+    "analysisVersion": "2026-09-08.1"
+  }
+}
