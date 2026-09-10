@@ -78,6 +78,53 @@ for (const withAttachments of [false, true]) {
   assert.deepEqual(requests.slice(count).map(r => r.action), ["maintain"])
   assert.equal(JSON.parse(disk.get("publish-outbox.json")!), null)
 }
+// R1: inspect actual signed publish requests, not just the outbox state.
+const observeOnly = process.argv.includes("--observe-r1")
+const A = { title: "A.pdf", url: "https://zjt.fujian.gov.cn/files/A.pdf" }
+const B = { title: "B.pdf", url: "https://zjt.fujian.gov.cn/files/B.pdf" }
+const C = { title: "C.pdf", url: "https://zjt.fujian.gov.cn/files/C.pdf" }
+const mixedResults: any[] = []
+for (const reverse of [false, true]) {
+  for (const existing of [false, true]) {
+    reset()
+    const updates = [{ key: pair.pending.key, attachments: [B] }, { key: pair.retained.key, attachments: [C] }]
+    const input = { articles: [pair.pending], decisions: [{ key: pair.pending.key, sourceId: pair.pending.sourceId, title: pair.pending.title, keep: true, at: 1789002200000 }], attachmentUpdates: reverse ? updates.reverse() : updates }
+    disk.set("published.json", JSON.stringify({ articles: [{ ...pair.retained, attachments: existing ? [A] : [] }], generatedAt: 1 }))
+    disk.set("result.json", JSON.stringify(input))
+    disk.set("published-ledger.json", "{}")
+    const staleItems = [normalizeBatchItem({ kind: "article", key: pair.pending.key, data: pair.pending })]
+    disk.set("publish-outbox.json", JSON.stringify({ hash: await buildingHash(JSON.stringify(staleItems)), batchId: "stale_alias", baseRevision: 16, items: staleItems }))
+    let firstContent: string | undefined
+    for (let round = 0; round <= 4; round++) {
+      const offset = requests.length
+      await import(`../../tools/ai-bridge/apply-batch.ts?r1=${reverse}-${existing}-${round}`)
+      const sent = requests.slice(offset)
+      const publishes = sent.filter(r => r.action === "publish")
+      const articleItems = publishes.flatMap(r => r.items).filter(item => item.kind === "article")
+      const snapshot = JSON.parse(disk.get("published.json")!)
+      const content = JSON.stringify(snapshot)
+      const record = { scenario: "R1-mixed", reverse, existing, round, attachments: snapshot.articles[0].attachments, contentSha256: createHash("sha256").update(content).digest("hex"), publishRequests: publishes.length, articleItems, requests: sent }
+      console.log(JSON.stringify(record))
+      mixedResults.push(record)
+      assert(!sent.some(r => r.batchId === "stale_alias"))
+      assert(!articleItems.some(item => item.key === pair.pending.key))
+      assert.equal(disk.get("result.json"), JSON.stringify(input))
+      if (!observeOnly) {
+        assert.deepEqual(snapshot.articles, [{ ...pair.retained, attachments: [...(existing ? [A] : []), B, C] }])
+        if (round === 0) {
+          assert.equal(publishes.length, 1)
+          assert.deepEqual(articleItems, [normalizeBatchItem({ kind: "article", key: pair.retained.key, data: snapshot.articles[0] })])
+          firstContent = content
+        } else {
+          assert.equal(content, firstContent)
+          assert.equal(publishes.length, 0)
+          assert.deepEqual(sent.map(r => r.action), ["maintain"])
+        }
+      }
+    }
+  }
+}
+console.log(JSON.stringify({ scenario: "R1-summary", observeOnly, rows: mixedResults.map(({ requests: _requests, articleItems: _items, ...row }) => row) }))
 reset()
 disk.set("published.json", JSON.stringify({ articles: [] }))
 process.argv.push("--source", "official-fujian")

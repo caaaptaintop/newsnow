@@ -1,4 +1,4 @@
-import { expect, it } from "vitest"
+import { expect, it, vi } from "vitest"
 import { mergeBatch } from "../tools/ai-bridge/merge-batch"
 import { batchArticleKeys } from "../tools/ai-bridge/article-keys"
 import pair from "./fixtures/fujian-protocol-pair.json"
@@ -74,4 +74,102 @@ it("replays the real legacy article without changing the retained record", () =>
   const merged = mergeBatch(snapshot, { ...batch, attachmentUpdates: [] })
   expect(merged.articles).toEqual(snapshot.articles)
   expect(mergeBatch(merged, { ...batch, attachmentUpdates: [] })).toEqual(merged)
+})
+
+// A/B/C are synthetic metadata only; no attachment URL is fetched.
+const A = { title: "A.pdf", url: "https://zjt.fujian.gov.cn/files/A.pdf" }
+const B = { title: "B.pdf", url: "https://zjt.fujian.gov.cn/files/B.pdf" }
+const C = { title: "C.pdf", url: "https://zjt.fujian.gov.cn/files/C.pdf" }
+function mixedBatch(reverse = false, alias = [B], direct = [C]) {
+  const updates = [{ key: pair.pending.key, attachments: alias }, { key: pair.retained.key, attachments: direct }]
+  return { ...structuredClone(batch), attachmentUpdates: reverse ? updates.reverse() : updates }
+}
+
+it.each([false, true])("r1 aggregates both targets and is stable for four replays, reversed=%s", (reverse) => {
+  for (const initial of [[], [A]]) {
+    const snapshot = { articles: [{ ...pair.retained, attachments: initial }], generatedAt: 1 }
+    const input = mixedBatch(reverse)
+    const before = structuredClone({ snapshot, input })
+    const result = mergeBatch(snapshot, input)
+    expect(result.articles).toEqual([{ ...pair.retained, attachments: [...initial, B, C] }])
+    let replay = result
+    for (let i = 0; i < 4; i++) {
+      replay = mergeBatch(replay, input)
+      expect(replay).toEqual(result)
+    }
+    expect({ snapshot, input }).toEqual(before)
+  }
+})
+
+it.each([false, true])("r1 empty or snapshot-equal updates cannot erase supplements, reversed=%s", (reverse) => {
+  const snapshot = { articles: [{ ...pair.retained, attachments: [A] }], generatedAt: 1 }
+  for (const [alias, direct, expected] of [[[B], [], [A, B]], [[], [C], [A, C]], [[B], [A], [A, B]], [[], [], [A]]]) {
+    const result = mergeBatch(snapshot, mixedBatch(reverse, alias, direct))
+    expect(result.articles[0].attachments).toEqual(expected)
+    expect(mergeBatch(result, mixedBatch(reverse, alias, direct))).toEqual(result)
+  }
+})
+
+it("r1 canonical duplicates choose stable new metadata and preserve snapshot metadata", () => {
+  const bDuplicate = { title: "Z duplicate", url: `${B.url}#fragment` }
+  const aDuplicate = { title: "replacement", url: `${A.url}#fragment` }
+  const snapshot = { articles: [{ ...pair.retained, attachments: [A] }], generatedAt: 1 }
+  const left = mixedBatch(false, [bDuplicate, aDuplicate], [C, B])
+  const right = mixedBatch(true, [aDuplicate, bDuplicate], [B, C])
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1789012800000)
+  try {
+    const first = mergeBatch(snapshot, left)
+    const second = mergeBatch(snapshot, right)
+    expect(first.articles[0].attachments).toEqual([A, B, C])
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second))
+    expect(mergeBatch(first, right)).toEqual(first)
+  } finally {
+    clock.mockRestore()
+  }
+})
+
+it("r1 rejects the final mixed union above 16, accepts exactly 16", () => {
+  const initial = Array.from({ length: 15 }, (_, i) => ({ title: `old-${i}`, url: `https://zjt.fujian.gov.cn/files/old-${i}.pdf` }))
+  const snapshot = { articles: [{ ...pair.retained, attachments: initial }] }
+  for (const reverse of [false, true]) {
+    expect(() => mergeBatch(snapshot, mixedBatch(reverse))).toThrow("too many attachments")
+    expect(mergeBatch(snapshot, mixedBatch(reverse, [B], [B])).articles[0].attachments).toHaveLength(16)
+  }
+})
+
+it("r1 preserves the pure direct single-update replacement contract", () => {
+  const snapshot = { articles: [{ ...pair.retained, attachments: [A] }], generatedAt: 1 }
+  const direct = (attachments: typeof A[]) => ({ articles: [], decisions: [], attachmentUpdates: [{ key: pair.retained.key, attachments }] })
+  expect(mergeBatch(snapshot, direct([C, B, { ...B, url: `${B.url}#fragment` }])).articles[0].attachments).toEqual([C, B])
+  expect(mergeBatch(snapshot, direct([])).articles[0].attachments).toEqual([])
+  expect(mergeBatch(snapshot, direct([A])).generatedAt).toBe(1)
+})
+
+it.each(["direct", "alias"])("r1 explicitly rejects repeated original keys: %s", (kind) => {
+  const input = mixedBatch()
+  const update = input.attachmentUpdates[kind === "alias" ? 0 : 1]
+  input.attachmentUpdates.push({ ...update, attachments: [] })
+  expect(() => mergeBatch({ articles: [pair.retained] }, input)).toThrow("duplicate key")
+})
+
+it.each(["updates", "array", "size", "title", "credentials", "snapshot", "decision-false", "document"])("r1 preserves validation failures without mutating inputs: %s", (reason) => {
+  const input: any = mixedBatch()
+  const snapshot = { articles: [structuredClone(pair.retained)] }
+  if (reason === "updates") input.attachmentUpdates = {}
+  if (reason === "array") input.attachmentUpdates[1].attachments = null
+  if (reason === "size") input.attachmentUpdates[1].attachments = Array.from({ length: 17 }, () => B)
+  if (reason === "title") input.attachmentUpdates[1].attachments = [{ ...B, title: "x".repeat(241) }]
+  if (reason === "credentials") input.attachmentUpdates[1].attachments = [{ ...B, url: "https://user:password@example.invalid/file.pdf" }]
+  if (reason === "snapshot") snapshot.articles.push(structuredClone(pair.retained))
+  if (reason === "decision-false") input.decisions[0].keep = false
+  if (reason === "document") {
+    const article = input.articles[0]
+    article.url = article.url.replace("7206194.htm", "7206195.htm")
+    article.key = batchArticleKeys(article.topic, article.sourceId, article.url)[0]
+    input.decisions[0].key = article.key
+    input.attachmentUpdates[0].key = article.key
+  }
+  const before = structuredClone({ input, snapshot })
+  expect(() => mergeBatch(snapshot, input)).toThrow()
+  expect({ input, snapshot }).toEqual(before)
 })

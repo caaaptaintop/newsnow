@@ -44,29 +44,49 @@ export function mergeBatch(snapshot: any, batch: any) {
     existing.add(key)
     existingArticles.set(key, article)
   }
-  const attachmentUpdates = new Map<string, { title: string, url: string }[]>()
+  interface Attachment {
+    title: string
+    url: string
+  }
+  const groups = new Map<string, { recovered: boolean, attachments: Attachment[] }>()
+  const updateKeys = new Set<string>()
   for (const update of rawAttachmentUpdates) {
     const target = update && typeof update.key === "string" ? recoveredAliases.get(update.key) ?? update.key : undefined
     const current: any = snapshotByKey.get(target)
     const recovered = target !== update?.key
     if (!current || !Array.isArray(update.attachments) || update.attachments.length > 16) throw new Error(`Invalid attachment update: unresolved or conflicting target ${update?.key}`)
+    if (updateKeys.has(update.key)) throw new Error(`Invalid attachment update: duplicate key ${update.key}`)
+    updateKeys.add(update.key)
     if (recovered && (batch.articles.filter((article: any) => article.key === update.key).length !== 1
       || snapshot.articles.filter((article: any) => article.key === target).length !== 1)) {
       throw new Error(`Attachment alias conflict: ambiguous metadata for ${update.key}`)
     }
-    const seen = new Set<string>()
     const attachments = update.attachments.map((attachment: any) => {
       const safe = attachment && typeof attachment.title === "string" && attachment.title.trim().length <= 240 ? intelligenceHttpUrl(attachment.url) : undefined
       if (!safe) throw new Error("Invalid attachment update")
-      const key = intelligenceCanonicalUrl(safe) || safe
-      if (seen.has(key)) return undefined
-      seen.add(key)
       return { title: attachment.title.trim() || "原文附件", url: safe }
-    }).filter((value: { title: string, url: string } | undefined): value is { title: string, url: string } => !!value)
-    // Alias recovery supplements the retained record; it never erases its attachments.
-    const mergedAttachments = recovered
-      ? [...(attachmentUpdates.get(target) ?? current.attachments ?? []), ...attachments].filter((attachment, index, all) => all.findIndex(other => intelligenceCanonicalUrl(other.url) === intelligenceCanonicalUrl(attachment.url)) === index)
-      : attachments
+    })
+    const group = groups.get(target) ?? { recovered: false, attachments: [] }
+    group.recovered ||= recovered
+    group.attachments.push(...attachments)
+    groups.set(target, group)
+  }
+  const attachmentUpdates = new Map<string, Attachment[]>()
+  for (const [target, group] of groups) {
+    const current: any = snapshotByKey.get(target)
+    // Keep snapshot order/metadata first. Sort all supplements together so input
+    // order cannot choose either the new attachment order or duplicate metadata.
+    const stableKey = (attachment: Attachment) => JSON.stringify([intelligenceCanonicalUrl(attachment.url), attachment.url, attachment.title])
+    const supplements = group.recovered
+      ? group.attachments.sort((a, b) => stableKey(a) < stableKey(b) ? -1 : stableKey(a) > stableKey(b) ? 1 : 0)
+      : group.attachments
+    const seen = new Set<string>()
+    const mergedAttachments = [...(group.recovered ? current.attachments ?? [] : []), ...supplements].filter((attachment) => {
+      const key = intelligenceCanonicalUrl(attachment.url)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
     if (mergedAttachments.length > 16) throw new Error(`Attachment alias conflict: too many attachments for ${target}`)
     if (JSON.stringify(current.attachments ?? []) !== JSON.stringify(mergedAttachments)) attachmentUpdates.set(target, mergedAttachments)
   }
