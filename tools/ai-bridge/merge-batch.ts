@@ -1,10 +1,11 @@
-import { isPublishedSource } from "../../shared/public-site"
 import { createHash } from "node:crypto"
+import { isPublishedSource } from "../../shared/public-site"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceHttpUrl, intelligenceVersion } from "../../shared/intelligence"
 import { intelligenceMetadataOnly } from "../../shared/intelligence-storage"
 import { intelligenceSources } from "../../shared/official-sources"
 import { intelligenceNormalizeDecision } from "../../server/utils/intelligence-ai"
 import { buildingRecallScore } from "../../shared/building-recall"
+import { batchArticleKeys } from "./article-keys"
 
 export function mergeBatch(snapshot: any, batch: any) {
   if (!Array.isArray(snapshot.articles) || !Array.isArray(batch.articles) || !Array.isArray(batch.decisions)) throw new Error("Invalid snapshot or batch")
@@ -27,6 +28,7 @@ export function mergeBatch(snapshot: any, batch: any) {
     if (JSON.stringify(current.attachments ?? []) !== JSON.stringify(attachments)) attachmentUpdates.set(update.key, attachments)
   }
   const existing = new Set(snapshot.articles.map((a: any) => a.key))
+  const existingArticles = new Map<string, any>(snapshot.articles.map((a: any) => [a.key, a]))
   const added: IntelligenceArticle[] = []
   for (const article of batch.articles) {
     if (existing.has(article.key)) continue
@@ -39,8 +41,15 @@ export function mergeBatch(snapshot: any, batch: any) {
       || !Number.isFinite(article.collectedAt) || article.evidence !== "title") {
       throw new Error("Batch article failed validation")
     }
+    if (batchArticleKeys(article.topic, article.sourceId, article.url).some((alias) => {
+      const old = existingArticles.get(alias)
+      return old?.title === article.title && old?.sourceId === article.sourceId && old?.topic === article.topic
+    })) {
+      continue
+    }
     added.push(intelligenceMetadataOnly(article))
     existing.add(key)
+    existingArticles.set(key, article)
   }
   const states = new Map((snapshot.states ?? []).map((s: any) => [s.id, s]))
   let changed = added.length > 0 || attachmentUpdates.size > 0 || (batch.pipeline === "mac" && snapshot.pipeline !== "mac")

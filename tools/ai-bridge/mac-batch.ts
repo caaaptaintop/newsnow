@@ -1,5 +1,3 @@
-import { publisherKnown } from "./publisher.mjs"
-import { createHash } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import process from "node:process"
@@ -7,11 +5,13 @@ import { isPublishedSource } from "../../shared/public-site"
 import { intelligenceSources } from "../../shared/official-sources"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceVersion } from "../../shared/intelligence"
 import { buildingRecallScore } from "../../shared/building-recall"
+import { publisherKnown } from "./publisher.mjs"
 import { collectSource } from "./collect-source"
 import { classifyBatch } from "./classify-batch"
 import { verifyPublicationDate } from "./publication-date"
 import { enrichOfficialArticleMetadata } from "./enrich-article"
 import { localCodex } from "./local-codex.mjs"
+import { batchArticleKeys } from "./article-keys"
 
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
@@ -65,7 +65,7 @@ try {
         if (error.code !== "ENOENT") throw error
       }
       const sourceItems = collectedCache.get(source.id)?.items ?? []
-      const keys = sourceItems.map((item: any) => `${source.topic}:${createHash("sha256").update(intelligenceCanonicalUrl(item.url)).digest("hex")}`)
+      const keys = [...new Set<string>(sourceItems.flatMap((item: any) => batchArticleKeys(source.topic, source.id, item.url)))]
       const online = { articles: await publisherKnown(keys) }
       const known = new Map<string, string>([...snapshot.articles, ...online.articles, ...previous.articles, ...previous.decisions].map((a: any) => [a.key, a.title]))
       const candidates = new Map<string, any>()
@@ -77,8 +77,9 @@ try {
       for (const list of lists) {
         for (const item of list) {
           if (!item.title || !intelligenceCanonicalUrl(item.url)) continue
-          const key = `${source.topic}:${createHash("sha256").update(intelligenceCanonicalUrl(item.url)).digest("hex")}`
-          if (known.get(key) !== item.title) candidates.set(key, { ...item, key })
+          const aliases = batchArticleKeys(source.topic, source.id, item.url)
+          const key = aliases[0]
+          if (!aliases.some(alias => known.get(alias) === item.title || candidates.get(alias)?.title === item.title)) candidates.set(key, { ...item, key })
         }
       }
       const recalled = [...candidates.values()]
