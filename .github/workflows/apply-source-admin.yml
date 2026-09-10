@@ -1,0 +1,49 @@
+name: Apply source admin integration
+
+on:
+  push:
+    branches:
+      - feat/topic-source-management-center-final
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/topic-source-management-center-final
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply guarded integration patch
+        run: python scripts/apply-source-admin-patch.py
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate implementation
+        run: |
+          set -euo pipefail
+          pnpm exec vitest run test/source-config.test.ts
+          pnpm exec vitest run test
+          node --test tools/ai-bridge/mac-worker.test.mjs
+          node --test scripts/building-release.test.mjs
+          pnpm exec eslint shared/source-config.ts server/source-admin server/utils/intelligence-collector.ts tools/ai-bridge/source-config-runtime.ts tools/ai-bridge/collect-source.ts src/routes/internal.sources.tsx src/components/source-admin/index.tsx test/source-config.test.ts
+          pnpm run build
+          git diff --check
+      - name: Commit final implementation
+        run: |
+          set -euo pipefail
+          rm scripts/apply-source-admin-patch.py .github/workflows/apply-source-admin.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "feat: add topic-based source management center"
+          git push origin HEAD:feat/topic-source-management-center-final
