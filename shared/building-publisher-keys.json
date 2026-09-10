@@ -1,1 +1,16 @@
-{"keys":[]}
+{
+  "keys": [
+    {
+      "id": "mac-c126cfdc0132007ea128",
+      "jwk": {
+        "crv": "Ed25519",
+        "x": "ORnvYlE8p5utdSF93nZbO4P1-88iiUxoj6Vu1tjnarM",
+        "kty": "OKP"
+      },
+      "capabilities": [
+        "publish",
+        "operate"
+      ]
+    }
+  ]
+}
