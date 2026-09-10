@@ -7,11 +7,36 @@ import { classifyBatch } from "../tools/ai-bridge/classify-batch"
 import { enrichOfficialArticleMetadata } from "../tools/ai-bridge/enrich-article"
 import { buildingRecallScore } from "../shared/building-recall"
 import { intelligenceVersion } from "../shared/intelligence"
+import { batchArticleKeys } from "../tools/ai-bridge/article-keys"
 
 const url = "https://zjw.sh.gov.cn/test/urban-renewal.html"
 const key = `building:${createHash("sha256").update(url).digest("hex")}`
 const article = { key, url, title: "关于推进城市更新工作的通知", sourceId: "official-shanghai", topic: "building", analysisVersion: intelligenceVersion, collectedAt: 1000, evidence: "title", category: "urban_renewal", contentType: "通知公告", importance: 70, summary: "通知涉及推进城市更新工作。", attachments: [], relatedCategories: [], tags: [] }
 const batch = { articles: [article], decisions: [{ key, title: article.title, keep: true }] }
+it("fujian protocol aliases match historical IDs without changing the primary key or document query", () => {
+  const http = "http://zjt.fujian.gov.cn/notice.htm?id=1"
+  const https = http.replace("http:", "https:")
+  const aliases = batchArticleKeys("building", "official-fujian", https)
+  expect(aliases).toEqual([https, http].map(url => `building:${createHash("sha256").update(url).digest("hex")}`))
+  expect(batchArticleKeys("building", "official-fujian", http)).toEqual([...aliases].reverse())
+  expect(batchArticleKeys("building", "official-fujian", `${https}&id=2`).some(key => aliases.includes(key))).toBe(false)
+  expect(batchArticleKeys("building", "official-shanghai", https)).toHaveLength(1)
+  expect(batchArticleKeys("ai", "official-fujian", https)).toHaveLength(1)
+  expect(batchArticleKeys("building", "official-fujian", "https://other.gov.cn/notice.htm")).toHaveLength(1)
+})
+it("pending Fujian aliases cannot recreate duplicates or replace richer historical metadata", () => {
+  const url = "https://zjt.fujian.gov.cn/notice.htm?id=1"
+  const [key, oldKey] = batchArticleKeys("building", "official-fujian", url)
+  const pending = { ...article, sourceId: "official-fujian", url, key }
+  const old = { ...pending, key: oldKey, url: url.replace("https:", "http:"), summary: "保留更完整的历史摘要", model: "migration" }
+  const snapshot = { articles: [old], generatedAt: 1 }
+  const batch = { articles: [pending], decisions: [{ key, title: pending.title, keep: true }] }
+  expect(mergeBatch(snapshot, batch).articles).toEqual([old])
+  expect(mergeBatch(mergeBatch(snapshot, batch), batch)).toEqual(mergeBatch(snapshot, batch))
+  expect(mergeBatch({ articles: [] }, { articles: [pending, { ...old, model: "test" }], decisions: [...batch.decisions, { key: oldKey, title: old.title, keep: true }] }).articles).toEqual([expect.objectContaining({ key })])
+  expect(mergeBatch({ articles: [{ ...old, title: "不同的公告" }] }, batch).articles).toHaveLength(2)
+  expect(() => mergeBatch(snapshot, { ...batch, decisions: [] })).toThrow("Batch article failed validation")
+})
 it("short classification IDs map by ID even when output order changes, rejecting unknown IDs", async () => {
   const items = [{ key: "long-key-one", title: "一", column: "栏目" }, { key: "long-key-two", title: "二", column: "栏目" }]
   const ai = { model: "test", run: async (_model: string, params: any) => {
