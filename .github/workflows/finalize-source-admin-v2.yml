@@ -1,0 +1,97 @@
+name: Finalize source admin ready branch
+
+on:
+  push:
+    branches:
+      - feat/topic-source-management-center-final
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/topic-source-management-center-final
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply guarded final integration
+        run: python scripts/finalize-source-admin-v2.py
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Targeted source configuration regressions
+        run: pnpm exec vitest run test/source-config.test.ts
+      - name: Full repository regressions
+        run: pnpm exec vitest run test
+      - name: Existing orchestration and release regressions
+        run: |
+          node --test tools/ai-bridge/mac-worker.test.mjs
+          node --test scripts/building-release.test.mjs
+      - name: Changed implementation lint
+        run: >-
+          pnpm exec eslint
+          shared/source-config.ts
+          server/source-admin
+          server/utils/intelligence-collector.ts
+          server/utils/intelligence-parser.ts
+          server/api/intelligence/source-config.get.ts
+          server/api/internal/source-admin.get.ts
+          server/api/internal/source-admin.post.ts
+          server/building/store.ts
+          server/middleware/00-public-site.ts
+          shared/public-site.ts
+          tools/ai-bridge/source-config-runtime.ts
+          tools/ai-bridge/collect-source.ts
+          tools/ai-bridge/mac-batch.ts
+          src/routes/internal.sources.tsx
+          src/components/source-admin/index.tsx
+          test/source-config.test.ts
+      - name: Cloudflare production build
+        env:
+          CF_PAGES: 1
+        run: pnpm run build
+      - name: Changed-file type gate
+        run: |
+          set -euo pipefail
+          pnpm exec tsc --noEmit -p tsconfig.node.json > /tmp/type-node.txt 2>&1 || true
+          pnpm exec tsc --noEmit -p tsconfig.app.json > /tmp/type-app.txt 2>&1 || true
+          python - <<'PY'
+          import re, subprocess, sys
+          changed=set(subprocess.check_output(['git','diff','--name-only','origin/main...HEAD'],text=True).splitlines())
+          changed.update(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          bad=[]
+          for path in ('/tmp/type-node.txt','/tmp/type-app.txt'):
+              for line in open(path,encoding='utf-8',errors='replace'):
+                  match=re.match(r'^([^\s(]+)\(\d+,\d+\): error TS',line)
+                  if match and match.group(1) in changed: bad.append(line.rstrip())
+                  elif 'error TS' in line and not match: bad.append(line.rstrip())
+          print('\n'.join(bad))
+          sys.exit(bool(bad))
+          PY
+      - name: Guard repository diff
+        run: |
+          git diff --check
+          test ! -e .env
+          test ! -e .env.server
+      - name: Commit tested implementation to ready branch
+        run: |
+          set -euo pipefail
+          rm -f \
+            scripts/apply-source-admin-patch.py \
+            scripts/finalize-source-admin-v2.py \
+            .github/workflows/apply-source-admin.yml \
+            .github/workflows/finalize-source-admin-v2.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "feat: add topic-based source management center"
+          git push origin HEAD:refs/heads/feat/topic-source-management-center-ready-20260910
