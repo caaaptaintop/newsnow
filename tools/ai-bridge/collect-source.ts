@@ -49,7 +49,7 @@ async function collect(source: IntelligenceSource & { collectionMode?: string },
       })
       const parsed = page.items
       if (!parsed.length) warnings.push(`${column.name}：栏目未解析到文章`)
-      if (page.paginationStalled) warnings.push(`${column.name}：分页返回了重复列表，已停止继续请求`)
+      if ("paginationStalled" in page && page.paginationStalled) warnings.push(`${column.name}：分页返回了重复列表，已停止继续请求`)
       if (page.capped) warnings.push(`${column.name}：连续发现尚未处理的相关内容，已读取 ${page.pages} 页并达到单轮分页上限`)
       items.push(...parsed)
     }
