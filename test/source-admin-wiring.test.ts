@@ -103,7 +103,9 @@ describe("source administration integration boundaries", () => {
   })
 
   it("does not pretend an unavailable D1 binding is an empty published catalog", async () => {
-    await expect(publishedBuildingSourceOverrides({ context: { env: {} } } as H3Event)).rejects.toMatchObject({ statusCode: 503 })
+    const { event } = fixture()
+    delete event.context.env.NEWSNOW_DB
+    await expect(publishedBuildingSourceOverrides(event)).rejects.toMatchObject({ statusCode: 503 })
   })
 
   it("returns an error on D1 failure so the Mac client can retain LKG", async () => {
