@@ -20,7 +20,7 @@ for (const file of await walk(root)) {
   checked++
 }
 if (process.env.CF_PAGES) {
-  // This application uses a static SPA shell; only API paths should invoke Workers.
-  await writeFile(join(root, "_routes.json"), JSON.stringify({ version: 1, include: ["/api", "/api/*"], exclude: [] }))
+  // Public reading keeps the static SPA shell. Internal routes must reach server-side authentication.
+  await writeFile(join(root, "_routes.json"), JSON.stringify({ version: 1, include: ["/api", "/api/*", "/internal", "/internal/*"], exclude: [] }))
 }
-console.log(JSON.stringify({ publicBuild: "pass", checkedFiles: checked, excludedTopicRecords: disabledKeys.length, routes: process.env.CF_PAGES ? "api-only" : "node-server" }))
+console.log(JSON.stringify({ publicBuild: "pass", checkedFiles: checked, excludedTopicRecords: disabledKeys.length, routes: process.env.CF_PAGES ? "api-and-internal" : "node-server" }))

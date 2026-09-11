@@ -81,6 +81,7 @@ jobs:
             sleep 1
           done
           node scripts/building-site-smoke.mjs
+          pnpm exec tsx --tsconfig tsconfig.node.json scripts/source-admin-browser.mts
       - name: Preserve validation evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,6 +91,7 @@ jobs:
             typecheck-node.txt
             typecheck-app.txt
             building-test-results/
+            source-admin-test-results/
           if-no-files-found: ignore
           retention-days: 7
   storage-preflight:

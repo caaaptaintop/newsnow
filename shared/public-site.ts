@@ -18,6 +18,6 @@ export function isPublishedSource(source: { enabled: boolean, topic: string }) {
 
 /** Shared by the server gate and integration tests. Unknown APIs fail closed. */
 export function publicApiAllowed(path: string, method: string): boolean {
-  if (path === "/api/intelligence" || path === "/api/intelligence/version") return method === "GET" || method === "HEAD"
+  if (path === "/api/intelligence" || path === "/api/intelligence/version" || path === "/api/intelligence/building/source-config") return method === "GET" || method === "HEAD"
   return path === "/api/intelligence/attachment" && method === "POST"
 }
