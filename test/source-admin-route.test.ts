@@ -3,7 +3,14 @@ import { describe, expect, it, vi } from "vitest"
 import { requireSameOriginWrite, requireSourceAdmin } from "../server/utils/source-admin-auth"
 
 function eventWithHeaders(headers: Record<string, string> = {}, env: Record<string, string> = {}) {
-  return { context: { env }, node: { req: { url: "/internal/api/sources", headers: { host: "news.capx-ai.com", ...headers }, socket: {} } } } as unknown as H3Event
+  const url = new URL("http://news.capx-ai.com/internal/api/sources")
+  const requestHeaders = { host: url.host, ...headers }
+  return {
+    context: { env },
+    url,
+    req: new Request(url, { headers: requestHeaders }),
+    node: { req: { url: `${url.pathname}${url.search}`, originalUrl: `${url.pathname}${url.search}`, headers: requestHeaders, socket: { encrypted: false } } },
+  } as unknown as H3Event
 }
 describe("internal authentication fails closed", () => {
   it("denies requests before any database access when not configured", async () => {
