@@ -1,9 +1,17 @@
 import type { IntelligenceSource } from "../../shared/intelligence"
-import { intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceParseList } from "./intelligence-parser"
+import { intelligenceCanonicalUrl } from "../../shared/intelligence"
+import { intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceParseList, type OfficialCandidate } from "./intelligence-parser"
 import { sourceFetchError } from "./source-fetch-diagnostic"
 
 const jpaasUnitPath = "/api-gateway/jpaas-publish-server/front/page/build/unit"
+const jpaasPageSize = 20
+const jpaasMaxPages = 5
 const collectionHeaders = { "User-Agent": "CapxIntelligence/1.0 (official public information reader)" }
+
+export interface IntelligenceFetchListOptions {
+  maxPages?: number
+  shouldContinue?: (items: OfficialCandidate[], pageNumber: number) => boolean | Promise<boolean>
+}
 
 function htmlEntityText(value: string) {
   return value.replace(/&amp;/gi, "&").replace(/&#38;/g, "&").replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
@@ -59,6 +67,20 @@ export function intelligenceJPaasUnitUrl(html: string, source: IntelligenceSourc
   url.searchParams.set("editType", parameter(selected.window, "editType") ?? "null")
   return intelligenceAllowedUrl(url.href, source, base)
 }
+function pagedUnitUrl(endpoint: string, source: IntelligenceSource, base: string, pageNumber: number) {
+  if (pageNumber === 1) return endpoint
+  const url = new URL(endpoint)
+  url.searchParams.delete("editType")
+  url.searchParams.set("paramJson", JSON.stringify({ pageNo: pageNumber, pageSize: jpaasPageSize }))
+  return intelligenceAllowedUrl(url.href, source, base)
+}
+function nextPageAvailable(fragment: string, pageNumber: number, items: OfficialCandidate[]) {
+  const controls = [...fragment.matchAll(/\bdata-page\s*=\s*["']?(\d{1,6})["']?/gi)].map(match => Number(match[1]))
+  return controls.length ? controls.includes(pageNumber + 1) : items.length > 0
+}
+function pageSignature(items: OfficialCandidate[]) {
+  return items.map(item => intelligenceCanonicalUrl(item.url)).filter(Boolean).sort().join("\n")
+}
 async function readBounded(response: Response, maxBytes: number) {
   const reader = response.body?.getReader()
   if (!reader) throw new Error("动态栏目接口响应为空")
@@ -78,8 +100,10 @@ async function readBounded(response: Response, maxBytes: number) {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
   return bytes
 }
-async function dynamicFragment(endpoint: string, pageUrl: string) {
-  const response = await fetch(endpoint, {
+async function dynamicFragment(endpoint: string, pageUrl: string, source: IntelligenceSource, pageNumber: number) {
+  const requestUrl = pagedUnitUrl(endpoint, source, pageUrl, pageNumber)
+  if (!requestUrl) throw new Error("动态栏目分页地址未通过白名单校验")
+  const response = await fetch(requestUrl, {
     redirect: "manual", signal: AbortSignal.timeout(12000),
     headers: { ...collectionHeaders, "Accept": "application/json,text/plain,*/*", "Referer": pageUrl },
   })
@@ -97,15 +121,54 @@ async function dynamicFragment(endpoint: string, pageUrl: string) {
   if (/验证码|安全验证|访问过于频繁|checking your browser|just a moment/i.test(fragment.slice(0, 12000)) && fragment.length < 30000) throw new Error("动态栏目接口要求访问验证，未绕过验证")
   return fragment
 }
+function mergeItems(target: Map<string, OfficialCandidate>, items: OfficialCandidate[]) {
+  for (const item of items) {
+    const key = intelligenceCanonicalUrl(item.url)
+    if (key && !target.has(key)) target.set(key, item)
+  }
+}
 
-/** Fetch a list page; only if its static shell has no articles, hydrate one same-host JPaas list unit. */
-export async function intelligenceFetchList(url: string, source: IntelligenceSource, column: { name: string, url: string }) {
+/**
+ * Fetch one list page. Production collection may continue through a bounded
+ * JPaas pagination window only when the caller says the current page still
+ * contains unseen relevant records. Admin configuration tests intentionally
+ * use the default one-page budget.
+ */
+export async function intelligenceFetchList(url: string, source: IntelligenceSource, column: { name: string, url: string }, options: IntelligenceFetchListOptions = {}) {
   const page = await intelligenceFetchHtml(url, source)
   let items = intelligenceParseList(page.html, source, { ...column, url: page.url })
-  if (items.length) return { ...page, items, dynamic: false }
+  if (items.length) return { ...page, items, dynamic: false, pages: 1, capped: false }
   const endpoint = intelligenceJPaasUnitUrl(page.html, source, page.url)
-  if (!endpoint) return { ...page, items, dynamic: false }
-  const fragment = await dynamicFragment(endpoint, page.url)
+  if (!endpoint) return { ...page, items, dynamic: false, pages: 1, capped: false }
+
+  const requestedMax = Number.isSafeInteger(options.maxPages) ? Number(options.maxPages) : 1
+  const maxPages = Math.max(1, Math.min(jpaasMaxPages, requestedMax))
+  let fragment = await dynamicFragment(endpoint, page.url, source, 1)
   items = intelligenceParseList(fragment, source, { ...column, url: page.url })
-  return { ...page, items, dynamic: true }
+  const collected = new Map<string, OfficialCandidate>()
+  mergeItems(collected, items)
+  let pages = 1
+  let currentItems = items
+  let signature = pageSignature(currentItems)
+  let paginationStalled = false
+  let nextAvailable = nextPageAvailable(fragment, pages, currentItems)
+  let continueWanted = nextAvailable && maxPages > 1
+    ? options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true
+    : false
+
+  while (nextAvailable && continueWanted && pages < maxPages) {
+    const nextPage = pages + 1
+    fragment = await dynamicFragment(endpoint, page.url, source, nextPage)
+    currentItems = intelligenceParseList(fragment, source, { ...column, url: page.url })
+    pages = nextPage
+    if (!currentItems.length) { nextAvailable = false; continueWanted = false; break }
+    const nextSignature = pageSignature(currentItems)
+    if (nextSignature && nextSignature === signature) { paginationStalled = true; nextAvailable = false; continueWanted = false; break }
+    signature = nextSignature
+    mergeItems(collected, currentItems)
+    nextAvailable = nextPageAvailable(fragment, pages, currentItems)
+    continueWanted = nextAvailable && (options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true)
+  }
+  const capped = pages >= maxPages && nextAvailable && continueWanted
+  return { ...page, items: [...collected.values()], dynamic: true, pages, capped, paginationStalled }
 }

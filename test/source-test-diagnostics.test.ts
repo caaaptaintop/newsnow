@@ -165,6 +165,46 @@ describe("JPaas dynamic government list hydration", () => {
     expect(mock).toHaveBeenCalledTimes(2)
     expect(String(mock.mock.calls[1][0])).toContain("/api-gateway/jpaas-publish-server/front/page/build/unit?")
   })
+  it("uses observed paramJson pagination and stops when the caller reaches known relevant content", async () => {
+    const pageOne = `<ul>
+      <li><a href="/zhengcefabu/art/2026/art_one.html">住房城乡建设部关于第一页合成政策事项的通知</a><span>2026-09-08</span></li>
+      <li><a href="/zhengcefabu/art/2026/art_two.html">住房城乡建设部关于第一页第二项政策的通知</a><span>2026-09-07</span></li>
+    </ul><a data-page="2" href="javascript:;">2</a>`
+    const pageTwo = `<ul>
+      <li><a href="/zhengcefabu/art/2026/art_three.html">住房城乡建设部关于第二页合成政策事项的通知</a><span>2026-08-30</span></li>
+      <li><a href="/zhengcefabu/art/2026/art_four.html">住房城乡建设部关于第二页第二项政策的通知</a><span>2026-08-29</span></li>
+    </ul><a data-page="3" href="javascript:;">3</a>`
+    const mock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(staticHtml, { status: 200, headers: { "content-type": "text/html" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { html: pageOne } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { html: pageTwo } }), { status: 200, headers: { "content-type": "application/json" } }))
+    const shouldContinue = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const column = { name: "政策发布", url: `${seed.home}zhengcefabu/index.html` }
+    const page = await intelligenceFetchList(column.url, seed, column, { maxPages: 5, shouldContinue })
+    expect(page.items).toHaveLength(4)
+    expect(page.pages).toBe(2)
+    expect(page.capped).toBe(false)
+    expect(shouldContinue).toHaveBeenCalledTimes(2)
+    expect(mock).toHaveBeenCalledTimes(3)
+    const firstUnit = new URL(String(mock.mock.calls[1][0]))
+    const secondUnit = new URL(String(mock.mock.calls[2][0]))
+    expect(firstUnit.searchParams.has("paramJson")).toBe(false)
+    expect(secondUnit.searchParams.get("paramJson")).toBe(JSON.stringify({ pageNo: 2, pageSize: 20 }))
+    expect(secondUnit.searchParams.has("editType")).toBe(false)
+  })
+  it("never requests beyond the hard page budget and reports a capped catch-up", async () => {
+    const fragment = (page: number) => `<ul><li><a href="/zhengcefabu/art/2026/art_${page}.html">住房城乡建设部关于第${page}页合成政策事项的通知</a><span>2026-09-0${page}</span></li></ul><a data-page="${page + 1}" href="javascript:;">${page + 1}</a>`
+    const mock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(staticHtml, { status: 200, headers: { "content-type": "text/html" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { html: fragment(1) } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { html: fragment(2) } }), { status: 200, headers: { "content-type": "application/json" } }))
+    const column = { name: "政策发布", url: `${seed.home}zhengcefabu/index.html` }
+    const page = await intelligenceFetchList(column.url, seed, column, { maxPages: 2, shouldContinue: async () => true })
+    expect(page.pages).toBe(2)
+    expect(page.capped).toBe(true)
+    expect(mock).toHaveBeenCalledTimes(3)
+    expect(String(mock.mock.calls[2][0])).toContain(encodeURIComponent(JSON.stringify({ pageNo: 2, pageSize: 20 })))
+  })
 })
 
 describe("cloud DNS fallback classification", () => {

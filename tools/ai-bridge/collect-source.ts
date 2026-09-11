@@ -1,12 +1,17 @@
 import { hackernewsFeed } from "../../server/utils/hackernews-feed"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl, intelligenceDate } from "../../shared/intelligence"
-import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../../server/utils/intelligence-parser"
+import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList, type OfficialCandidate } from "../../server/utils/intelligence-parser"
 import { intelligenceFetchList } from "../../server/utils/intelligence-dynamic-list"
 import { resolvePublishedSource } from "./source-config-client"
 
+export interface CollectSourceOptions {
+  maxPages?: number
+  shouldContinuePage?: (items: OfficialCandidate[], pageNumber: number) => boolean | Promise<boolean>
+}
+
 /** An unreadable column must not become an empty success. */
-async function collect(source: IntelligenceSource & { collectionMode?: string }) {
+async function collect(source: IntelligenceSource & { collectionMode?: string }, options: CollectSourceOptions) {
   const warnings: string[] = []
   if (source.newsnowId === "hackernews") {
     const items = await hackernewsFeed()
@@ -38,9 +43,14 @@ async function collect(source: IntelligenceSource & { collectionMode?: string })
   const items: any[] = []
   for (const column of columns.slice(0, collectionMode === "explicit" ? 12 : 4)) {
     try {
-      const page = await intelligenceFetchList(column.url, source, column)
+      const page = await intelligenceFetchList(column.url, source, column, {
+        maxPages: options.maxPages,
+        shouldContinue: options.shouldContinuePage,
+      })
       const parsed = page.items
       if (!parsed.length) warnings.push(`${column.name}：栏目未解析到文章`)
+      if (page.paginationStalled) warnings.push(`${column.name}：分页返回了重复列表，已停止继续请求`)
+      if (page.capped) warnings.push(`${column.name}：连续发现尚未处理的相关内容，已读取 ${page.pages} 页并达到单轮分页上限`)
       items.push(...parsed)
     }
     catch (error: any) {
@@ -61,11 +71,11 @@ async function collect(source: IntelligenceSource & { collectionMode?: string })
   return { columns, warnings, items: [...new Map(items.map(item => [intelligenceCanonicalUrl(item.url), item])).values()] }
 }
 
-export async function collectSource(source: IntelligenceSource) {
+export async function collectSource(source: IntelligenceSource, options: CollectSourceOptions = {}) {
   try {
     const configured = await resolvePublishedSource(source)
     if (configured.enabled === false) return { columns: [], warnings: ["来源已由发布配置停用"], items: [] }
-    return await collect(configured)
+    return await collect(configured, options)
   }
   catch (error: any) {
     const code = error.cause?.code ?? error.code

@@ -73,7 +73,7 @@ export async function testSourceConfig(value: IntelligenceSourceConfig): Promise
     const record: SourceEndpointTest = { id: endpoint.id, name: endpoint.name, url: endpoint.url, ok: false, count: 0, preview: [], message: "" }
     try {
       if (Date.now() >= deadline) { record.status = "untested"; throw new Error("本次测试达到时间预算；此栏目未测试") }
-      const page = await intelligenceFetchList(endpoint.url, source, { name: endpoint.name, url: endpoint.url })
+      const page = await intelligenceFetchList(endpoint.url, source, { name: endpoint.name, url: endpoint.url }, { maxPages: 1 })
       const items = page.items
       Object.assign(record, { finalUrl: page.url, status: items.length ? "passed" : "failed", ok: items.length > 0, count: items.length,
         preview: items.slice(0, 5).map(item => ({ title: item.title, url: item.url, publishedAt: item.publishedAt })),
