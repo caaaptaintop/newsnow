@@ -3,10 +3,14 @@ import type { IntelligenceSourceConfig } from "../../shared/source-config"
 import { applyIntelligenceSourceConfig, sourceConfigCanPublish, validateIntelligenceSourceConfig } from "../../shared/source-config"
 import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../utils/intelligence-parser"
 
+import { SourceFetchError, type SourceFetchDiagnostic } from "../utils/source-fetch-diagnostic"
+
 export interface SourceEndpointTest {
   id: string
   url: string
   finalUrl?: string
+  status?: "passed" | "failed" | "untested"
+  diagnostic?: SourceFetchDiagnostic
   name: string
   ok: boolean
   count: number
@@ -59,16 +63,20 @@ export async function testSourceConfig(value: IntelligenceSourceConfig): Promise
   for (const endpoint of config.endpoints.filter(item => item.enabled)) {
     const record: SourceEndpointTest = { id: endpoint.id, name: endpoint.name, url: endpoint.url, ok: false, count: 0, preview: [], message: "" }
     try {
-      if (Date.now() >= deadline) throw new Error("本次测试达到时间预算；其余栏目未测试")
+      if (Date.now() >= deadline) { record.status = "untested"; throw new Error("本次测试达到时间预算；此栏目未测试") }
       const page = await intelligenceFetchHtml(endpoint.url, source)
       const items = intelligenceParseList(page.html, source, { name: endpoint.name, url: page.url })
-      Object.assign(record, { finalUrl: page.url, ok: items.length > 0, count: items.length,
+      Object.assign(record, { finalUrl: page.url, status: items.length ? "passed" : "failed", ok: items.length > 0, count: items.length,
         preview: items.slice(0, 5).map(item => ({ title: item.title, url: item.url, publishedAt: item.publishedAt })),
         message: items.length ? "请人工确认标题样本是否属于目标栏目；缺少日期不等于当天发布" : "栏目页未解析到文章" })
     }
-    catch (error) { record.message = error instanceof Error ? error.message.slice(0, 240) : "栏目测试失败" }
+    catch (error) {
+      record.status ??= "failed"
+      record.message = error instanceof Error ? error.message.slice(0, 240) : "栏目测试失败"
+      if (error instanceof SourceFetchError) record.diagnostic = error.diagnostic
+    }
     endpoints.push(record)
   }
   const ok = endpoints.length > 0 && endpoints.every(endpoint => endpoint.ok)
-  return { schemaVersion: 1, ok, publishable: ok, mode: "explicit", endpoints, message: ok ? "全部启用栏目可解析；请确认预览内容后发布" : "有栏目未通过；当前草稿不能发布" }
+  return { schemaVersion: 1, ok, publishable: ok, mode: "explicit", endpoints, message: ok ? "全部启用栏目可解析；请确认预览内容后发布" : `以下栏目未通过或未测试：${endpoints.filter(endpoint => !endpoint.ok).map(endpoint => endpoint.name).join("、")}；当前草稿不能发布` }
 }
