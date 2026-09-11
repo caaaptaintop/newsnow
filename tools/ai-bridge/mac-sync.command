@@ -16,6 +16,9 @@ if [[ "$(git branch --show-current)" != main || -n "$(git status --porcelain)" ]
 fi
 git pull --ff-only origin main
 node tools/ai-bridge/publisher.mjs prepare
+if ! node_modules/.bin/tsx --tsconfig tsconfig.node.json tools/ai-bridge/source-test-runner.ts 1; then
+  print '信息源本机测试暂未完成；不影响本轮信息采集。'
+fi
 codex login status
 print '开始用 ChatGPT 订阅处理一批新信息。请保持 Mac 唤醒和联网。'
 node_modules/.bin/tsx --tsconfig tsconfig.node.json tools/ai-bridge/mac-batch.ts --source all --limit 12

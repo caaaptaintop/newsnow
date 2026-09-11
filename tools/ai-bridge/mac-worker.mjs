@@ -40,6 +40,12 @@ export function runWorker(root, run = command, now = Date.now()) {
     if (call("git", ["branch", "--show-current"]).trim() !== "main" || call("git", ["status", "--porcelain"]).trim()) throw new Error("Checkout must be clean and on main")
     call("git", ["pull", "--ff-only", "origin", "main"])
     call("node", ["tools/ai-bridge/publisher.mjs", "prepare"], 300000)
+    try {
+      status.runtimeSourceTests = JSON.parse(call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/source-test-runner.ts", "1"], 180000))
+    } catch (error) {
+      status.runtimeSourceTestError = error.message
+    }
+    save()
     if (!/Logged in using ChatGPT/.test(call("codex", ["login", "status"]))) throw new Error("ChatGPT login required")
     for (const source of workerSources) {
       call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/mac-batch.ts", "--source", source, "--limit", "12", "--model", workerModel], 1800000)

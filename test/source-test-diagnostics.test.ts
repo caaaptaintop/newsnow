@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { sourceFetchError } from "../server/utils/source-fetch-diagnostic"
 import { intelligenceFetchHtml } from "../server/utils/intelligence-parser"
+import { intelligenceFetchList, intelligenceJPaasUnitUrl } from "../server/utils/intelligence-dynamic-list"
 import { sourceTestResultScript } from "../server/source-admin/test-result-view"
 import { sourceAdminPage } from "../server/source-admin/page"
-import { sourceTestAllowsPublish, testSourceConfig } from "../server/source-admin/test-source-config"
+import { sourceTestAllowsPublish, sourceTestNeedsRuntimeFallback, testSourceConfig } from "../server/source-admin/test-source-config"
 import { intelligenceSources } from "../shared/official-sources"
 import { intelligenceSourceSeedConfig } from "../shared/source-config"
 
@@ -99,6 +100,16 @@ describe("human-readable column test results", () => {
     expect(html).toContain('<details class="source-test-raw">')
     expect(html).not.toContain('<details open')
   })
+  it("explains queued Mac verification without treating DNS failure as a bad URL", () => {
+    const html = sourceTestResultView({ ...result, executor: "cloud", runtimePending: true })
+    expect(html).toContain("等待本机复核")
+    expect(html).toContain("已排队等待 Mac 后台自然周期复核")
+    expect(html).toContain("无需重复点击测试")
+  })
+  it("labels a signed Mac result distinctly from a cloud test", () => {
+    const html = sourceTestResultView({ ...result, executor: "mac", runtimePending: false })
+    expect(html).toContain("已登记签名身份的 Mac 运行环境")
+  })
   it("distinguishes passed, failed and untested columns", () => {
     const html = sourceTestResultView({ ...result, endpoints: [
       { ...result.endpoints[0], ok: true, count: 1 }, result.endpoints[1], { ...result.endpoints[2], status: "untested" },
@@ -115,5 +126,52 @@ describe("human-readable column test results", () => {
     expect(html).toContain(sourceTestResultScript)
     const render = new Function(`${sourceTestResultScript}; return renderSourceTestView`)() as typeof sourceTestResultView
     expect(render(result)).toBe(sourceTestResultView(result))
+  })
+})
+
+
+describe("JPaas dynamic government list hydration", () => {
+  const staticHtml = `<!doctype html><html><head><title>政策发布</title></head><body>
+    <script>
+      const endpoint = "/api-gateway/jpaas-publish-server/front/page/build/unit";
+      const unit = { parseType: "bulidstatic", webId: "86ca573ec4df405db627fdc2493677f3",
+        tplSetId: "fc259c381af3496d85e61997ea7771cb", pageType: "column", tagId: "栏目-list",
+        editType: null, pageId: "8soTiiRMg3k87m5e2CQit" };
+    </script>
+  </body></html>`
+  it("extracts a same-host bounded unit URL without evaluating page scripts", () => {
+    const url = intelligenceJPaasUnitUrl(staticHtml, seed, `${seed.home}zhengcefabu/index.html`)
+    expect(url).toBeTruthy()
+    const parsed = new URL(url!)
+    expect(parsed.origin).toBe(new URL(seed.home).origin)
+    expect(parsed.pathname).toBe("/api-gateway/jpaas-publish-server/front/page/build/unit")
+    expect(parsed.searchParams.get("parseType")).toBe("bulidstatic")
+    expect(parsed.searchParams.get("tagId")).toBe("栏目-list")
+    expect(parsed.searchParams.get("pageId")).toBe("8soTiiRMg3k87m5e2CQit")
+    expect(parsed.searchParams.get("editType")).toBe("null")
+  })
+  it("hydrates data.html once and feeds the existing list parser", async () => {
+    const fragment = `<ul>
+      <li><a href="/zhengcefabu/art/2026/art_one.html">关于举办2026年数据要素大赛全国总决赛的通知</a><span>2026-09-08</span></li>
+      <li><a href="/zhengcefabu/art/2026/art_two.html">住房城乡建设部办公厅关于合成回归事项的通知</a><span>2026-09-07</span></li>
+    </ul>`
+    const mock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(staticHtml, { status: 200, headers: { "content-type": "text/html" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { html: fragment } }), { status: 200, headers: { "content-type": "application/json;charset=UTF-8" } }))
+    const column = { name: "政策发布", url: `${seed.home}zhengcefabu/index.html` }
+    const page = await intelligenceFetchList(column.url, seed, column)
+    expect(page.items).toHaveLength(2)
+    expect(page.items[0].publishedAt).toBeTruthy()
+    expect(mock).toHaveBeenCalledTimes(2)
+    expect(String(mock.mock.calls[1][0])).toContain("/api-gateway/jpaas-publish-server/front/page/build/unit?")
+  })
+})
+
+describe("cloud DNS fallback classification", () => {
+  it("queues only explicit tests whose enabled columns all failed at Cloudflare DNS", () => {
+    const cloud = { schemaVersion: 1 as const, mode: "explicit", ok: false, publishable: false, message: "dns",
+      endpoints: config.endpoints.map(endpoint => ({ ...endpoint, ok: false, count: 0, preview: [], status: "failed" as const, message: "dns", diagnostic: { stage: "fetch" as const, httpStatus: 530, category: "cloudflare_dns" as const, cloudflareCode: "1016", evidence: "body" as const } })) }
+    expect(sourceTestNeedsRuntimeFallback(cloud)).toBe(true)
+    expect(sourceTestNeedsRuntimeFallback({ ...cloud, endpoints: cloud.endpoints.map((endpoint, index) => index ? endpoint : { ...endpoint, diagnostic: undefined, message: "栏目页未解析到文章" }) })).toBe(false)
   })
 })

@@ -3,11 +3,12 @@ import { machineRequest } from "../../building/auth"
 import { buildingDB,buildingMeta,initializeBuilding,publishBatch,knownRecords,activateBuilding } from "../../building/store"
 import { buildingStatus,relayPolicy,maintainBuilding } from "../../building/relay-budget"
 import { BuildingError } from "@shared/building-contract"
+import { pendingRuntimeSourceTests, saveRuntimeSourceTest } from "../../source-admin/runtime-source-test"
 export default defineEventHandler(async event=>{
   setHeaders(event,{"Cache-Control":"private, no-store","CDN-Cache-Control":"no-store"})
   try{
     const {owner,body,capabilities}=await machineRequest(event)
-    const operations:Record<string,string>={init:"migrate",legacy:"migrate",activate:"migrate",publish:"publish",known:"publish",export:"publish",version:"publish",status:"operate",relay:"operate",maintain:"operate"}
+    const operations:Record<string,string>={init:"migrate",legacy:"migrate",activate:"migrate",publish:"publish",known:"publish",export:"publish",version:"publish",status:"operate",relay:"operate",maintain:"operate","source-tests":"operate","source-test-result":"operate"}
     if(!Object.prototype.hasOwnProperty.call(operations,body.action))throw new BuildingError(404,"后台操作不存在")
     if(!capabilities.includes(operations[body.action]))throw new BuildingError(403,"后台凭据不具备此操作权限")
     const db=buildingDB(event)
@@ -35,9 +36,13 @@ export default defineEventHandler(async event=>{
       case "status":return buildingStatus(db)
       case "relay":return relayPolicy(db,body)
       case "maintain":await maintainBuilding(db);return{ok:true}
+      case "source-tests":return pendingRuntimeSourceTests(event, Number(body.limit ?? 1))
+      case "source-test-result":return saveRuntimeSourceTest(event, owner, body)
     }
   }catch(error){
     if(error instanceof BuildingError)throw createError({statusCode:error.statusCode,message:error.message})
+    if(error && typeof error === "object" && "statusCode" in error && Number.isInteger(Number((error as any).statusCode)))
+      throw createError({statusCode:Number((error as any).statusCode),message:String((error as any).message ?? "后台操作未完成")})
     throw createError({statusCode:503,message:"后台操作未完成，请稍后重试；未完成的批次不对外发布"})
   }
 })

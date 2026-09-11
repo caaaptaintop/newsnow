@@ -2,6 +2,7 @@ import { hackernewsFeed } from "../../server/utils/hackernews-feed"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl, intelligenceDate } from "../../shared/intelligence"
 import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../../server/utils/intelligence-parser"
+import { intelligenceFetchList } from "../../server/utils/intelligence-dynamic-list"
 import { resolvePublishedSource } from "./source-config-client"
 
 /** An unreadable column must not become an empty success. */
@@ -37,8 +38,8 @@ async function collect(source: IntelligenceSource & { collectionMode?: string })
   const items: any[] = []
   for (const column of columns.slice(0, collectionMode === "explicit" ? 12 : 4)) {
     try {
-      const page = await intelligenceFetchHtml(column.url, source)
-      const parsed = intelligenceParseList(page.html, source, { ...column, url: page.url })
+      const page = await intelligenceFetchList(column.url, source, column)
+      const parsed = page.items
       if (!parsed.length) warnings.push(`${column.name}：栏目未解析到文章`)
       items.push(...parsed)
     }
