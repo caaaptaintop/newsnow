@@ -12,6 +12,13 @@ function eventWithHeaders(headers: Record<string, string> = {}, env: Record<stri
     node: { req: { url: `${url.pathname}${url.search}`, originalUrl: `${url.pathname}${url.search}`, headers: requestHeaders, socket: { encrypted: false } } },
   } as unknown as H3Event
 }
+
+const rejectedWriteOrigins: Array<Record<string, string>> = [
+  {},
+  { origin: "https://evil.example.com" },
+  { origin: "http://news.capx-ai.com", "sec-fetch-site": "cross-site" },
+]
+
 describe("internal authentication fails closed", () => {
   it("denies requests before any database access when not configured", async () => {
     await expect(requireSourceAdmin(eventWithHeaders())).rejects.toMatchObject({ statusCode: 404 })
@@ -32,7 +39,7 @@ describe("internal authentication fails closed", () => {
       expect(fetcher).not.toHaveBeenCalled()
     } finally { fetcher.mockRestore() }
   })
-  it.each([{}, { origin: "https://evil.example.com" }, { origin: "http://news.capx-ai.com", "sec-fetch-site": "cross-site" }])("denies absent or cross-site origins %s", (headers) => {
+  it.each(rejectedWriteOrigins)("denies absent or cross-site origins %s", (headers) => {
     expect(() => requireSameOriginWrite(eventWithHeaders(headers))).toThrow()
   })
   it("permits the exact request origin", () => {
