@@ -1,76 +1,74 @@
-import type { IntelligenceSource } from "../../shared/intelligence"
+import { intelligenceSources } from "../../shared/official-sources"
 import type { IntelligenceSourceConfig } from "../../shared/source-config"
+import { applyIntelligenceSourceConfig, sourceConfigCanPublish, validateIntelligenceSourceConfig } from "../../shared/source-config"
 import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../utils/intelligence-parser"
 
-function asSource(config: IntelligenceSourceConfig): IntelligenceSource {
-  return {
-    id: config.id,
-    topic: config.topic as IntelligenceSource["topic"],
-    name: config.name,
-    home: config.home,
-    group: config.group,
-    level: config.level,
-    region: config.region,
-    city: config.city,
-    priority: config.priority,
-    enabled: config.enabled,
-    newsnowId: config.newsnowId,
-    columns: config.endpoints.filter(endpoint => endpoint.enabled).map(endpoint => ({ name: endpoint.name, url: endpoint.url })),
-  }
+export interface SourceEndpointTest {
+  id: string
+  url: string
+  finalUrl?: string
+  name: string
+  ok: boolean
+  count: number
+  preview: { title: string, url: string, publishedAt?: number }[]
+  message: string
 }
-
-export async function testSourceConfig(config: IntelligenceSourceConfig) {
-  const source = asSource(config)
-  if (config.collectionMode === "feed") {
-    return { ok: true, mode: "feed", endpoints: [], message: "结构化信息流沿用现有读取器" }
+export interface SourceConfigTestResult {
+  schemaVersion: 1
+  mode: string
+  ok: boolean
+  publishable: boolean
+  endpoints: SourceEndpointTest[]
+  candidates?: { name: string, url: string }[]
+  message: string
+}
+/** Recheck the result contract, not a caller-provided ok flag or a discovery success. */
+export function sourceTestAllowsPublish(config: IntelligenceSourceConfig, value: unknown): value is SourceConfigTestResult {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !sourceConfigCanPublish(config)) return false
+  const result = value as SourceConfigTestResult
+  if (result.schemaVersion !== 1 || result.ok !== true || result.publishable !== true || !Array.isArray(result.endpoints)) return false
+  if (!config.enabled) return result.mode === "disabled" && result.endpoints.length === 0
+  if (config.collectionMode !== "explicit" || result.mode !== "explicit") return false
+  const endpoints = config.endpoints.filter(endpoint => endpoint.enabled)
+  return endpoints.length > 0 && endpoints.length === result.endpoints.length
+    && endpoints.every((endpoint, index) => {
+      const test = result.endpoints[index]
+      return test?.id === endpoint.id && test.url === endpoint.url && test.ok === true
+        && Number.isInteger(test.count) && test.count > 0 && Array.isArray(test.preview) && test.preview.length > 0
+    })
+}
+export async function testSourceConfig(value: IntelligenceSourceConfig): Promise<SourceConfigTestResult> {
+  const seed = intelligenceSources.find(source => source.id === value.id && source.topic === value.topic)
+  if (!seed) throw new Error("未注册的信息源")
+  const config = validateIntelligenceSourceConfig(value, seed)
+  const source = applyIntelligenceSourceConfig(seed, config)
+  // Disabling a broken source must not depend on its website being available.
+  if (!config.enabled) return { schemaVersion: 1, ok: true, publishable: true, mode: "disabled", endpoints: [], message: "已验证停用配置；未访问原站" }
+  if (config.collectionMode === "feed") return {
+    schemaVersion: 1, ok: false, publishable: false, mode: "feed", endpoints: [],
+    message: "此主题的结构化读取器尚未开放配置测试；可保存草稿，不可据此发布或启用采集",
   }
   if (config.collectionMode === "discover") {
     const page = await intelligenceFetchHtml(config.home, source)
-    const candidates = intelligenceDiscoverColumns(page.html, source, page.url).map(column => ({ ...column }))
-    return {
-      ok: candidates.length > 0,
-      mode: "discover",
-      finalUrl: page.url,
-      candidates,
-      message: candidates.length
-        ? `发现 ${candidates.length} 个候选栏目，发布前仍需人工选择并改为明确栏目模式`
-        : "未发现可用栏目",
-    }
+    const candidates = intelligenceDiscoverColumns(page.html, { ...source, columns: [] }, page.url)
+    return { schemaVersion: 1, ok: candidates.length > 0, publishable: false, mode: "discover", endpoints: [], candidates,
+      message: candidates.length ? "仅发现候选。请选择实际栏目，切换到明确栏目后重新测试" : "未发现可用栏目" }
   }
-  const endpoints: Record<string, unknown>[] = []
-  for (const endpoint of config.endpoints.filter(item => item.enabled).slice(0, 12)) {
+  const endpoints: SourceEndpointTest[] = []
+  const deadline = Date.now() + 45_000
+  for (const endpoint of config.endpoints.filter(item => item.enabled)) {
+    const record: SourceEndpointTest = { id: endpoint.id, name: endpoint.name, url: endpoint.url, ok: false, count: 0, preview: [], message: "" }
     try {
+      if (Date.now() >= deadline) throw new Error("本次测试达到时间预算；其余栏目未测试")
       const page = await intelligenceFetchHtml(endpoint.url, source)
       const items = intelligenceParseList(page.html, source, { name: endpoint.name, url: page.url })
-      endpoints.push({
-        id: endpoint.id,
-        kind: endpoint.kind,
-        name: endpoint.name,
-        url: endpoint.url,
-        finalUrl: page.url,
-        ok: items.length > 0,
-        count: items.length,
+      Object.assign(record, { finalUrl: page.url, ok: items.length > 0, count: items.length,
         preview: items.slice(0, 5).map(item => ({ title: item.title, url: item.url, publishedAt: item.publishedAt })),
-        message: items.length ? "" : "栏目页未解析到文章",
-      })
+        message: items.length ? "请人工确认标题样本是否属于目标栏目；缺少日期不等于当天发布" : "栏目页未解析到文章" })
     }
-    catch (error) {
-      endpoints.push({
-        id: endpoint.id,
-        kind: endpoint.kind,
-        name: endpoint.name,
-        url: endpoint.url,
-        ok: false,
-        count: 0,
-        message: error instanceof Error ? error.message : String(error),
-      })
-    }
+    catch (error) { record.message = error instanceof Error ? error.message.slice(0, 240) : "栏目测试失败" }
+    endpoints.push(record)
   }
   const ok = endpoints.length > 0 && endpoints.every(endpoint => endpoint.ok)
-  return {
-    ok,
-    mode: "explicit",
-    endpoints,
-    message: ok ? "全部启用栏目测试通过" : "至少一个启用栏目未通过测试",
-  }
+  return { schemaVersion: 1, ok, publishable: ok, mode: "explicit", endpoints, message: ok ? "全部启用栏目可解析；请确认预览内容后发布" : "有栏目未通过；当前草稿不能发布" }
 }

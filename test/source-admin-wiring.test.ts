@@ -6,7 +6,7 @@ import type { H3Event } from "h3"
 import { describe, expect, it } from "vitest"
 import { publicApiAllowed } from "../shared/public-site"
 import { intelligenceSources } from "../shared/official-sources"
-import { intelligenceSourceSeedConfig } from "../shared/source-config"
+import { intelligenceSourceSeedConfig, intelligenceSourceConfigHash, validateIntelligenceSourceConfig } from "../shared/source-config"
 import { publishedBuildingSourceOverrides, sourceAdminModel } from "../server/utils/source-config-store"
 
 const configTables = ["intelligence_source_config_entry", "intelligence_source_config_revision"]
@@ -104,7 +104,7 @@ describe("source administration integration boundaries", () => {
 
   it("does not pretend an unavailable D1 binding is an empty published catalog", async () => {
     const { event } = fixture()
-    delete event.context.env.NEWSNOW_DB
+    event.context = { env: {} }
     await expect(publishedBuildingSourceOverrides(event)).rejects.toMatchObject({ statusCode: 503 })
   })
 
@@ -131,7 +131,7 @@ describe("source administration integration boundaries", () => {
   it("returns only validated public configuration fields, including disabled sources", async () => {
     const seed = intelligenceSources.find(source => source.id === "official-beijing")!
     const config = { ...intelligenceSourceSeedConfig(seed), enabled: false, extraAuditField: "must-not-leak" }
-    const { event } = fixture({ configs: [{ source_id: seed.id, config_json: JSON.stringify(config) }] })
+    const { event } = fixture({ configs: [{ source_id: seed.id, config_json: JSON.stringify(config), config_hash: await intelligenceSourceConfigHash(validateIntelligenceSourceConfig(config, seed)) }] })
     const configs = await publishedBuildingSourceOverrides(event)
     expect(configs).toHaveLength(1)
     expect(configs[0].enabled).toBe(false)

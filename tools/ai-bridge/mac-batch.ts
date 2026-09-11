@@ -12,6 +12,7 @@ import { verifyPublicationDate } from "./publication-date"
 import { enrichOfficialArticleMetadata } from "./enrich-article"
 import { localCodex } from "./local-codex.mjs"
 import { batchArticleKeys } from "./article-keys"
+import { resolvePublishedSource, sourceConfigProvenance } from "./source-config-client"
 
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
@@ -40,8 +41,11 @@ try {
 const lock = await import("node:fs/promises").then(fs => fs.open(lockPath, "wx"))
 await lock.writeFile(String(process.pid))
 try {
+  // Resolve once for the whole process; collection, metadata and dates use the same source.
+  const configuredSources = (await Promise.all(selectedSources.map(source => resolvePublishedSource(source)))).filter(isPublishedSource)
+  const sourceConfiguration = await sourceConfigProvenance()
   const collectedCache = new Map<string, any>()
-  const queue = [...selectedSources]
+  const queue = [...configuredSources]
   await Promise.all(Array.from({ length: 5 }, async () => {
     while (queue.length) {
       const source = queue.shift()!
@@ -53,7 +57,7 @@ try {
     }
   }))
   let modelFailure = ""
-  for (const source of selectedSources) {
+  for (const source of configuredSources) {
     let state: any = { id: source.id, checkedAt: Date.now(), status: "error" }
     let warnings: string[] = []
     try {
@@ -148,6 +152,7 @@ try {
       if (error.code !== "ENOENT") throw error
     }
     saved.states = [...(saved.states ?? []).filter((s: any) => s.id !== source.id), state]
+    saved.sourceConfiguration = sourceConfiguration
     saved.pipeline = "mac"
     saved.generatedAt = Date.now()
     await writeFile(resolve(outputDir, "result.pending.json"), `${JSON.stringify(saved, null, 2)}\n`)

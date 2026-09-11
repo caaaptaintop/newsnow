@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { officialIntelligenceSources } from "../shared/official-sources"
-import { intelligenceSourceSeedConfig } from "../shared/source-config"
+import { intelligenceSourceSeedConfig, sourceConfigEnvelope } from "../shared/source-config"
 import { collectSource } from "../tools/ai-bridge/collect-source"
 import { resetPublishedSourceConfigForTests } from "../tools/ai-bridge/source-config-client"
 
@@ -31,13 +31,7 @@ describe("published source configuration", () => {
         url: "https://zjw.beijing.gov.cn/notices/",
         enabled: true,
       }]
-      writeFileSync(file, JSON.stringify({
-        schemaVersion: 1,
-        topic: "building",
-        revision: 1,
-        generatedAt: Date.now(),
-        sources: [config],
-      }))
+      writeFileSync(file, JSON.stringify(await sourceConfigEnvelope([config])))
       process.env.CAPX_SOURCE_CONFIG_FILE = file
       const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("<html><body><a href='/index.shtml'>首页</a></body></html>", { headers: { "content-type": "text/html" } }))
       await expect(collectSource(source)).rejects.toThrow(/栏目未解析到文章/)
@@ -63,7 +57,7 @@ describe("published source configuration", () => {
         url: `https://zjw.beijing.gov.cn/notices/${index}/`,
         enabled: true,
       }))
-      writeFileSync(file, JSON.stringify({ schemaVersion: 1, topic: "building", revision: 1, generatedAt: Date.now(), sources: [config] }))
+      writeFileSync(file, JSON.stringify(await sourceConfigEnvelope([config])))
       process.env.CAPX_SOURCE_CONFIG_FILE = file
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
         const index = Number(String(url).split("/").filter(Boolean).at(-1))
