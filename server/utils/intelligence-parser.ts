@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio"
+import { sourceFetchError } from "./source-fetch-diagnostic"
 import { intelligenceCanonicalUrl, intelligenceDate, intelligenceHttpUrl, type IntelligenceSource } from "@shared/intelligence"
 
 export interface OfficialCandidate {
@@ -107,7 +108,7 @@ export async function intelligenceFetchHtml(url: string, source: IntelligenceSou
       current = next
       continue
     }
-    if (!response.ok) throw new Error(`官网返回 HTTP ${response.status}`)
+    if (!response.ok) throw await sourceFetchError(response)
     const type = response.headers.get("content-type") ?? ""
     if (type && !/html|xml|text/i.test(type)) { await response.body?.cancel(); throw new Error("来源没有返回可解析的网页") }
     const reader = response.body?.getReader()

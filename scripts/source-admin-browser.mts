@@ -9,6 +9,7 @@ import { sourceAdminModel, saveSourceDraft, saveSourceTest, publishSourceDraft, 
 // upstream parsing are covered by separate unit tests; this server has no credentials.
 const fixture = memorySourceDatabase(), requests: string[] = [], errors: string[] = []
 const owner = "synthetic-owner@example.com"
+let failNextTest = false
 fixture.sqlite.exec("CREATE TABLE building_sources_v3 (id TEXT, data TEXT, checked_at INTEGER)")
 fixture.sqlite.prepare("INSERT INTO building_sources_v3 VALUES (?,?,?)").run(sourceAdminSeed.id, JSON.stringify({ status: "partial", error: "<img src=x onerror=alert(1)> synthetic", fetched: 3 }), Date.now())
 const server = createServer(async (req, res) => {
@@ -29,7 +30,9 @@ const server = createServer(async (req, res) => {
     if (body.action === "save-draft") result = await saveSourceDraft(fixture.event, body.topic, body.sourceId, body.config, owner, body.base)
     else if (body.action === "test") {
       const draft = await saveSourceDraft(fixture.event, body.topic, body.sourceId, body.config, owner, body.base)
-      const now = Date.now(), test = successfulSourceTest(draft.config as any)
+      const now = Date.now(), success = successfulSourceTest(draft.config as any)
+      const test = failNextTest ? { ...success, ok: false, publishable: false, message: "合成网络失败；当前草稿不能发布", endpoints: success.endpoints.map(endpoint => ({ ...endpoint, ok: false, count: 0, preview: [], message: "尚未读取栏目页，不能据此判定栏目地址错误", diagnostic: { stage: "fetch", httpStatus: 530, category: "cloudflare_dns", cloudflareCode: "1016", evidence: "body" } })) } : success
+      failNextTest = false
       const saved = await saveSourceTest(fixture.event, body.topic, body.sourceId, draft.config, test, owner, { draftHash: draft.hash, activeRevision: draft.activeRevision }, now)
       result = { ...draft, ...saved, result: test }
     }
@@ -90,6 +93,19 @@ try {
   await input('[data-name]', '合成测试栏目'); await input('[data-url]', `${sourceAdminSeed.home}synthetic-notices/`)
   await click('#save'); await until("!state.busy && !state.dirty")
   assert.equal(await evaluate("document.querySelector('#publish').disabled"), true)
+  failNextTest = true
+  await click('#test'); await until("!state.busy && !!state.test && !state.test.result.publishable")
+  assert.equal(await evaluate("document.querySelectorAll('[data-test-endpoint]').length"), 1)
+  assert.ok(await evaluate("document.querySelector('#testbox').textContent.includes('已通过 0 / 1 个栏目')"))
+  assert.ok(await evaluate("document.querySelector('[data-test-endpoint]').textContent.includes('合成测试栏目')"))
+  assert.ok(await evaluate("document.querySelector('[data-test-endpoint]').textContent.includes('HTTP 530 / Cloudflare 1016')"))
+  assert.equal(await evaluate("document.querySelector('#testbox details').open"), false)
+  assert.equal(await evaluate("document.querySelector('#publish').disabled"), true)
+  const beforeRejectedPublish = requests.length
+  await click('#publish'); assert.equal(requests.length, beforeRejectedPublish)
+  await mkdir('source-admin-test-results', { recursive: true })
+  await writeFile('source-admin-test-results/upstream-diagnostic.png', Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'))
+  cases.push("failed column is visible with HTTP/Cloudflare code; JSON collapsed and publish still blocked")
   await click('#test'); await until("!state.busy && !!state.test?.result?.publishable")
   await input('#f-name', '北京市合成修改'); assert.equal(await evaluate("document.querySelector('#publish').disabled"), true)
   const before = requests.length
