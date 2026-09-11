@@ -103,7 +103,7 @@ Codex 输出“通过”不等于项目最终验收通过。所有本机结果�
 ChatGPT 输出审查结论时，应明确区分：
 
 - **独立读取源码/独立实测确认**：ChatGPT 实际读取了代码、完整原始日志，或在隔离环境中复现/执行；
-- **依据 GitHub 原始证据支持**：结论来自 CI、Actions artifact、PR 会话中的 Codex 原始日志或其他可复核证据，但未在审查端完整重跑；
+- **依据 GitHub 原始证据支持**：结论来自 CI、Actions artifact、Issue/PR 会话中的 Codex 原始日志或其他可复核证据，但未在审查端完整重跑；
 - **仍待补证**：只有摘要、自报“通过”、缺失原件或环境不可用，不能当作已独立确认。
 
 用户手工上传文件只作为例外补充渠道，不作为本项目默认交接方式。
@@ -222,7 +222,7 @@ ChatGPT 确认需要 Codex 时，给出的指令必须：
 - 明确时间/时区、基线 SHA、停止条件和失败时如何保留现场；
 - 明确要求返回的状态、日志、哈希和必要原始证据；
 - 禁止只回复“已完成/全部通过”；
-- 默认把完整指令发布到对应 GitHub PR 会话或 `HANDOFF.md` 指定的备用交接 PR，而不是要求用户复制大段指令或传递文件包。
+- 默认把完整指令发布到对应 GitHub Issue/PR，或 `HANDOFF.md` 指定的备用交接 Issue，而不是要求用户复制大段指令或传递文件包。
 
 如果任务可以由 ChatGPT 继续完成，就不应生成 Codex 指令。
 
@@ -232,25 +232,25 @@ ChatGPT 确认需要 Codex 时，给出的指令必须：
 
 ### 14.1 交接载体
 
-- 当前功能/缺陷已有 PR 时，直接使用该 PR 会话；
-- 当前没有合适 PR 时，使用根目录 `HANDOFF.md` 指定的**备用交接 PR**；该 PR 仅作为长期会话总线，不因单次任务结束而合并或关闭；
-- 本仓库当前关闭 GitHub Issues，因此不得把“新建 Issue”作为默认交接前提；若未来启用 Issues，应先更新本规则再使用；
+- 当前功能/缺陷已有 Issue 或 PR 时，直接使用该线程；
+- 当前没有合适线程且只是独立本机验证/运维采证时，使用根目录 `HANDOFF.md` 指定的备用交接 Issue；
+- 对于有独立生命周期、需要持续跟踪的本机问题，ChatGPT 可创建专用 Issue，而不是把所有任务永久堆在一个线程；
 - ChatGPT 的本机指令使用 `[CHATGPT→CODEX][TASK <id>]` 标记；
 - Codex 的执行回传使用 `[CODEX→CHATGPT][TASK <id>]` 标记；
 - ChatGPT 的独立复审使用 `[CHATGPT REVIEW][TASK <id>]` 标记；
-- 同一轮任务应尽量保持在同一个 PR 会话中，避免聊天、ZIP、临时文件和多个线程之间来回搬运。
+- 同一轮任务应保持在同一个 GitHub 线程中，避免聊天、ZIP、临时文件和多个线程之间来回搬运。
 
-`HANDOFF.md` 只作为接续入口和备用交接 PR 指针，不复制大段日志，也不代替 PR 会话中的动态证据链。
+`HANDOFF.md` 只作为接续入口和备用交接 Issue 指针，不复制大段日志，也不代替 Issue/PR 中的动态证据链。
 
 ### 14.2 Codex 读取与回传
 
 Codex 开始前应：
 
 1. `git fetch origin`，读取最新 `origin/main` 的 `AGENTS.md` 与 `HANDOFF.md`；
-2. 读取 ChatGPT 指定 PR 或 `HANDOFF.md` 备用交接 PR 的最新 `[CHATGPT→CODEX][TASK <id>]` 指令；
+2. 读取 ChatGPT 指定 Issue/PR 或 `HANDOFF.md` 备用交接 Issue 的最新 `[CHATGPT→CODEX][TASK <id>]` 指令；
 3. 核对 Task ID、基线 SHA、允许范围、禁止动作和停止条件，确认没有被后续评论取代。
 
-完成后，Codex 应优先通过已登录的 GitHub CLI/API 把结果直接写回同一 PR 会话，至少包括：
+完成后，Codex 应优先通过已登录的 GitHub CLI/API 把结果直接写回同一 GitHub 线程，至少包括：
 
 - Task ID；
 - 执行时间及明确时区；
@@ -266,7 +266,7 @@ Codex 不得只在本机生成一个“证据包路径”后让用户再手工�
 
 ### 14.3 证据存放规则
 
-- 小型文本、结构化结果、日志摘录：GitHub PR 评论；
+- 小型文本、结构化结果、日志摘录：GitHub Issue/PR 评论；
 - 源码、测试、fixture、文档修改：功能分支 + PR；
 - CI/构建证据：GitHub Actions run、job log 和 artifact；
 - 可公开且确需保留的较大非敏感证据：优先 Actions artifact 或 GitHub 可审查附件；
@@ -274,7 +274,7 @@ Codex 不得只在本机生成一个“证据包路径”后让用户再手工�
 
 以下内容不得为了“方便交接”上传 GitHub：真实密钥、Token、Cookie、密码、私钥内容、浏览器敏感数据、原始生产数据库、本应禁止持久化的正文/完整 HTML/附件字节，以及其他受本项目数据边界限制的材料。
 
-只有在 GitHub PR 会话、Actions、PR diff 和上述哈希/摘录仍无法完成审查时，才退回用户手工上传文件；这是例外，不是默认流程。
+只有在 GitHub Issue/PR、Actions、PR diff 和上述哈希/摘录仍无法完成审查时，才退回用户手工上传文件；这是例外，不是默认流程。
 
 ## 15. 状态与文档维护
 
@@ -282,8 +282,8 @@ Codex 不得只在本机生成一个“证据包路径”后让用户再手工�
 
 动态状态优先记录在：
 
-- 当前功能 PR 会话；
-- `HANDOFF.md` 指定的备用交接 PR 会话；
+- 当前功能 Issue / PR 会话；
+- `HANDOFF.md` 指定的备用交接 Issue；
 - CI / Actions；
 - 根目录 `HANDOFF.md` 中必要的接续入口；
 - 必要的阶段验收材料。

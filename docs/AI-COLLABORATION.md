@@ -50,9 +50,9 @@ ChatGPT 独立审查
     ↓
 ChatGPT 合并与云端部署检查
     ↓
-如仍有本机独占事项 → 在当前 PR 或备用交接 PR 发布 Codex 指令
+如仍有本机独占事项 → 在相关 Issue/PR 发布 Codex 指令
     ↓
-Codex 直接在该 PR 会话回传本机证据
+Codex 直接在同一 GitHub 线程回传本机证据
     ↓
 ChatGPT 复审并决定下一步
 ```
@@ -68,14 +68,14 @@ ChatGPT 先检查仓库和云端状态
     ↓
 确认问题必须依赖用户 Mac
     ↓
-有对应功能 PR → 使用该 PR
-无对应功能 PR → 使用 HANDOFF.md 指定的备用交接 PR
+有对应功能 Issue/PR → 使用该线程
+无对应线程 → 使用 HANDOFF.md 指定的备用交接 Issue
     ↓
-在该 PR 发布 [CHATGPT→CODEX][TASK <id>] 指令
+在该线程发布 [CHATGPT→CODEX][TASK <id>] 指令
     ↓
 Codex 只复现、观察或执行明确的本机动作
     ↓
-Codex 在同一 PR 发布 [CODEX→CHATGPT][TASK <id>] 原始结果
+Codex 在同一线程发布 [CODEX→CHATGPT][TASK <id>] 原始结果
     ↓
 ChatGPT 独立复审并发布 [CHATGPT REVIEW][TASK <id>]
     ↓
@@ -135,15 +135,15 @@ ChatGPT 在准备给 Codex 指令前，必须先问三件事：
 
 ### 1. 交接线程怎么选
 
-本仓库当前关闭 GitHub Issues，因此默认不依赖 Issue。
-
 优先级如下：
 
-1. 当前已有功能 PR，且本机验证直接对应该 PR：使用该 PR；
-2. 当前没有合适功能 PR：使用根目录 `HANDOFF.md` 指定的备用交接 PR；
-3. 备用交接 PR 若失效，由 ChatGPT 建立新的长期交接 PR，并更新 `HANDOFF.md` 指针。
+1. 当前已有功能 Issue/PR，且本机验证直接对应该线程：使用该线程；
+2. 当前没有合适线程，且只是独立本机验证/运维采证：使用根目录 `HANDOFF.md` 指定的备用交接 Issue；
+3. 本机问题有独立生命周期、需要持续跟踪：由 ChatGPT 创建专用 Issue。
 
-备用交接 PR 只承担评论会话，不用于承载生产代码，不因单次任务结束而合并或关闭。后续如果仓库正式启用 Issues，可再评估是否切换；在规则未更新前，不把 Issue 当成可用前提。
+当前备用交接线程为 Issue #72，但具体指针以最新 `main` 的 `HANDOFF.md` 为准。
+
+同一轮任务不重复建立多个交接线程。
 
 ### 2. 三种固定标记
 
@@ -151,7 +151,7 @@ ChatGPT 在准备给 Codex 指令前，必须先问三件事：
 - `[CODEX→CHATGPT][TASK <id>]`：Codex 回传执行结果和原始证据；
 - `[CHATGPT REVIEW][TASK <id>]`：ChatGPT 独立审查、问题分级和下一步结论。
 
-Task ID 用于在长期交接 PR 的评论中区分不同轮次。这样任何一方只看 GitHub PR 会话即可恢复上下文，不依赖聊天记录或用户手工转发附件。
+Task ID 用于在交接线程的评论中区分不同轮次。这样任何一方只看 GitHub Issue/PR 即可恢复上下文，不依赖聊天记录或用户手工转发附件。
 
 ### 3. Codex 开始前的读取顺序
 
@@ -163,19 +163,23 @@ git show origin/main:AGENTS.md
 git show origin/main:HANDOFF.md
 ```
 
-然后读取 ChatGPT 指定的功能 PR，或 `HANDOFF.md` 中的备用交接 PR：
+然后读取 ChatGPT 指定的 Issue/PR，或 `HANDOFF.md` 中的备用交接 Issue：
 
 ```sh
+gh issue view <N> --repo caaaptaintop/newsnow --comments
+# 或
 gh pr view <N> --repo caaaptaintop/newsnow --comments
 ```
 
-如果 `gh` 未认证、仓库不可访问、备用交接 PR 不可评论、Task ID 不匹配或最新指令与本机状态冲突，Codex 应停止，不得用旧聊天中的大段指令猜测执行。
+如果 `gh` 未认证、仓库不可访问、目标线程不可读写、Task ID 不匹配或最新指令与本机状态冲突，Codex 应停止，不得用旧聊天中的大段指令猜测执行。
 
 ### 4. Codex 回传方式
 
-正常情况下，Codex 直接写回同一 PR 会话：
+正常情况下，Codex 直接写回同一 GitHub 线程：
 
 ```sh
+gh issue comment <N> --repo caaaptaintop/newsnow --body-file <sanitized-result.md>
+# 或
 gh pr comment <N> --repo caaaptaintop/newsnow --body-file <sanitized-result.md>
 ```
 
@@ -198,7 +202,7 @@ Codex 自报“通过”不能替代这些原始事实。
 
 | 证据类型 | 默认位置 |
 |---|---|
-| 少量文本、状态、命令输出、日志摘录 | 当前功能 PR 或备用交接 PR 评论 |
+| 少量文本、状态、命令输出、日志摘录 | 对应 Issue/PR 评论 |
 | 源码、测试、fixture、文档 | 功能分支 + PR |
 | CI/构建/自动化结果 | GitHub Actions run / log / artifact |
 | 较大但非敏感且确需保留的证据 | Actions artifact 或 GitHub 可审查附件 |
@@ -208,11 +212,11 @@ Codex 自报“通过”不能替代这些原始事实。
 
 因此“GitHub 原生交接”不是把所有本机文件都上传，而是让**任务指令、可公开原始事实、哈希、日志摘录、审查结论和代码变化**都在 GitHub 上形成可追溯证据链。
 
-只有 GitHub PR 会话、Actions、PR diff、哈希和必要摘录仍不足以完成审查时，才例外要求用户手工上传文件本体。
+只有 GitHub Issue/PR、Actions、PR diff、哈希和必要摘录仍不足以完成审查时，才例外要求用户手工上传文件本体。
 
 ## 七、Codex 指令应短而封闭
 
-给 Codex 的任务应是明确的本机操作包，而不是“继续开发整个项目”。完整指令应发布到当前功能 PR 或备用交接 PR；聊天里通常只需要给用户一个 PR 链接/编号和 Task ID。
+给 Codex 的任务应是明确的本机操作包，而不是“继续开发整个项目”。完整指令应发布到对应 Issue/PR；聊天里通常只需要给用户一个 Issue/PR 链接/编号和 Task ID。
 
 合格指令应包含：
 
@@ -225,7 +229,7 @@ Codex 自报“通过”不能替代这些原始事实。
 - 禁止的生产动作；
 - 需要保存/回传的证据；
 - 停止条件；
-- GitHub 回传 PR 和格式。
+- GitHub 回传线程和格式。
 
 示例：
 
@@ -235,7 +239,7 @@ Codex 自报“通过”不能替代这些原始事实。
 不得 kickstart、bootout/bootstrap、手动运行 worker、缩短 900 秒间隔、
 删除锁/队列、修改 D1 或切换生产仓库分支。
 记录两个连续自然周期的 startedAt/finishedAt、HEAD、PID、exit、outbox、
-版本变化和新增/修改 ID，并直接回传到指定 PR；本机敏感原件只回传 SHA-256 与必要摘录。
+版本变化和新增/修改 ID，并直接回传到指定 GitHub 线程；本机敏感原件只回传 SHA-256 与必要摘录。
 ```
 
 不合格指令包括：
@@ -305,9 +309,9 @@ ChatGPT 自己读源码、完整原始日志、重算数据或在隔离环境实
 
 解释流程：本文件。
 
-接续入口和备用交接 PR 指针：`HANDOFF.md`。
+接续入口和备用交接 Issue 指针：`HANDOFF.md`。
 
-动态状态和原始证据：当前功能 PR、备用交接 PR、Actions / artifact。
+动态状态和原始证据：对应 Issue / PR / Actions / artifact。
 
 不要再维护多份内容近似但彼此不同的“规则文件”。`HANDOFF.md` 只记录接续所需的最小入口和协议，不复制长期规则，也不堆积大段日志。
 
@@ -319,8 +323,8 @@ ChatGPT 自己读源码、完整原始日志、重算数据或在隔离环境实
 - Codex 只处理必须依赖本机的事项；
 - 能由 GitHub/CI/线上工具完成的工作不得转交 Codex；
 - Codex 结果必须回到 ChatGPT 独立复审；
-- 本机指令和证据默认通过当前功能 PR 或 `HANDOFF.md` 指定的备用交接 PR 交接，用户不承担常规文件中转；
+- 本机指令和证据默认通过相关 Issue/PR 或 `HANDOFF.md` 指定的备用交接 Issue 交接，用户不承担常规文件中转；
 - 项目工程规则真源为仓库根目录 `AGENTS.md`；
 - 长期规则发生变化时，同时更新网页端项目指令与 `AGENTS.md`。
 
-网页项目指令不要保存快速变化的 commit SHA、文章数量或单次 PR 状态，这些应放在当前会话、PR 会话或阶段验收记录中。
+网页项目指令不要保存快速变化的 commit SHA、文章数量或单次 PR 状态，这些应放在当前会话、Issue/PR 或阶段验收记录中。
