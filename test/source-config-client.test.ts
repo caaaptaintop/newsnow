@@ -48,4 +48,37 @@ describe("published source configuration", () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it("collects every explicitly configured column beyond the legacy four-column limit", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "source-config-"))
+    try {
+      const file = join(directory, "source-config.json")
+      const source = officialIntelligenceSources.find(item => item.id === "official-beijing")!
+      const config = intelligenceSourceSeedConfig(source)
+      config.collectionMode = "explicit"
+      config.endpoints = Array.from({ length: 6 }, (_value, index) => ({
+        id: `notice-${index}`,
+        kind: "notice" as const,
+        name: `通知公告${index}`,
+        url: `https://zjw.beijing.gov.cn/notices/${index}/`,
+        enabled: true,
+      }))
+      writeFileSync(file, JSON.stringify({ schemaVersion: 1, topic: "building", revision: 1, generatedAt: Date.now(), sources: [config] }))
+      process.env.CAPX_SOURCE_CONFIG_FILE = file
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+        const index = Number(String(url).split("/").filter(Boolean).at(-1))
+        return new Response(`<ul><li><a href="/article_${index}.html">建筑栏目完整覆盖合成测试文章${index}</a><time>2026-09-10</time></li></ul>`, {
+          headers: { "content-type": "text/html" },
+        })
+      })
+      const result = await collectSource(source)
+      expect(fetchMock).toHaveBeenCalledTimes(6)
+      expect(result.items).toHaveLength(6)
+      expect(result.warnings).toEqual([])
+      expect(fetchMock.mock.calls.map(call => String(call[0]))).toEqual(config.endpoints.map(endpoint => endpoint.url))
+    }
+    finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })

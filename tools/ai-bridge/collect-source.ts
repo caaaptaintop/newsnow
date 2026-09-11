@@ -35,7 +35,7 @@ async function collect(source: IntelligenceSource & { collectionMode?: string })
     columns = intelligenceDiscoverColumns(homepage.html, source, homepage.url)
   }
   const items: any[] = []
-  for (const column of columns.slice(0, 4)) {
+  for (const column of columns.slice(0, collectionMode === "explicit" ? 12 : 4)) {
     try {
       const page = await intelligenceFetchHtml(column.url, source)
       const parsed = intelligenceParseList(page.html, source, { ...column, url: page.url })

@@ -48,4 +48,13 @@ Cloudflare 变量：
 - `SOURCE_ADMIN_ACCESS_AUD`：Access Application Audience
 - `SOURCE_ADMIN_EMAILS`：逗号、分号或换行分隔的管理员邮箱白名单
 
-Cloudflare Access Application 只保护 `news.capx-ai.com/internal/*`，不能保护整个公开站。
+Cloudflare Access Application 使用 Host `news.capx-ai.com`、Path `internal`，覆盖父路径及子路径，不能保护整个公开站。页面为 `/internal/sources`，管理 API 为 `/internal/api/sources`。Pages 构建路由必须包含 `/internal` 和 `/internal/*`，不能由静态 SPA 回退代替服务端鉴权。
+
+## 集成检查边界
+
+- 配置只读接口必须通过公开 API 精确白名单；只允许 GET/HEAD，不开放管理写接口。
+- 运行健康读取既有 `building_sources_v3` 的 `id/data/checked_at`，其中 `data` 才是实际 JSON 状态。当前签名发布仅保留状态、检查时间、候选数及接受数；不能据此编造历史最后成功时间、连续失败次数或栏目级失败详情。
+- 只有确认来源配置表尚未建立时，公共接口才可返回空覆盖以使用种子。数据库不可用、结构不完整或活动记录损坏时应返回 503，让 Mac 保留 last-known-good，不能把错误伪装成成功的空配置。
+- 显式模式最多读取全部 12 个已配置栏目，不再静默只取前 4 个；旧的自动发现过渡路径仍保持原有有限请求范围。
+
+上述接线修正不代表完整发布验收。草稿并发保护、测试门禁、回滚行为、配置版本标识和新后台的浏览器流程仍须分别验证；完成前保持功能 PR 为 Draft，不把 Access 登录通过当成应用已上线。

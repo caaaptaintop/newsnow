@@ -181,24 +181,38 @@ export async function rollbackSourceConfig(event: H3Event, topic: string, source
 }
 
 async function sourceHealth(db: D1DatabaseLike, topic: string) {
-  if (topic !== "building") return new Map<string, Record<string, unknown>>()
+  const records = new Map<string, Record<string, unknown>>()
+  if (topic !== "building") return { records, error: undefined }
   try {
-    const result = await rows(db.prepare("SELECT * FROM building_source_states"))
-    return new Map(result.map(row => [String(row.source_id ?? row.sourceId ?? row.id ?? ""), row]))
+    // publishBatch stores normalized source status as JSON in the existing v3 table.
+    const result = await rows(db.prepare("SELECT id, data, checked_at FROM building_sources_v3"))
+    for (const row of result) {
+      const data = parseJson<Record<string, unknown>>(row.data)
+      const valid = data && typeof data === "object" && !Array.isArray(data)
+        && ["ok", "partial", "error"].includes(String(data.status))
+      records.set(String(row.id), valid
+        ? { ...data, checkedAt: row.checked_at }
+        : { status: "unknown", message: "来源运行记录损坏或状态无效" })
+    }
+    return { records, error: undefined }
   }
   catch {
-    return new Map<string, Record<string, unknown>>()
+    // Keep configuration repair available, but do not disguise a read failure as no history.
+    return { records, error: "来源运行记录读取失败；不能据此判断采集健康" }
   }
 }
 
-function runtimeStatus(row: Record<string, unknown> | undefined) {
-  if (!row) return { status: "unknown", message: "尚无运行记录" }
+function runtimeStatus(row: Record<string, unknown> | undefined, readError?: string) {
+  if (!row) return { status: "unknown", message: readError ?? "尚无运行记录" }
+  const status = String(row.status ?? "unknown")
+  const checkedAt = Number(row.checkedAt)
   return {
-    status: String(row.status ?? row.state ?? "unknown"),
-    message: String(row.message ?? row.error ?? row.warning ?? ""),
-    updatedAt: Number(row.updated_at ?? row.updatedAt ?? row.checked_at ?? row.checkedAt ?? row.last_checked_at ?? 0) || undefined,
-    candidateCount: Number(row.candidate_count ?? row.candidateCount ?? 0) || 0,
-    acceptedCount: Number(row.accepted_count ?? row.acceptedCount ?? 0) || 0,
+    status,
+    message: String(row.message ?? row.error ?? (["partial", "error"].includes(status)
+      ? "本次发布记录未包含失败详情，需核对采集日志" : "")),
+    updatedAt: Number.isFinite(checkedAt) && checkedAt > 0 ? checkedAt : undefined,
+    candidateCount: Number(row.fetched ?? 0) || 0,
+    acceptedCount: Number(row.accepted ?? 0) || 0,
   }
 }
 
@@ -244,7 +258,7 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
       draftHash: entry?.draft_hash,
       activeRevision,
       configStatus,
-      runtime: runtimeStatus(health.get(source.id)),
+      runtime: runtimeStatus(health.records.get(source.id), health.error),
       history: historyById.get(source.id) ?? [],
     }
   })
@@ -256,23 +270,31 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
     count: intelligenceSources.filter(source => source.topic === id).length,
     enabled: id === "building",
   }))
-  return { topics, topic, sources }
+  return { topics, topic, sources, healthError: health.error }
 }
 
 export async function publishedBuildingSourceOverrides(event: H3Event) {
-  const db = sourceConfigDatabase(event, false)
-  if (!db) return [] as IntelligenceSourceConfig[]
+  const db = sourceConfigDatabase(event)!
   try {
-    const result = await rows(db.prepare(`SELECT revision.config_json
+    // No DDL on public reads. Only a confirmed uninitialized config schema may use seeds.
+    const tables = await rows(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'
+      AND name IN ('intelligence_source_config_entry', 'intelligence_source_config_revision')`))
+    if (!tables.length) return [] as IntelligenceSourceConfig[]
+    const names = new Set(tables.map(row => row.name))
+    if (!names.has("intelligence_source_config_entry") || !names.has("intelligence_source_config_revision")) throw new Error("Incomplete source configuration schema")
+    const result = await rows(db.prepare(`SELECT entry.source_id, revision.config_json
       FROM intelligence_source_config_entry entry
-      JOIN intelligence_source_config_revision revision
+      LEFT JOIN intelligence_source_config_revision revision
         ON revision.topic = entry.topic AND revision.source_id = entry.source_id AND revision.revision = entry.active_revision
       WHERE entry.topic = 'building' AND entry.active_revision IS NOT NULL`))
-    return result
-      .map(row => parseJson<IntelligenceSourceConfig>(row.config_json))
-      .filter((value): value is IntelligenceSourceConfig => Boolean(value))
+    return result.map((row) => {
+      const value = parseJson<unknown>(row.config_json)
+      // One corrupt active record must fail the response, not silently drop an override.
+      return validateIntelligenceSourceConfig(value, seed("building", String(row.source_id)))
+    })
   }
   catch {
-    return []
+    // A 503 lets the Mac client retain its last-known-good config, including disabled sources.
+    throw createError({ statusCode: 503, statusMessage: "Published source configuration unavailable" })
   }
 }
