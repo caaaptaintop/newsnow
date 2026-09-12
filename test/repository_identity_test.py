@@ -118,6 +118,24 @@ class RepositoryIdentityTest(unittest.TestCase):
         alias.symlink_to(worktree, target_is_directory=True)
         self.assertEqual(self.gate(expected=alias, cwd=worktree)[0], 0)
 
+    def test_created_worktree_requires_explicit_execution_directory(self):
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                 'commit', '--allow-empty', '-m', 'fixture')
+        target = self.root.parent / 'created-task'
+        self.assertEqual(self.gate()[0], 0)
+        self.git('worktree', 'add', '-b', 'codex/created-task', str(target))
+        # worktree add does not move the caller; expected root alone is insufficient.
+        code, report, _ = self.gate(expected=target)
+        self.assertEqual(code, 1)
+        self.assertEqual(report['reason'], 'repository root mismatch; fail-closed')
+        self.assertEqual(Path(report['repo_root']), self.root)
+        self.assertEqual(self.gate(expected=target, cwd=target)[0], 0)
+        # Correct cwd never excuses a changed remote identity.
+        self.git('remote', 'set-url', 'origin', 'https://github.com/another-owner/newsnow.git')
+        code, report, _ = self.gate(expected=target, cwd=target)
+        self.assertEqual(code, 1)
+        self.assertEqual(report['reason'], 'repository identity mismatch; fail-closed')
+
     def test_read_only_with_dirty_files_and_trace_disabled(self):
         (self.root / 'keep.txt').write_text('unrelated local work\n')
 
