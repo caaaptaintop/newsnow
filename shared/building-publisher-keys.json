@@ -9,7 +9,8 @@
       },
       "capabilities": [
         "publish",
-        "operate"
+        "operate",
+        "runtime-source-test"
       ]
     }
   ]

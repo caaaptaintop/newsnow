@@ -1,7 +1,7 @@
 import { createError, defineEventHandler, getHeader, getRequestWebStream, setHeader } from "h3"
 import { intelligenceSources } from "../../../../shared/official-sources"
 import { sourceConfigPolicy, validateIntelligenceSourceConfig, validateSourceDraftBase } from "../../../../shared/source-config"
-import { testSourceConfig } from "../../../source-admin/test-source-config"
+import { sourceTestNeedsRuntimeFallback, testSourceConfig } from "../../../source-admin/test-source-config"
 import { requireSameOriginWrite, requireSourceAdmin } from "../../../utils/source-admin-auth"
 import { publishSourceDraft, rollbackSourceConfig, saveSourceDraft, saveSourceTest } from "../../../utils/source-config-store"
 
@@ -46,7 +46,11 @@ export default defineEventHandler(async (event) => {
         const config = validateIntelligenceSourceConfig(body.config, seed)
         const draft = await saveSourceDraft(event, topic, sourceId, config, principal.email, base)
         const startedAt = Date.now()
-        const result = await testSourceConfig(draft.config)
+        const cloudResult = await testSourceConfig(draft.config)
+        const result = sourceTestNeedsRuntimeFallback(cloudResult)
+          ? { ...cloudResult, executor: "cloud" as const, runtimePending: true,
+              message: `${cloudResult.message}；云端 DNS 无法访问该站点，已等待 Mac 后台按自然周期复核` }
+          : { ...cloudResult, executor: "cloud" as const }
         const saved = await saveSourceTest(event, topic, sourceId, draft.config, result, principal.email,
           { draftHash: draft.hash, activeRevision: draft.activeRevision }, startedAt)
         return { ...draft, ...saved, result }

@@ -45,12 +45,29 @@ try {
   const configuredSources = (await Promise.all(selectedSources.map(source => resolvePublishedSource(source)))).filter(isPublishedSource)
   const sourceConfiguration = await sourceConfigProvenance()
   const collectedCache = new Map<string, any>()
+  const pageNeedsMore = async (source: any, items: any[]) => {
+    const relevant = source.topic === "building" ? items.filter(item => buildingRecallScore(item) > 0) : items
+    if (!relevant.length) return false
+    const keys = [...new Set<string>(relevant.flatMap(item => batchArticleKeys(source.topic, source.id, item.url)))]
+    if (!keys.length) return false
+    try {
+      const known = new Set((await publisherKnown(keys)).map((record: any) => record.key))
+      return relevant.some(item => batchArticleKeys(source.topic, source.id, item.url).every(alias => !known.has(alias)))
+    } catch {
+      // Preserve the current page. The normal dedup query below will surface
+      // the publisher failure rather than turning it into extra origin traffic.
+      return false
+    }
+  }
   const queue = [...configuredSources]
   await Promise.all(Array.from({ length: 5 }, async () => {
     while (queue.length) {
       const source = queue.shift()!
       try {
-        collectedCache.set(source.id, await collectSource(source))
+        collectedCache.set(source.id, await collectSource(source, {
+          maxPages: 5,
+          shouldContinuePage: items => pageNeedsMore(source, items),
+        }))
       } catch (error) {
         collectedCache.set(source.id, { failure: error })
       }

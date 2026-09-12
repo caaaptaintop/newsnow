@@ -1,7 +1,8 @@
 import { intelligenceSources } from "../../shared/official-sources"
 import type { IntelligenceSourceConfig } from "../../shared/source-config"
 import { applyIntelligenceSourceConfig, sourceConfigCanPublish, validateIntelligenceSourceConfig } from "../../shared/source-config"
-import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../utils/intelligence-parser"
+import { intelligenceDiscoverColumns, intelligenceFetchHtml } from "../utils/intelligence-parser"
+import { intelligenceFetchList } from "../utils/intelligence-dynamic-list"
 
 import { SourceFetchError, type SourceFetchDiagnostic } from "../utils/source-fetch-diagnostic"
 
@@ -24,7 +25,15 @@ export interface SourceConfigTestResult {
   publishable: boolean
   endpoints: SourceEndpointTest[]
   candidates?: { name: string, url: string }[]
+  executor?: "cloud" | "mac"
+  runtimePending?: boolean
   message: string
+}
+
+export function sourceTestNeedsRuntimeFallback(value: SourceConfigTestResult) {
+  return value.mode === "explicit" && value.endpoints.length > 0
+    && value.endpoints.every(endpoint => !endpoint.ok && endpoint.status !== "untested"
+      && endpoint.diagnostic?.category === "cloudflare_dns")
 }
 /** Recheck the result contract, not a caller-provided ok flag or a discovery success. */
 export function sourceTestAllowsPublish(config: IntelligenceSourceConfig, value: unknown): value is SourceConfigTestResult {
@@ -64,8 +73,8 @@ export async function testSourceConfig(value: IntelligenceSourceConfig): Promise
     const record: SourceEndpointTest = { id: endpoint.id, name: endpoint.name, url: endpoint.url, ok: false, count: 0, preview: [], message: "" }
     try {
       if (Date.now() >= deadline) { record.status = "untested"; throw new Error("本次测试达到时间预算；此栏目未测试") }
-      const page = await intelligenceFetchHtml(endpoint.url, source)
-      const items = intelligenceParseList(page.html, source, { name: endpoint.name, url: page.url })
+      const page = await intelligenceFetchList(endpoint.url, source, { name: endpoint.name, url: endpoint.url }, { maxPages: 1 })
+      const items = page.items
       Object.assign(record, { finalUrl: page.url, status: items.length ? "passed" : "failed", ok: items.length > 0, count: items.length,
         preview: items.slice(0, 5).map(item => ({ title: item.title, url: item.url, publishedAt: item.publishedAt })),
         message: items.length ? "请人工确认标题样本是否属于目标栏目；缺少日期不等于当天发布" : "栏目页未解析到文章" })
