@@ -14,13 +14,21 @@ describe("machine authentication without visitor accounts",()=>{
  it("requires an unexpired bounded deployment credential",async()=>{
   const e=event("init");e.headers={"content-type":"application/json",authorization:`Bearer ${"a".repeat(64)}`} as any
   e.context={env:{BUILDING_DEPLOY_TOKEN:"a".repeat(64),BUILDING_DEPLOY_EXPIRES:String(Date.now()+600000)}}
-  expect((await machineRequest(e)).capabilities).toContain("migrate")
+  const authenticated=await machineRequest(e)
+  expect(authenticated.capabilities).toContain("migrate")
+  expect(authenticated.capabilities).not.toContain("runtime-source-test")
   for(const deadline of [undefined,String(Date.now()-1),String(Date.now()+3600000)]){
     e.context={env:{BUILDING_DEPLOY_TOKEN:"a".repeat(64),BUILDING_DEPLOY_EXPIRES:deadline}}
     await expect(machineRequest(e)).rejects.toMatchObject({statusCode:401})
   }
  })
  it("accepts a valid body-bound signature and preserves capabilities",async()=>{const r=await machineRequest(event());expect(r.owner).toBe("test-key");expect(r.capabilities).toEqual(["publish"])})
+ it("preserves the dedicated runtime source-test capability for registered signed machines",async()=>{
+  keys[0].capabilities.push("runtime-source-test")
+  const r=await machineRequest(event("source-tests"))
+  expect(r.owner).toBe("test-key")
+  expect(r.capabilities).toContain("runtime-source-test")
+ })
  it("rejects unsigned, tampered, expired and revoked credentials",async()=>{
   await expect(machineRequest(event("known",{headers:{}}))).rejects.toMatchObject({statusCode:401})
   const changed=event();changed.body=JSON.stringify({action:"relay",enabled:false});await expect(machineRequest(changed)).rejects.toMatchObject({statusCode:401})

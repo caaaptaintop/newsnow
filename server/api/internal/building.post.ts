@@ -8,7 +8,7 @@ export default defineEventHandler(async event=>{
   setHeaders(event,{"Cache-Control":"private, no-store","CDN-Cache-Control":"no-store"})
   try{
     const {owner,body,capabilities}=await machineRequest(event)
-    const operations:Record<string,string>={init:"migrate",legacy:"migrate",activate:"migrate",publish:"publish",known:"publish",export:"publish",version:"publish",status:"operate",relay:"operate",maintain:"operate","source-tests":"operate","source-test-result":"operate"}
+    const operations:Record<string,string>={init:"migrate",legacy:"migrate",activate:"migrate",publish:"publish",known:"publish",export:"publish",version:"publish",status:"operate",relay:"operate",maintain:"operate","source-tests":"runtime-source-test","source-test-result":"runtime-source-test"}
     if(!Object.prototype.hasOwnProperty.call(operations,body.action))throw new BuildingError(404,"后台操作不存在")
     if(!capabilities.includes(operations[body.action]))throw new BuildingError(403,"后台凭据不具备此操作权限")
     const db=buildingDB(event)
