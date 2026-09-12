@@ -1,105 +1,93 @@
-# 个人信息情报站：ChatGPT ↔ Codex 交接入口
+# 个人信息情报站：开发接续入口
 
-本文件是接续入口，不是长期规则真源，也不是大日志仓库。
+本文件只记录当前接续现场，不是长期规则真源。长期规则读 `AGENTS.md`，阶段状态读 `PROGRESS.md`，协作说明读 `docs/AI-COLLABORATION.md`，Mac 生产运维读 `docs/mac-subscription-batch.md`。
 
-- 长期工程规则：`AGENTS.md`
-- 协作流程说明：`docs/AI-COLLABORATION.md`
-- Mac 运维边界：`docs/mac-subscription-batch.md`
-- 代码与文档修改：对应功能分支 + PR
-- 本机任务指令、Codex 回传和 ChatGPT 复审：相关 Issue/PR；无直接对应线程时使用下述备用交接 Issue
+## 当前治理现场
 
-## 当前备用交接 Issue
+- 当前治理 Issue：#77 `开发流程迁移：local-first + AI Cube 同款自动编排`
+- 当前 Draft PR：#78 `chore: migrate development workflow to local-first`
+- 活跃 branch：`chore/newsnow-local-first-workflow-20260912`
+- PR #78 初始 branch 基线早于 PR #76；继续开发前已经重新读取实际 `main`，并以双父 merge commit 把 PR #76 的已上线实现和治理分支合并到同一候选。正式 review 必须以 GitHub 当前实际 Head 为准，不在本文件硬编码“最终 SHA”。
+- 首轮 fresh independent review 对固定 Head 提出 2 个 P1 blocker 和 1 个 P2 hardening：Codex 职责扩大、最低测试矩阵丢失、HTTPS userinfo 未 fail-closed。修复继续使用原 Issue/branch/PR，形成新 fixed Head 后重新 fresh review。
+- fixed candidate、正式 review 和 merge 候选要求 clean worktree；只有 ChatGPT 当前会话真实具备本地 worktree/桥接时才记录本地 clean/dirty。没有本地桥接时明确标记 `N/A`，不得伪造本地事实。
+- 下一同步点：当前修复形成一个新的 fixed candidate，完成适用验证后更新同一 Draft PR；随后重新执行 fresh independent review。
 
-当某个本机任务没有直接对应的功能 Issue/PR 时，统一使用：
+## 已收尾的迁移前产品线
 
-- Issue：`#72` — `ChatGPT ↔ Codex 本机任务交接总线`
-- URL：`https://github.com/caaaptaintop/newsnow/issues/72`
-- 用途：独立本机验证、运维采证、CLI/浏览器/launchd 等必须依赖 Mac 的任务
+Issue #74 / PR #76 的住建部动态列表与分页适配已完成最终代码复审、合并和生产发布。其产品事实链继续保留在 #74/#76，不迁入 #77。当前仍保留的边界是：Cloudflare 对住建部的 530/1016 网络环境问题本身没有消失；系统通过严格的签名 Mac runtime fallback 和独立 `runtime-source-test` capability 保持发布门禁。是否/何时关闭 #74 应按该 Issue 的剩余目标决定，不用流程迁移重写历史结论。
 
-若某个本机问题具有独立生命周期、需要持续跟踪，ChatGPT 可以新建专用 Issue；此时该专用 Issue 优先于 #72。
+## local-first 交接字段
 
-## 1. 默认交接方式
+每次阶段交接至少记录：
 
-本项目不再默认让用户在 ChatGPT 与本机 Codex 之间手工下载、上传或转发证据包。
+- 当前 Issue：
+- 活跃 branch：
+- 明确 worktree 根（仅当当前 ChatGPT 实际具备可信本地工作区；否则 `N/A`）：
+- base SHA：
+- candidate Head：
+- worktree clean/dirty（无本地桥接时 `N/A`）：
+- 本地/隔离测试列表：
+- 本地原生证据（如适用）：
+- 已同步到 GitHub 的最后 SHA：
+- 当前 Draft PR：
+- 未验证/阻断项：
+- 下一同步点：
 
-需要本机执行时：
+开发中的未 push 事实只有在当前 ChatGPT 实际接入同一可信本地 worktree 时才可作为权威；网页端没有本地桥接时不能声称看见 dirty diff 或本地测试。正式网页 review 必须先固定 clean commit 并同步到 GitHub。
 
-1. 有直接相关的功能 Issue/PR：ChatGPT 使用该线程。
-2. 没有相关线程：ChatGPT 使用 Issue #72，或为独立长期问题创建专用 Issue。
-3. ChatGPT 在对应线程发布 `[CHATGPT→CODEX][TASK <id>]` 完整指令。
-4. Codex 从 GitHub 读取该指令，仅执行明确允许的本机操作。
-5. Codex 在同一线程发布 `[CODEX→CHATGPT][TASK <id>]`，附可复核的原始事实、日志摘录、SHA/哈希和 unknown。
-6. ChatGPT 独立读取源码、GitHub 证据和必要线上状态，发布 `[CHATGPT REVIEW][TASK <id>]` 并继续修改、PR、合并、部署或下一轮本机验证。
+## Session bootstrap
 
-用户通常只需要让 Codex 读取仓库 `HANDOFF.md` 和相应 Task ID，不需要搬运文件。
+若当前任务使用本地 worktree：
 
-## 2. Codex 每次开始前
-
-在不 checkout/reset/pull 正在运行的生产副本、不扰动 worker 的前提下，先读取远端规则：
+1. 设置 `NEWSNOW_EXPECTED_ROOT` 为任务明确指定的绝对 worktree；
+2. 运行 `AGENTS.md` 的 Repository Identity Gate；
+3. 读取最新远端：
 
 ```sh
 git fetch origin
 git show origin/main:AGENTS.md
 git show origin/main:HANDOFF.md
+git show origin/main:PROGRESS.md
 ```
 
-再读取 ChatGPT 指定的 Issue/PR：
+4. 检查 `git status --short`、branch、HEAD、实际 `origin/main`；
+5. 读取当前 Issue/PR；所有 `gh` 操作显式使用 `--repo caaaptaintop/newsnow`。
 
-```sh
-gh issue view <N> --repo caaaptaintop/newsnow --comments
-# 或
-gh pr view <N> --repo caaaptaintop/newsnow --comments
-```
+身份、worktree、remote、当前 Issue/PR 或未知 dirty 状态无法唯一确认时 fail-closed；不得自动 reset/stash/clean、修改 remote、切换到猜测目录或覆盖未知文件。
 
-只执行最新、未被后续评论替代且 Task ID 完全匹配的 `[CHATGPT→CODEX][TASK <id>]` 指令。
+如果当前 ChatGPT 没有本地 worktree/桥接，则不调用 Codex去“补齐 local-first”。ChatGPT 直接重新读取 GitHub 实际 `main`、当前 Issue/PR、branch Head、changed files 与并行提交，并使用自身 GitHub/云端工具推进。
 
-如果 `gh auth status` 失败、仓库不可访问、目标线程不可读写、基线 SHA 不一致、现场与指令冲突或执行将触碰禁止边界，应停止并报告，不凭历史聊天猜测。
+## GitHub 同步策略
 
-## 3. Codex 回传格式
+小迭代不为每一步 push。达到 clean fixed candidate、完成范围匹配的最低测试矩阵和 diff 自审后，才 push/更新当前 branch 与同一 Draft PR。普通 review 针对明确 GitHub SHA；发现问题继续原 Issue/branch/PR 修复，再形成新的 fixed Head。
 
-优先生成一个临时、已脱敏的 Markdown 结果，再直接发回同一线程：
+Actions 用于 fixed candidate 的共享验证，不是每个中间状态的日常前置。若实际遇到 Actions 额度/预算阻断，停止新增 Actions 消耗并原样报告，不自行充值、提高预算或反复 rerun。测试种类和触发条件仍以 `AGENTS.md` 的最低测试矩阵为准，不能因为减少 Actions 频率而删减验证。
 
-```sh
-gh issue comment <N> --repo caaaptaintop/newsnow --body-file <sanitized-result.md>
-# 或
-gh pr comment <N> --repo caaaptaintop/newsnow --body-file <sanitized-result.md>
-```
+## Codex 调用门与本机证据总线
 
-正文建议按以下结构：
+Codex 只处理确实依赖用户 Mac 的事项。只有同时满足以下三项才下发 Codex 任务：
 
-```text
-[CODEX→CHATGPT][TASK <id>]
+1. ChatGPT 当前工具不能充分完成；
+2. GitHub、CI、线上接口或其他已连接工具也不能充分完成；
+3. 任务确实依赖用户 Mac 的文件、进程、登录态、浏览器、网络、launchd、私钥权限或其他本机事实。
 
-时间/时区：
-执行对象：
-实际 SHA / PID / launchd 状态：
-执行动作与退出码：
-关键原始证据：
-文件元数据 / SHA-256：
-前后状态差异：
-发生的写入：
-失败 / unknown / 未验证边界：
-```
+普通源码修改、测试设计与实现、branch/PR、CI 审查、review、merge、部署不因 local-first 而默认转交 Codex。Codex 发现代码问题默认先复现和回传证据，后续源码修改仍由 ChatGPT 推进，除非当前明确本机任务在必要范围内特别授权。
 
-不得只写“完成”“通过”或只给一个本机文件路径。
+有直接相关功能 Issue/PR 时，本机任务使用该线程。没有直接线程的独立本机验证、运维采证、CLI/浏览器/launchd 任务继续使用：
 
-## 4. 证据路由
+- Issue #72 `ChatGPT ↔ Codex 本机任务交接总线`
+- https://github.com/caaaptaintop/newsnow/issues/72
 
-- 小型文本、状态、命令输出、日志摘录 → 对应 Issue/PR 评论；
-- 源码、测试、fixture、文档 → 功能分支 + PR；
-- CI/构建结果 → GitHub Actions run / log / artifact；
-- 较大但非敏感、确需保存的证据 → Actions artifact 或 GitHub 可审查附件；
-- 敏感或不宜上传的本机原件 → 保留 Mac，仅在 GitHub 回传路径、大小、mtime、SHA-256 与必要脱敏摘录。
+固定标记：
 
-禁止上传真实密钥、Token、Cookie、密码、私钥内容、浏览器敏感数据、原始生产数据库，以及项目规则禁止持久化的正文、完整 HTML、附件字节。
+- `[CHATGPT→CODEX][TASK <id>]`
+- `[CODEX→CHATGPT][TASK <id>]`
+- `[CHATGPT REVIEW][TASK <id>]`
 
-只有 GitHub Issue/PR、Actions、PR diff、哈希和必要摘录仍不足以完成审查时，才例外由 ChatGPT 明确要求文件本体。
+Codex 回传至少包括时间/时区、实际 repo/HEAD、执行对象、关键命令和退出码、before/after、发生的写入、证据路径/元数据/SHA-256、失败/unknown。不得只写“完成/通过”。
 
-## 5. 职责边界
+小文本和日志摘录放 Issue/PR；代码/测试/fixture/文档走 branch + PR；CI 证据走 Actions；敏感本机原件留 Mac，只回传最小脱敏摘录与哈希。不得上传密钥、Token、Cookie、密码、私钥、原始生产数据库、完整正文/HTML 或附件字节。
 
-Codex 的 GitHub 写入默认仅限：
+## 职责边界
 
-- 在被指定的 Issue/PR 回传本机结果；
-- 若 ChatGPT 明确授权，推送指定分支上的本机专属修改。
-
-Codex 不因获得 GitHub 写权限而自动取得架构决策、代码重构、PR 合并、部署、生产 D1 写入或调度变更权限。上述事项仍由 ChatGPT 负责分析、修改和审查，除非当前 `[CHATGPT→CODEX][TASK <id>]` 指令明确授权。
+ChatGPT 负责需求、架构、实现方案、源码修改、测试设计与实现、GitHub 治理、源码/diff 审查、review、merge、部署和云端验收。local-first 仅在 ChatGPT 自身真实具备可信本地桥接/工作区时改变开发执行位置；否则继续由 ChatGPT 使用 GitHub/云端工具。Codex 始终是本机独占事项的受控执行器，不因为流程迁移成为普通开发代理。
