@@ -243,7 +243,11 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   $("script,style,nav,header,footer,form,iframe,noscript").remove()
   let text = ""
   let articleRoot: ReturnType<typeof $> | undefined
-  for (const selector of ["#UCAP-CONTENT", ".TRS_Editor", "#zoom", "#zoomcon", ".article-content", ".article_content", ".view.TRS_UEDITOR", ".Custom_UnionStyle", ".content-detail", "article", ".news_content", "#contentText", ".editorContent-box > .editor-content"]) {
+  const editorSelector = ".editorContent-box > .editor-content"
+  const hasEditorTemplate = $(editorSelector).length > 0
+  // A recognized template must not fall back to a broader page wrapper.
+  const selectors = hasEditorTemplate ? [editorSelector] : ["#UCAP-CONTENT", ".TRS_Editor", "#zoom", "#zoomcon", ".article-content", ".article_content", ".view.TRS_UEDITOR", ".Custom_UnionStyle", ".content-detail", "article", ".news_content", "#contentText"]
+  for (const selector of selectors) {
     const root = $(selector).first()
     const value = root.text().replace(/\s+/g, " ").trim()
     if (value.length >= 80 && value.length <= 100000) { text = value.slice(0, 8000); articleRoot = root; break }
@@ -251,9 +255,9 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   // Do not treat the entire site navigation as article text when a template is unknown.
   const foundAttachments = new Map<string, { title: string, url: string }>()
   const attachmentLinks = [
-    ...(articleRoot ?? $("body")).find("a[href]").toArray(),
-    ...(articleRoot?.is(".editorContent-box > .editor-content") ? articleRoot.siblings(".editorContent-download").find("a[href]").toArray() : []),
-    ...$("[data-intelligence-static-write] a[href]").toArray(),
+    ...(articleRoot ?? (hasEditorTemplate ? $([]) : $("body"))).find("a[href]").toArray(),
+    ...(hasEditorTemplate && articleRoot ? articleRoot.siblings(".editorContent-download").find("a[href]").toArray() : []),
+    ...(hasEditorTemplate ? [] : $("[data-intelligence-static-write] a[href]").toArray()),
   ]
   attachmentLinks.forEach((el) => {
     const href = $(el).attr("href") ?? ""
