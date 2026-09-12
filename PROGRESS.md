@@ -4,20 +4,18 @@
 
 ## 开发流程治理修正（2026-09-12）
 
-当前治理 Issue：#79。目标是把 `newsnow` 的 local-first 协作修正为与 AI Cube 当前流程一致：默认开发现场为本地 Codex 工作区，通过 `codex-chatgpt-web` / MCP 让 ChatGPT Web 模型进入同一明确 worktree，Web 负责需求/架构/实现与编辑决策、测试设计、本地 diff 审查和阶段判断，Codex 工具层负责文件、Git、Shell、测试、构建、GUI/macOS 和本机事实执行。
+当前治理 Issue：#79，Draft PR：#80。用户最新确认的目标是：从固定 Codex 项目入口只提需求、看结果和给修改意见，由当前选定模型自动定位、复用或创建 Issue、分支和 worktree，处理提交、PR 和进度。用户可选择原生或网页开发模型，不必手动选择分支、切 worktree 或搬运内容。此前本轮特定 Web 执行要求不再推广为全部开发的固定职责限制。
 
-#77 / #78 只保留为此前治理迁移与审查的历史依据，不作为 #79 的活动 Issue/PR，也不延续其中“Codex 只能处理 Mac 独占事项”的旧职责限制或旧未完成状态。2026-09-12 15:10 Asia/Shanghai 阶段快照：#79 已形成 Draft PR #80（OPEN / Draft），处于 fixed Head 独立审查整改阶段。初次已同步 Head `9c3f283f6e810f7713b02b41b93e70fa52ace26e` 的 fresh review 为 `CHANGES_REQUESTED`，唯一 blocker 是 `HANDOFF.md` / `PROGRESS.md` 状态落后真实 PR 阶段及探针来源表述错误；核心治理和保护段落审查通过。后续实时候选、同步、CI 和 review 结果以 PR #80 的 `headRefOid` 及绑定该 SHA 的评论为准，与本地 Git 实际 HEAD 核对；形成新 Head 后必须重新执行 fresh review，旧 Head 的测试、CI 与 review 结论不自动延续。
+当前阶段：newsnow 单项目试行与固定候选审查。2026-09-12 15:37 Asia/Shanghai 快照：上一候选已完成桥接恢复与审查，但强制 Web 开发及入口自动定位不足，正按用户反馈修正。同一 Issue/branch/PR 继续，不重开任务，不合并。当前完整候选、同步、CI 和 review 以 PR #80 的 `headRefOid`、绑定 SHA 的报告及本地 HEAD 实时核对；新 Head 不沿用旧审查和 CI 结论。
 
-当前长期目标：
+本阶段范围：
 
-- Canonical repository identity 固定为 `caaaptaintop/newsnow`；本地开发先通过 Repository Identity Gate，并绑定任务明确指定的 worktree；
-- 正式链路为 `Issue → 独立 branch/worktree → 本地 Codex 工作区 → Web 模型进入同一 worktree → 本地连续开发/验证 → fixed candidate → Draft PR → fresh independent review → final Head → main → deployment/acceptance`；
-- Issue/branch/worktree/checkpoint/push/Draft PR/普通 fresh review 默认自动编排，普通 review 由桥接创建并回收 fresh Web context，用户不承担常规上下文搬运；
-- 桥接不可用、不能确认进入同一 worktree或不能保证真正 fresh review context 时明确阻断，不把网页端 GitHub 直改作为默认降级路径；
-- 原生 Codex 模型只按需承担边界清晰的本机专项，不为形式上的独立重复整套开发、修改和审查推理；
-- local-first 只调整执行位置和同步频率，不降低单元/回归、改动文件 lint/类型、必要构建、发布安全、页面浏览器交互、恢复/幂等故障路径等适用验证门槛；
-- Repository Identity Gate 的 HTTPS userinfo hardening、PR #76 的 JPaas/runtime-source-test 发布门禁，以及 building-only、Cloudflare Access、D1、附件无持久化、Mac worker/launchd/900 秒调度等产品和生产保护边界全部保持；
-- 高风险生产、数据、鉴权、调度、迁移、发布门禁、CI/部署门槛和治理/review 路由变化继续固定 Head，完成更高等级独立 Web 审查后才允许合并。
+- 五个真实场景已冻结在 `docs/AI-COLLABORATION.md`，只在本项目试行，用户确认体验后才能定版；不迁移其他项目。
+- 入口先核验身份，再自动定位任务；模型明确绑定目标后再次运行原 Identity Gate。入口文件保留，不因新对话或切模型重复开 Issue/分支。
+- 本机固定入口指引和任务路径写入入口现有 `AGENTS.md` / `.local/CONTEXT.md`，精确备份并保留历史正文；该本机适配独立于仓库候选，不声称 main 已采用。
+- 当前模型负责完整开发；桥接只约束需要 Web 的动作；普通及高风险 fresh Web review 保留，无法审查就暂停合并。
+- 最低测试矩阵、Identity Gate 脚本及全部产品/生产边界不变；不改业务代码、workflow、预算或全局配置。
+- 验证区分真实入口发现/只读探针与场景推演；不把推演说成新任务创建或真实并发实测，也不承诺 Codex 界面自动切换。
 
 ## 迁移前产品工作状态
 
