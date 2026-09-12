@@ -2,30 +2,22 @@
 
 本文件只记录阶段级状态，不作为长期规则真源，也不累计每个本地小 commit。长期工程规则见 `AGENTS.md`，当前接续现场见 `HANDOFF.md`。
 
-## 开发流程治理（2026-09-12）
+## 开发流程治理修正（2026-09-12）
 
-项目正在迁移为与 AI Cube 同款的 local-first 治理框架：产品架构和既有安全边界不变，GitHub Issue / Draft PR / main 正式治理不变；目标是减少中间 push/Actions、使用 fixed candidate 和 fresh review。local-first 只在 ChatGPT 当前实际具备可信本地桥接/工作区时改变开发执行位置；若没有本地桥接，则继续由 ChatGPT 使用 GitHub/云端工具推进，**不把普通开发转交 Codex 来模拟 local-first**。
+当前治理 Issue：#79。目标是把 `newsnow` 的 local-first 协作修正为与 AI Cube 当前流程一致：默认开发现场为本地 Codex 工作区，通过 `codex-chatgpt-web` / MCP 让 ChatGPT Web 模型进入同一明确 worktree，Web 负责需求/架构/实现与编辑决策、测试设计、本地 diff 审查和阶段判断，Codex 工具层负责文件、Git、Shell、测试、构建、GUI/macOS 和本机事实执行。
 
-当前治理 Issue：#77 `开发流程迁移：local-first + AI Cube 同款自动编排`。当前 Draft PR：#78。
+#77 / #78 只保留为此前治理迁移与审查的历史依据，不作为 #79 的活动 Issue/PR，也不延续其中“Codex 只能处理 Mac 独占事项”的旧职责限制或旧未完成状态。#79 当前尚未创建新的 Draft PR；待本地 clean candidate 固定后再进入正式同步与独立审查。
 
-首轮 fresh independent review 已确认流程方向可继续，但提出两个 P1 blocker 和一个 P2 hardening：
+当前长期目标：
 
-- Codex 职责不能从“Mac 独占执行器”扩大为普通文件修改/Git/测试/commit/push 执行层；
-- 迁移不能删除当前 canonical `AGENTS.md` 已有的最低测试矩阵；
-- Repository Identity Gate 应对 HTTPS userinfo/password 同样 fail-closed。
-
-这些问题在原 #77 / #78 内修复；形成新 fixed Head 后必须重新 fresh independent review，旧 Head 的结论不延续。
-
-迁移后的长期目标：
-
-- Canonical repository identity 固定为 `caaaptaintop/newsnow`，使用本地 worktree 时先通过 Repository Identity Gate；
-- 正式链路为 `Issue → branch/worktree（如适用）→ ChatGPT 主导开发/验证 → fixed candidate → Draft PR → independent review → final Head → main → deployment/acceptance`；
-- Issue/branch/worktree（如适用）/checkpoint/push/Draft PR/普通 review 默认自动编排，用户不承担常规项目管理；
-- 网页端未接入本地 worktree 时，不把未 push 事实冒充为已读取；
-- ChatGPT 继续是技术负责人和主要开发者；Codex 仍只处理 ChatGPT/GitHub/CI/线上工具无法充分完成且确实依赖用户 Mac 的事项；
+- Canonical repository identity 固定为 `caaaptaintop/newsnow`；本地开发先通过 Repository Identity Gate，并绑定任务明确指定的 worktree；
+- 正式链路为 `Issue → 独立 branch/worktree → 本地 Codex 工作区 → Web 模型进入同一 worktree → 本地连续开发/验证 → fixed candidate → Draft PR → fresh independent review → final Head → main → deployment/acceptance`；
+- Issue/branch/worktree/checkpoint/push/Draft PR/普通 fresh review 默认自动编排，普通 review 由桥接创建并回收 fresh Web context，用户不承担常规上下文搬运；
+- 桥接不可用、不能确认进入同一 worktree或不能保证真正 fresh review context 时明确阻断，不把网页端 GitHub 直改作为默认降级路径；
+- 原生 Codex 模型只按需承担边界清晰的本机专项，不为形式上的独立重复整套开发、修改和审查推理；
 - local-first 只调整执行位置和同步频率，不降低单元/回归、改动文件 lint/类型、必要构建、发布安全、页面浏览器交互、恢复/幂等故障路径等适用验证门槛；
-- 保留 building-only 公开基线、Cloudflare Access、D1、来源管理、附件无持久化、Mac worker/launchd/900 秒调度等全部产品和生产保护边界；
-- 高风险生产、数据、鉴权、调度、迁移、发布门禁、治理/review 路由和不可逆操作继续要求更高等级独立审查。
+- Repository Identity Gate 的 HTTPS userinfo hardening、PR #76 的 JPaas/runtime-source-test 发布门禁，以及 building-only、Cloudflare Access、D1、附件无持久化、Mac worker/launchd/900 秒调度等产品和生产保护边界全部保持；
+- 高风险生产、数据、鉴权、调度、迁移、发布门禁、CI/部署门槛和治理/review 路由变化继续固定 Head，完成更高等级独立 Web 审查后才允许合并。
 
 ## 迁移前产品工作状态
 
@@ -36,7 +28,7 @@ Issue #74 / PR #76 的住建部动态列表、JPaas 分页和 Mac runtime source
 - runtime source-test 使用独立 `runtime-source-test` capability，短期 deployment bearer 不具备该能力；
 - Cloudflare 对住建部的 530/1016 网络环境现象本身仍作为已知边界，不把 fallback 上线写成 DNS 根因消失。
 
-Issue #74 是否关闭应按其剩余目标单独判断；流程迁移不重写其历史事实。新的开发任务在 #77/#78 合并后默认使用新的治理流程。
+Issue #74 是否关闭应按其剩余目标单独判断；#79 的治理修正不重写其历史事实，也不复用 #77/#78 的旧未完成状态。
 
 ## 当前产品基线
 

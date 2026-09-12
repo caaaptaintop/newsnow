@@ -106,11 +106,11 @@ PY
 
 默认链路：
 
-`Issue → 独立 branch/worktree（如当前 ChatGPT 具备可信本地工作区）→ ChatGPT 主导连续开发与验证 → clean fixed candidate → Draft PR → fresh independent review → 修复 → final Head → merge main → 部署/生产验收`
+`Issue → 独立 branch/worktree → 本地 Codex 工作区 → codex-chatgpt-web/MCP 进入同一 worktree → ChatGPT Web 主导开发判断与修改 + Codex 工具层执行 → clean fixed candidate → Draft PR → fresh independent review → 修复 → final Head → merge main → 部署/生产验收`
 
-`main` 不作为日常开发分支，不直接承载未经审查的开发改动。local-first 只改变可用本地开发环境下的执行位置和 GitHub 同步频率，不取消 Issue、独立分支、Draft PR、final Head 审查和 main 合并门槛，也不改变 ChatGPT/Codex 既有职责边界。
+`main` 不作为日常开发分支，不直接承载未经审查的开发改动。local-first 只改变开发与验证的执行位置和 GitHub 同步频率，不取消 Issue、独立分支、Draft PR、final Head 审查和 main 合并门槛。
 
-若当前 ChatGPT 具备可信本地桥接/工作区，可在该工作区连续开发、测试和形成 fixed candidate；若当前 ChatGPT 没有本地桥接，则继续由 ChatGPT 使用 GitHub/云端工具开发，并把修改尽量批量形成少量 fixed candidate。**不得为了“实现 local-first”而把普通源码修改、测试、Git/PR 操作转交 Codex。**
+默认开发现场是用户明确指定的本地 Codex 工作区。通过 `codex-chatgpt-web` / MCP 让 ChatGPT Web 模型进入同一明确 worktree：Web 模型负责需求、架构、实现与编辑决策、测试设计、本地 diff 审查和阶段判断；Codex 工具层负责文件、Git、Shell、测试、构建、GUI/macOS 和本机事实执行。桥接不可用、无法确认进入同一 worktree，或工具行为无法解释时，本地开发链路明确阻断；不得把“网页端直接修改 GitHub”作为默认降级路径。
 
 GitHub 不承担每一步中间交接。小迭代尽量在当前可用开发环境连续完成，达到正式同步点才 push/更新 PR；禁止把“每修改一个小点就 push + 跑整套 Actions”作为默认流程。
 
@@ -124,7 +124,7 @@ GitHub 不承担每一步中间交接。小迭代尽量在当前可用开发环�
 4. 实时读取当前 branch 关联的 Issue/PR；
 5. 检查未知 dirty 状态和并行修改。
 
-如果当前 ChatGPT 没有本地 worktree/桥接，则不伪造上述本地事实；直接重新读取 GitHub 实际 `main`、当前 Issue/PR、branch Head 和并行提交后继续。
+ChatGPT Web 必须通过桥接真实进入当前 worktree 后，才能使用未 push diff、本地测试和本机文件状态作为开发事实。桥接不可用或无法证明同一 worktree 时记录阻断，不伪造本地事实，也不默认切换为网页端 GitHub 直改。
 
 聊天中的 branch、PR 状态、main SHA 只能作为线索，正式判断以实际 Git/GitHub 状态为准。不得自动 `reset`、`stash`、`clean` 或覆盖未知修改。
 
@@ -134,15 +134,15 @@ GitHub 不承担每一步中间交接。小迭代尽量在当前可用开发环�
 
 - 当前消息属于既有 Issue 的验收目标、实现直接发现的缺陷、必要测试、文档修正或范围内重构：复用原 Issue；
 - 独立新功能、独立业务目标、显著改变验收范围、无直接因果的既有缺陷，或需要单独安全/数据/权限跟踪：创建新 Issue；
-- 每个独立 Issue 默认独立 branch；只有当前 ChatGPT 实际具备可信本地工作区、且需要并行/保留现场/隔离未知 dirty 状态时才编排独立 worktree；
+- 每个独立 Issue 默认独立 branch；默认在明确的本地 Codex 工作区推进，需要并行/保留现场/隔离未知 dirty 状态时自动编排独立 worktree；
 - branch 使用 `feat/`、`fix/`、`chore/`、`docs/` 等语义前缀；
 - 达到 clean fixed candidate、完成风险匹配的验证和最终 diff 自审后，才形成同步点并 push；
 - 达到正式共享审查、跨设备继续、远端备份或独立 review 需要时，自动创建或更新同一 Draft PR；禁止常规 force push；
-- 普通风险 fixed Head 默认路由到 fresh ChatGPT Web/context，对明确 GitHub SHA 做独立复核；发现问题后继续原 Issue、原 branch、同一 Draft PR 修复，形成新 fixed Head 后重新 review。
+- 普通风险 fixed Head 同步 GitHub 后，默认通过已连接桥接自动创建新的 fresh ChatGPT Web task/context，对明确 GitHub SHA 独立复核并回收结果；用户无需手工搬运上下文或频繁切换网页端。发现问题后继续原 Issue、原 branch、同一 Draft PR 修复，形成新 fixed Head 后重新 review；若桥接不能保证真正 fresh context，则该 review 明确阻断并记录原因。
 
 ### 2.5 GitHub Actions 使用策略
 
-GitHub Actions 不是日常开发每个中间状态的必要前置。优先使用 ChatGPT 当前可用的本地/隔离验证环境执行与改动范围匹配的测试；只有 fixed candidate / 正式同步点 push 后，才依赖 Actions 做共享候选验证。当前没有本地执行能力时，可由 ChatGPT 使用 GitHub/CI 完成必要验证，但不因缺少本地桥接而调用 Codex 承担普通开发测试。
+GitHub Actions 不是日常开发每个中间状态的必要前置。优先由同一 worktree 的 ChatGPT Web 设计验证、Codex 工具层执行与改动范围匹配的本地/隔离测试；只有 fixed candidate / 正式同步点 push 后，才依赖 Actions 做共享候选验证。本地桥接或执行能力缺失时记录阻断/未验证项，不把 GitHub/CI 变成普通开发的默认替代现场。
 
 不得为了“看是否绿”而高频提交微小 checkpoint。若实际遇到 Actions 额度/预算阻断，立即停止新增 Actions 消耗并报告原始错误；不得自行充值、提高预算或通过反复 rerun 消耗额度。
 
@@ -160,7 +160,7 @@ GitHub Actions 不是日常开发每个中间状态的必要前置。优先使�
 - 本地证据与 GitHub 状态不一致，或工具/桥接行为无法解释；
 - 本治理规则和 review 路由发生实质变化。
 
-高风险升级不等于必须让 Codex 开发；ChatGPT 仍负责方案、源码修改、测试设计、源码审查和最终判断，Codex 只做不可替代的本机执行与事实采集。
+高风险升级时仍由 ChatGPT Web 负责方案、源码/文档修改决策、测试设计、diff 审查和最终判断，Codex 工具层执行本地动作；同时固定待审 Head，必须完成更高等级的独立 Web 审查后才能继续合并。原生 Codex 模型只按需承担边界清晰的本机专项，不为形式上的“独立”重复整套开发或审查推理。
 
 ### 2.7 User decision boundary
 
@@ -172,23 +172,17 @@ Issue 复用/新建、branch/worktree（如适用）、checkpoint、push、Draft
 - 需要用户选择真实数据对象、账号、环境或物理设备；
 - 登录/凭据输入或其他必须由用户完成的交互。
 
-## 3. ChatGPT 与 Codex 分工
+## 3. ChatGPT Web 与 Codex 本地工具分工
 
-ChatGPT 是默认技术负责人、主要开发者和独立审查者，负责需求、架构、实现方案、源码修改、测试设计与实现、GitHub branch/PR 治理、diff 审查、CI/部署审查、合并与云端验收。只要 ChatGPT 当前工具、GitHub、CI、线上接口或其他已连接工具能够充分完成，就由 ChatGPT 直接完成，不因 local-first 而转交 Codex。
+默认开发现场是明确的本地 Codex 工作区。通过 `codex-chatgpt-web` / MCP 进入同一 worktree 后，ChatGPT Web 模型负责需求判断、架构与实现方案、源码/文档修改决策、测试设计、本地 diff 审查、Issue/PR/review 编排和阶段判断；它可以直接驱动同一 worktree 中的开发过程，但不得把未实际读取的本地事实当作已确认。
 
-Codex 仍只作为用户 Mac 上的受控执行器。只有同时满足以下三项，ChatGPT 才给 Codex 下发任务：
+Codex 是本地工具执行层，按 Web 模型的开发决策执行文件读写、Git、Shell、测试、构建、GUI/macOS 和本机事实采集。普通源码修改、测试和 Git 操作属于该工具层的正常执行范围，不再以“只有云端工具无法完成且必须依赖 Mac”作为调用前提；执行仍受当前 Issue、允许写入范围、生产保护和用户授权约束。
 
-1. ChatGPT 当前已有工具不能充分完成；
-2. GitHub、CI、线上接口或其他已连接工具也不能充分完成；
-3. 任务确实依赖用户 Mac 的文件、进程、登录态、浏览器、网络、私钥权限、launchd 或其他本机事实。
+原生 Codex 模型仅按需承担边界清晰的本机专项，例如生产副本、`.data`、launchd/plist、PID/PPID、锁、日志、CLI 登录态、私钥权限、Mac 网络、900 秒自然周期或必须依赖本机桌面的采证/操作。专项不应为了形式上的独立性重复整套需求、架构、修改方案和审查推理，也不得自行扩大为未授权重构、生产写入、合并或部署。
 
-Codex 的典型范围是：读取本地生产副本、`.data`、launchd/plist、PID/PPID、锁、日志、CLI 登录态、私钥权限、Mac 网络和必须依赖本机浏览器/桌面软件的真实交互；观察 900 秒自然周期；采集未上传的本机证据。
+桥接不可用、不能确认 Web 模型进入同一明确 worktree，或返回事实与本地工具独立核对不一致时，本地开发链路 fail-closed 并记录阻断；不得默认回退为网页端直接修改 GitHub。需要脱离本地桥接进行正式 Web review 时，先固定 clean commit 并同步到 GitHub branch/Draft PR，再对明确 SHA 审查。
 
-Codex 默认先复现、观察和采证。发现代码问题时原则上停止并回传证据，由 ChatGPT 继续修改源码、测试、PR、审查、合并和部署。只有 ChatGPT 的明确本机任务在必要范围内特别授权时，Codex 才可修改指定本机文件或执行指定 Git 操作；该授权不得自行扩大为重构、新功能、PR 合并或生产部署。
-
-若当前网页端 ChatGPT 没有本地桥接，则不得声称看见未 push commit、dirty diff、本地测试或本机文件。需要正式网页端 review 时，先固定 clean commit 并 push 到 GitHub branch/Draft PR，再对明确 SHA 审查。
-
-Codex 完成后不以“自报通过”替代 ChatGPT 审查。
+Codex 工具执行结果和原生 Codex 专项自报都不是独立 review；最终结论仍按第 5 节证据分级和第 2.6 节 review routing 判断。
 
 ## 4. 缺陷修复、最低测试矩阵与代码规则
 
@@ -288,11 +282,11 @@ Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 - 部署成功不等于生产验收成功；应检查实际部署 SHA、公开边界、关键 API/页面、必要 artifact 和生产状态；
 - D1 migration、Access、Pages 变量、Mac 采用新版分别独立验收；
 - 不用 preview 成功替代 production，不用 production 部署成功替代本机 worker 采用；
-- 若生产验收仍需要本机浏览器/网络/launchd，才下发最小化 Codex 本机任务。
+- 若生产验收仍需要本机浏览器/网络/launchd 等专项事实，由同一 worktree 的 Codex 工具层在授权范围内执行；确需另起原生 Codex 模型专项时，按第 3、13 节边界执行。
 
 ## 13. GitHub 原生交接与本机证据
 
-有直接相关 Issue/PR 时使用该线程；无合适线程的独立本机运维/采证使用 `HANDOFF.md` 指定的备用交接 Issue。固定标记：
+有直接相关 Issue/PR 时使用该线程；无合适线程的独立本机运维/采证使用 Issue #72 `ChatGPT ↔ Codex 本机任务交接总线`。固定标记：
 
 - `[CHATGPT→CODEX][TASK <id>]`
 - `[CODEX→CHATGPT][TASK <id>]`
@@ -300,7 +294,7 @@ Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 
 小型文本/日志放 Issue/PR；源码、测试、fixture、文档走 branch + PR；CI/构建证据走 Actions；敏感或不宜上传的本机原件留 Mac，只回传路径、元数据、SHA-256 和必要脱敏摘录。
 
-Codex 指令必须写明为什么必须本机执行、Task ID、目标、允许读写范围、禁止动作、基线/时间、证据、失败停止条件和回传线程。任何 Codex 指令发出前必须满足第 3 节三项调用门；默认禁止 Codex 自行扩大任务、修改生产 D1/调度、清历史状态、输出密钥、合并或部署。
+需要单独下发原生 Codex 本机专项时，指令必须写明 Task ID、目标、允许读写范围、禁止动作、基线/时间、证据、失败停止条件和回传线程，并说明为何需要独立专项而非普通工具层执行。普通文件/Git/Shell/测试动作由同一 worktree 的 Codex 工具层按当前任务直接执行，不额外制造专项交接。默认禁止任何 Codex 执行自行扩大任务、修改生产 D1/调度、清历史状态、输出密钥、合并或部署。
 
 ## 14. 状态文件职责
 
