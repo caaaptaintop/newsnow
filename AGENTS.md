@@ -35,11 +35,15 @@ def normalize(raw):
         raise ValueError('unsupported URL')
     if raw.startswith(('https://', 'ssh://')):
         url = urlsplit(raw)
+        if url.scheme == 'https':
+            if url.username is not None or url.password is not None:
+                raise ValueError('userinfo not allowed')
+        elif url.scheme == 'ssh':
+            if url.username != 'git' or url.password is not None:
+                raise ValueError('unsupported SSH identity')
         host = url.netloc.rsplit('@', 1)[-1]
         if host != 'github.com' or url.query or url.fragment:
             raise ValueError('unsupported host')
-        if url.scheme == 'ssh' and (url.username != 'git' or url.password is not None):
-            raise ValueError('unsupported SSH identity')
         path = url.path.removeprefix('/')
     elif raw.startswith('git@github.com:'):
         path = raw[len('git@github.com:'):]
@@ -83,7 +87,7 @@ raise SystemExit(0 if passed else 1)
 PY
 ```
 
-只接受 host 精确为 `github.com` 的 HTTPS、`ssh://` 或 `git@github.com:` 形式；fetch/push 必须各只有一个有效 URL、安全规范化身份一致且精确等于 canonical identity。fork、同名仓库、SSH alias、多目标 remote、额外 path/query/fragment、预期 worktree 缺失或根目录不一致均 fail-closed。
+只接受 host 精确为 `github.com` 的 HTTPS、`ssh://` 或 `git@github.com:` 形式；HTTPS 不允许任何 userinfo/username/password，`ssh://` 只接受用户名 `git` 且不允许 password；fetch/push 必须各只有一个有效 URL、安全规范化身份一致且精确等于 canonical identity。fork、同名仓库、SSH alias、多目标 remote、额外 path/query/fragment、预期 worktree 缺失或根目录不一致均 fail-closed。
 
 身份门失败时，禁止自动切目录、修改 remote、创建/修改 Issue/PR、创建 branch/worktree、修改文件、push、reset、stash、clean 或猜测用户本来想进入哪个仓库。只报告安全规范化 identity（无法确定则 `unknown`）、repo root、branch、预期 identity 和停止原因。
 
@@ -93,7 +97,7 @@ PY
 
 ### 2.1 双层事实模型
 
-- 开发中的未同步事实，以明确指定的本地 worktree、当前 branch 和实际文件状态为权威。未提交/未 push 的 diff、本地测试、Mac 日志和本机运行事实不能由 GitHub 状态替代。
+- 开发中的未同步事实，以明确指定且由 ChatGPT 当前会话实际可访问/控制的本地 worktree、当前 branch 和实际文件状态为权威。未提交/未 push 的 diff、本地测试、Mac 日志和本机运行事实不能由 GitHub 状态替代。
 - 已同步的跨设备事实，以 GitHub branch/PR 中实际 push 的 commit 为正式共享与网页端审查依据。网页端正式 review 必须绑定明确 SHA。
 - 阶段完成并合并后，以 GitHub `main` 的实际 merge SHA 重新作为共同基线。
 - 最终 review、merge、部署或阶段通过，只能针对 clean worktree、明确 commit SHA 和与该 SHA 对应的可复现证据；不得对 dirty working tree 作最终判断。
@@ -102,15 +106,17 @@ PY
 
 默认链路：
 
-`Issue → 独立 branch/worktree → 本地连续开发与测试 → clean fixed candidate → Draft PR → fresh independent review → 修复 → final Head → merge main → 部署/生产验收`
+`Issue → 独立 branch/worktree（如当前 ChatGPT 具备可信本地工作区）→ ChatGPT 主导连续开发与验证 → clean fixed candidate → Draft PR → fresh independent review → 修复 → final Head → merge main → 部署/生产验收`
 
-`main` 不作为日常开发分支，不直接承载未经审查的开发改动。local-first 只改变开发和验证的执行位置，不取消 Issue、独立分支、Draft PR、final Head 审查和 main 合并门槛。
+`main` 不作为日常开发分支，不直接承载未经审查的开发改动。local-first 只改变可用本地开发环境下的执行位置和 GitHub 同步频率，不取消 Issue、独立分支、Draft PR、final Head 审查和 main 合并门槛，也不改变 ChatGPT/Codex 既有职责边界。
 
-GitHub 不承担每一步中间交接。小迭代在本地连续完成，达到正式同步点才 push；禁止把“每修改一个小点就 push + 跑整套 Actions”作为默认流程。
+若当前 ChatGPT 具备可信本地桥接/工作区，可在该工作区连续开发、测试和形成 fixed candidate；若当前 ChatGPT 没有本地桥接，则继续由 ChatGPT 使用 GitHub/云端工具开发，并把修改尽量批量形成少量 fixed candidate。**不得为了“实现 local-first”而把普通源码修改、测试、Git/PR 操作转交 Codex。**
+
+GitHub 不承担每一步中间交接。小迭代尽量在当前可用开发环境连续完成，达到正式同步点才 push/更新 PR；禁止把“每修改一个小点就 push + 跑整套 Actions”作为默认流程。
 
 ### 2.3 Session bootstrap
 
-每个新的本地开发会话必须：
+当任务使用本地 worktree 时，每个新的本地开发会话必须：
 
 1. 运行第 1 节 Repository Identity Gate；
 2. 读取最新 `AGENTS.md`、`HANDOFF.md`、`PROGRESS.md`；
@@ -118,7 +124,9 @@ GitHub 不承担每一步中间交接。小迭代在本地连续完成，达到�
 4. 实时读取当前 branch 关联的 Issue/PR；
 5. 检查未知 dirty 状态和并行修改。
 
-聊天中的 branch、PR 状态、main SHA 只能作为线索，正式判断以本地 Git 与 GitHub 实际状态为准。不得自动 `reset`、`stash`、`clean` 或覆盖未知修改。
+如果当前 ChatGPT 没有本地 worktree/桥接，则不伪造上述本地事实；直接重新读取 GitHub 实际 `main`、当前 Issue/PR、branch Head 和并行提交后继续。
+
+聊天中的 branch、PR 状态、main SHA 只能作为线索，正式判断以实际 Git/GitHub 状态为准。不得自动 `reset`、`stash`、`clean` 或覆盖未知修改。
 
 ### 2.4 自动编排
 
@@ -126,15 +134,15 @@ GitHub 不承担每一步中间交接。小迭代在本地连续完成，达到�
 
 - 当前消息属于既有 Issue 的验收目标、实现直接发现的缺陷、必要测试、文档修正或范围内重构：复用原 Issue；
 - 独立新功能、独立业务目标、显著改变验收范围、无直接因果的既有缺陷，或需要单独安全/数据/权限跟踪：创建新 Issue；
-- 每个独立 Issue 默认独立 branch；需要并行、保留现场或遇到未知 dirty 状态时自动使用独立 worktree；
+- 每个独立 Issue 默认独立 branch；只有当前 ChatGPT 实际具备可信本地工作区、且需要并行/保留现场/隔离未知 dirty 状态时才编排独立 worktree；
 - branch 使用 `feat/`、`fix/`、`chore/`、`docs/` 等语义前缀；
-- 达到 clean fixed candidate、完成风险匹配的本地验证和最终 diff 自审后，才形成同步点并 push；
+- 达到 clean fixed candidate、完成风险匹配的验证和最终 diff 自审后，才形成同步点并 push；
 - 达到正式共享审查、跨设备继续、远端备份或独立 review 需要时，自动创建或更新同一 Draft PR；禁止常规 force push；
 - 普通风险 fixed Head 默认路由到 fresh ChatGPT Web/context，对明确 GitHub SHA 做独立复核；发现问题后继续原 Issue、原 branch、同一 Draft PR 修复，形成新 fixed Head 后重新 review。
 
 ### 2.5 GitHub Actions 使用策略
 
-GitHub Actions 不是日常本地开发每个中间状态的必要前置。优先本地运行与改动范围匹配的测试；只有 fixed candidate / 正式同步点 push 后，才依赖 Actions 做共享候选验证。
+GitHub Actions 不是日常开发每个中间状态的必要前置。优先使用 ChatGPT 当前可用的本地/隔离验证环境执行与改动范围匹配的测试；只有 fixed candidate / 正式同步点 push 后，才依赖 Actions 做共享候选验证。当前没有本地执行能力时，可由 ChatGPT 使用 GitHub/CI 完成必要验证，但不因缺少本地桥接而调用 Codex 承担普通开发测试。
 
 不得为了“看是否绿”而高频提交微小 checkpoint。若实际遇到 Actions 额度/预算阻断，立即停止新增 Actions 消耗并报告原始错误；不得自行充值、提高预算或通过反复 rerun 消耗额度。
 
@@ -152,11 +160,11 @@ GitHub Actions 不是日常本地开发每个中间状态的必要前置。优�
 - 本地证据与 GitHub 状态不一致，或工具/桥接行为无法解释；
 - 本治理规则和 review 路由发生实质变化。
 
-高风险升级不等于必须让 Codex 开发；ChatGPT 仍负责方案、源码审查和最终判断，Codex 只做不可替代的本机执行与事实采集。
+高风险升级不等于必须让 Codex 开发；ChatGPT 仍负责方案、源码修改、测试设计、源码审查和最终判断，Codex 只做不可替代的本机执行与事实采集。
 
 ### 2.7 User decision boundary
 
-Issue 复用/新建、branch/worktree、checkpoint、push、Draft PR、普通 review 路由均由执行模型决定。只有以下情况才询问用户：
+Issue 复用/新建、branch/worktree（如适用）、checkpoint、push、Draft PR、普通 review 路由均由执行模型决定。只有以下情况才询问用户：
 
 - 产品方向存在多个实质不同方案且上下文无法可靠推断；
 - 需求歧义会改变目标；
@@ -166,17 +174,23 @@ Issue 复用/新建、branch/worktree、checkpoint、push、Draft PR、普通 re
 
 ## 3. ChatGPT 与 Codex 分工
 
-ChatGPT 是默认技术负责人、主要开发者和独立审查者，负责需求、架构、实现方案、代码修改方案、测试设计、GitHub 治理、diff 审查、CI/部署审查、合并与云端验收。
+ChatGPT 是默认技术负责人、主要开发者和独立审查者，负责需求、架构、实现方案、源码修改、测试设计与实现、GitHub branch/PR 治理、diff 审查、CI/部署审查、合并与云端验收。只要 ChatGPT 当前工具、GitHub、CI、线上接口或其他已连接工具能够充分完成，就由 ChatGPT 直接完成，不因 local-first 而转交 Codex。
 
-在 local-first 工作区中，Codex 是本地工具层：按 ChatGPT 明确的实施方案执行文件读写、Git、Shell、本地测试、GUI、macOS 专项和本机事实采集。Codex 不因承担本地文件修改而取得架构决策权，不自行扩大为重构、另开功能、合并或部署。
+Codex 仍只作为用户 Mac 上的受控执行器。只有同时满足以下三项，ChatGPT 才给 Codex 下发任务：
+
+1. ChatGPT 当前已有工具不能充分完成；
+2. GitHub、CI、线上接口或其他已连接工具也不能充分完成；
+3. 任务确实依赖用户 Mac 的文件、进程、登录态、浏览器、网络、私钥权限、launchd 或其他本机事实。
+
+Codex 的典型范围是：读取本地生产副本、`.data`、launchd/plist、PID/PPID、锁、日志、CLI 登录态、私钥权限、Mac 网络和必须依赖本机浏览器/桌面软件的真实交互；观察 900 秒自然周期；采集未上传的本机证据。
+
+Codex 默认先复现、观察和采证。发现代码问题时原则上停止并回传证据，由 ChatGPT 继续修改源码、测试、PR、审查、合并和部署。只有 ChatGPT 的明确本机任务在必要范围内特别授权时，Codex 才可修改指定本机文件或执行指定 Git 操作；该授权不得自行扩大为重构、新功能、PR 合并或生产部署。
 
 若当前网页端 ChatGPT 没有本地桥接，则不得声称看见未 push commit、dirty diff、本地测试或本机文件。需要正式网页端 review 时，先固定 clean commit 并 push 到 GitHub branch/Draft PR，再对明确 SHA 审查。
 
-对于纯 GitHub/云端工作，ChatGPT 现有工具足以完成时直接完成；对于确需本机 worktree、Mac 网络、浏览器、launchd、私钥权限或本地生产状态的步骤，再由 Codex 执行。
-
 Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 
-## 4. 缺陷修复与代码规则
+## 4. 缺陷修复、最低测试矩阵与代码规则
 
 缺陷默认闭环：
 
@@ -184,7 +198,20 @@ Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 
 禁止通过清缓存、删 ledger/outbox/result/receipt、降低校验、吞错误、扩大重试、绕过发布门禁等方式掩盖根因。
 
-最终合并前至少核对：实际 Head SHA、base、changed files、完整关键 diff、测试、CI、review、已知边界和并行提交。不能只信 PR 描述、绿色标记或 Codex 总结。
+代码变更至少执行与改动范围相匹配的最低验证矩阵；local-first 只改变执行位置和同步频率，不降低以下种类和触发条件：
+
+- 单元测试 / 回归测试；
+- 改动文件的 lint / 类型检查门禁；
+- 必要的构建；
+- 涉及发布时的发布安全回归；
+- 涉及页面/交互时的浏览器交互检查；
+- 涉及恢复、幂等、事务、重试或故障处理时的重复执行与失败路径测试。
+
+纯文档/规则修改应至少检查内容一致性、最终 diff 和相关引用；修改 Identity Gate 时应增加/执行隔离的通过与拒绝路径验证；修改 workflow 时还应验证 workflow 语法和触发条件。具体测试命令按改动范围选择，不要求每个小改动机械运行全库所有测试，但不能删掉与风险直接相关的验证类型。
+
+已有全库范围外诊断可以单列；**“改动文件 0 新错误”不得表述为“全库无错误”**。历史 CI 成功只对应其固定 SHA，不替代后续 Head 的验证。
+
+最终合并前至少核对：实际 Head SHA、base、changed files、完整关键 diff、最低测试矩阵中适用项、CI、review、已知边界和并行提交。不能只信 PR 描述、绿色标记或 Codex 总结。
 
 ## 5. 独立审查与证据分级
 
@@ -273,14 +300,14 @@ Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 
 小型文本/日志放 Issue/PR；源码、测试、fixture、文档走 branch + PR；CI/构建证据走 Actions；敏感或不宜上传的本机原件留 Mac，只回传路径、元数据、SHA-256 和必要脱敏摘录。
 
-Codex 指令必须写明为什么必须本机执行、Task ID、目标、允许读写范围、禁止动作、基线/时间、证据、失败停止条件和回传线程。默认禁止 Codex 自行扩大任务、修改生产 D1/调度、清历史状态、输出密钥、合并或部署。
+Codex 指令必须写明为什么必须本机执行、Task ID、目标、允许读写范围、禁止动作、基线/时间、证据、失败停止条件和回传线程。任何 Codex 指令发出前必须满足第 3 节三项调用门；默认禁止 Codex 自行扩大任务、修改生产 D1/调度、清历史状态、输出密钥、合并或部署。
 
 ## 14. 状态文件职责
 
 - `AGENTS.md`：稳定、长期、项目级规则唯一真源；
 - `PROGRESS.md`：阶段状态、当前治理/产品阶段、已知大边界；不累计每个小 commit；
-- `HANDOFF.md`：当前 Issue、branch/worktree、base、candidate、clean/dirty、本地测试、已同步 SHA、当前 PR、下一同步点；
+- `HANDOFF.md`：当前 Issue、branch/worktree（如适用）、base、candidate、clean/dirty、本地测试、已同步 SHA、当前 PR、下一同步点；
 - `docs/AI-COLLABORATION.md`：解释协作流程，不覆盖本文件；
 - `docs/mac-subscription-batch.md`：Mac 生产运维细则。
 
-任何新会话不得只凭聊天继续；必须重新读取实际 `main`、本文件和当前 Issue/PR/本地现场。
+任何新会话不得只凭聊天继续；必须重新读取实际 `main`、本文件和当前 Issue/PR/实际可访问的开发现场。
