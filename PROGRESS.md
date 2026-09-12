@@ -6,7 +6,7 @@
 
 当前治理 Issue：#79。目标是把 `newsnow` 的 local-first 协作修正为与 AI Cube 当前流程一致：默认开发现场为本地 Codex 工作区，通过 `codex-chatgpt-web` / MCP 让 ChatGPT Web 模型进入同一明确 worktree，Web 负责需求/架构/实现与编辑决策、测试设计、本地 diff 审查和阶段判断，Codex 工具层负责文件、Git、Shell、测试、构建、GUI/macOS 和本机事实执行。
 
-#77 / #78 只保留为此前治理迁移与审查的历史依据，不作为 #79 的活动 Issue/PR，也不延续其中“Codex 只能处理 Mac 独占事项”的旧职责限制或旧未完成状态。#79 当前尚未创建新的 Draft PR；待本地 clean candidate 固定后再进入正式同步与独立审查。
+#77 / #78 只保留为此前治理迁移与审查的历史依据，不作为 #79 的活动 Issue/PR，也不延续其中“Codex 只能处理 Mac 独占事项”的旧职责限制或旧未完成状态。2026-09-12 15:10 Asia/Shanghai 阶段快照：#79 已形成 Draft PR #80（OPEN / Draft），处于 fixed Head 独立审查整改阶段。初次已同步 Head `9c3f283f6e810f7713b02b41b93e70fa52ace26e` 的 fresh review 为 `CHANGES_REQUESTED`，唯一 blocker 是 `HANDOFF.md` / `PROGRESS.md` 状态落后真实 PR 阶段及探针来源表述错误；核心治理和保护段落审查通过。后续实时候选、同步、CI 和 review 结果以 PR #80 的 `headRefOid` 及绑定该 SHA 的评论为准，与本地 Git 实际 HEAD 核对；形成新 Head 后必须重新执行 fresh review，旧 Head 的测试、CI 与 review 结论不自动延续。
 
 当前长期目标：
 
