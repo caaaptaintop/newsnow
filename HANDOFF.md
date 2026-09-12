@@ -1,12 +1,10 @@
-# 个人信息情报站：开发接续入口
-- 目标：用户只提需求/反馈；当前选定模型自动管理 Issue/分支/worktree/PR；阶段：newsnow 单项目试行与固定候选审查。
-- 2026-09-12 15:37 Asia/Shanghai 快照；活动 Issue #79 / OPEN Draft PR #80，未合并。
-- 任务分支：`codex/newsnow-local-first-correction-79`；本机入口/目标路径和交接信息见固定项目入口 `.local/CONTEXT.md`，必须重新发现并核验，不要求用户手选。
-- base：`a7d42b87b0eb7a7f41830bd61a9451062d7696f0`（本轮 fetch 后 origin/main）；当前候选/已同步 SHA 以 PR #80 headRefOid 与实际本地 HEAD 核对。
-- 已完成：冻结五场景；定位现有 worktree；修正开发模型职责和入口自动路由规则；保留独立 Web review 与生产授权门。
-- 本轮写入范围：五份治理文档；另有不提交的本机入口 AGENTS/CONTEXT 试行适配，已备份；历史其他文件保留。
-- 现场：编辑前目标 clean；提交与审查前重新核验 status、目标归属及并行变化，入口 dirty 不等于目标 dirty。
-- 验证：本轮结果按固定 SHA 回传 Issue/PR；含文档 lint、保护段落比较、身份门正负例、真实入口只读探针、场景推演；旧 Head PASS 不延续。
-- 历史：Compatibility V1 恢复证据见 Issue #79 评论 5644365794；旧提交 hook ENOENT 与补查见评论 5644417373，不记成原 hook 成功。
-- 风险：新 Head 独立审查/CI 需单独核对；候选未进入 main；生产副本和 Cloudflare/线上未操作、未验证；不承诺 UI 自动迁移对话。
-- 下一动作：验证并固定候选，更新同一 PR，fresh Web review 后回传 Issue；用户确认试行体验前不定版，本轮不合并。
+# 开发接续
+- 目标/阶段：自动任务管理的 newsnow 单项目试行；当前增量为规则去重与身份检查入口固化。
+- 2026-09-12 16:40 Asia/Shanghai 快照：Issue #79 / OPEN Draft PR #80；branch `codex/newsnow-local-first-correction-79`；base `a7d42b87b0eb7a7f41830bd61a9451062d7696f0`。
+- 已完成上一轮：`b4b3227` 入口发现探针、独立review和CI；[固定结果](https://github.com/caaaptaintop/newsnow/issues/79#issuecomment-5644556147)。
+- 本轮增量：治理文档去重、原身份Python正文脚本化及隔离测试、本机入口加载指引；候选HEAD/同步以实际Git与PR核对。
+- 本机入口/目标路径、脚本副本哈希、写入归属和备份见固定入口 `.local/CONTEXT.md`；写入前核对活动任务和未知修改。
+- 验证入口：`python3 test/repository_identity_test.py`、五文档ESLint、diff检查、保护段落比较、fresh入口探针；结果按本轮SHA回传Issue/PR，旧PASS不延续。
+- 历史异常：桥接与hook说明已保存在上轮固定报告中；本轮不把历史自报当独立验证。
+- 风险/未完成：本轮候选的适用验证和独立review须对照最新回传；用户体验待确认，main尚未采用，生产/线上未验证。
+- 下一动作：先查Issue/PR是否已有当前HEAD的本轮完成报告；有则直接接续用户反馈与试行验收，仅补未完成项，不重跑上一轮提交/审查。本轮不合并。
