@@ -29,7 +29,7 @@ export async function preparePublisher(){
   if(!registry.keys.some(k=>k.id===id)){
     try{await readFile(marker);throw new Error("本机公钥已被移除；已停止自动注册，请由维护者确认后重新登记")}catch(error){if(error.code!=="ENOENT")throw error}
     if(git(["branch","--show-current"])!=="main"||git(["status","--porcelain"]))throw new Error("登记公钥需要干净的main工作副本")
-    registry.keys.push({id,jwk,capabilities:["publish","operate"]})
+    registry.keys.push({id,jwk,capabilities:["publish","operate","runtime-source-test"]})
     // One configuration commit, containing only public verification material.
     await writeFile(registryPath,JSON.stringify(registry,null,2)+"\n")
     git(["add","shared/building-publisher-keys.json"])

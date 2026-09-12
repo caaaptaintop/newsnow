@@ -12,6 +12,7 @@ it("background worker uses Luna low and runs attachment backfill even when the n
   const run = (bin, args) => {
     calls.push([bin, ...args])
     if (args[0] === "branch") return "main"
+    if (args.includes("tools/ai-bridge/source-test-runner.ts")) return JSON.stringify({ pending: 0, completed: [] })
     if (bin === "codex") return "Logged in using ChatGPT"
     return ""
   }
@@ -31,7 +32,11 @@ it("background worker uses Luna low and runs attachment backfill even when the n
     assert.equal(calls.some(c => c.includes("tools/ai-bridge/apply-batch.ts")), false)
     assert(calls.indexOf(backfills[0]) > calls.indexOf(analyses.at(-1)))
     assert.equal(calls.some(c => c[1] === "push"), false, "no data Git push")
-    assert(calls.findIndex(c => c.includes("tools/ai-bridge/publisher.mjs") && c.includes("prepare")) < calls.indexOf(analyses[0]))
+    const runtimeTestIndex = calls.findIndex(c => c.includes("tools/ai-bridge/source-test-runner.ts"))
+    assert(runtimeTestIndex >= 0)
+    assert(calls.findIndex(c => c.includes("tools/ai-bridge/publisher.mjs") && c.includes("prepare")) < runtimeTestIndex)
+    assert(runtimeTestIndex < calls.indexOf(analyses[0]))
+    assert.deepEqual(result.runtimeSourceTests, { pending: 0, completed: [] })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -43,6 +48,7 @@ it("a backfill-only result is applied and published even when mac-batch produced
   const run = (bin, args) => {
     calls.push([bin, ...args])
     if (args[0] === "branch") return "main"
+    if (args.includes("tools/ai-bridge/source-test-runner.ts")) return JSON.stringify({ pending: 0, completed: [] })
     if (bin === "codex") return "Logged in using ChatGPT"
     if (args.includes("tools/ai-bridge/backfill-attachments.ts")) {
       const directory = join(root, ".data/mac-batch")
@@ -65,11 +71,13 @@ it("a backfill-only result is applied and published even when mac-batch produced
 
 it("manual Mac sync also backfills before deciding there is no result", () => {
   const command = readFileSync(new URL("./mac-sync.command", import.meta.url), "utf8")
+  const runtimeTest = command.indexOf("tools/ai-bridge/source-test-runner.ts")
   const batch = command.indexOf("tools/ai-bridge/mac-batch.ts")
   const backfill = command.indexOf("tools/ai-bridge/backfill-attachments.ts")
   const resultCheck = command.indexOf("if [[ ! -f .data/mac-batch/result.json ]]")
   const apply = command.indexOf("tools/ai-bridge/apply-batch.ts")
-  assert(batch >= 0)
+  assert(runtimeTest >= 0)
+  assert(batch > runtimeTest)
   assert(backfill > batch)
   assert(resultCheck > backfill)
   assert(apply > resultCheck)

@@ -1,14 +1,14 @@
 # 个人信息情报站：项目协作与 Agent 规则
 
-本文件是 `caaaptaintop/newsnow` 的长期工程规则唯一真源。`HANDOFF.md` 只记录当前接续现场，`PROGRESS.md` 只记录阶段状态，`docs/AI-COLLABORATION.md` 只解释本文件的流程，不得形成第二套长期规则。
+本文件是 `caaaptaintop/newsnow` 的长期工程规则唯一真源。`HANDOFF.md` 只记录当前接续现场，`PROGRESS.md` 只记录阶段状态，`docs/AI-COLLABORATION.md` 只解释本文件流程，不得形成第二套长期规则。
 
-优先级：用户当前最新明确要求 > 本文件 > 说明文档 > 既有实现、历史 PR 和旧习惯。长期规则变化时，同步更新本文件、相关说明和网页端项目指令；不要把临时 SHA、单次测试数、revision 或某个 PR/CI 的瞬时状态写进长期规则。
+优先级：用户当前最新明确要求 > 本文件 > 说明文档 > 既有实现、历史 PR 和旧习惯。长期规则变化时同步更新本文件、相关说明和网页端项目指令；不要把临时 SHA、单次测试数、revision 或单个 PR/CI 的瞬时状态写入长期规则。
 
 ## 1. Canonical Repository Identity Gate
 
-Canonical repository identity 固定为 `caaaptaintop/newsnow`（GitHub.com）。任何本地开发会话在 Issue/PR 编排、分支/worktree 创建、文件修改、push 或本机测试前，都必须先验证仓库身份和明确指定的工作区根目录。
+Canonical repository identity 固定为 `caaaptaintop/newsnow`（GitHub.com）。任何本地开发会话在 Issue/PR 编排、branch/worktree 创建、文件修改、push 或本机测试前，必须先验证仓库身份和明确指定的工作区根目录。
 
-预先把 `NEWSNOW_EXPECTED_ROOT` 设为当前任务明确指定的绝对 worktree 路径，不能用刚检测到的 cwd 自动回填。身份门只允许安全规范化输出，原始 remote URL、userinfo、credential、token 或 Git trace 不得进入日志或模型回复。
+预先把 `NEWSNOW_EXPECTED_ROOT` 设为当前任务明确指定的绝对 worktree 路径，不能用刚检测到的 cwd 自动回填。身份门只允许安全规范化输出；原始 remote URL、userinfo、credential、token 或 Git trace 不得进入日志、Issue、PR 或模型回复。
 
 ```sh
 python3 - <<'PY'
@@ -85,7 +85,7 @@ PY
 
 只接受 host 精确为 `github.com` 的 HTTPS、`ssh://` 或 `git@github.com:` 形式；fetch/push 必须各只有一个有效 URL、安全规范化身份一致且精确等于 canonical identity。fork、同名仓库、SSH alias、多目标 remote、额外 path/query/fragment、预期 worktree 缺失或根目录不一致均 fail-closed。
 
-身份门失败时，禁止自动切目录、修改 remote、创建/修改 Issue/PR、创建 branch/worktree、修改文件、push、reset、stash、clean 或猜测用户本来想进入哪个仓库。只报告安全规范化 identity（无法确定则 unknown）、repo root、branch、预期 identity 和停止原因。
+身份门失败时，禁止自动切目录、修改 remote、创建/修改 Issue/PR、创建 branch/worktree、修改文件、push、reset、stash、clean 或猜测用户本来想进入哪个仓库。只报告安全规范化 identity（无法确定则 `unknown`）、repo root、branch、预期 identity 和停止原因。
 
 所有 `gh` 写操作必须显式指定 `--repo caaaptaintop/newsnow`；只读也优先显式绑定。Issue/PR 编号只有在 repository identity 已验证后才有意义。
 
@@ -115,7 +115,7 @@ GitHub 不承担每一步中间交接。小迭代在本地连续完成，达到�
 1. 运行第 1 节 Repository Identity Gate；
 2. 读取最新 `AGENTS.md`、`HANDOFF.md`、`PROGRESS.md`；
 3. 检查 worktree `git status`、branch、HEAD、实际 `origin/main`；
-4. 实时读取当前 branch 关联的 Issue / PR；
+4. 实时读取当前 branch 关联的 Issue/PR；
 5. 检查未知 dirty 状态和并行修改。
 
 聊天中的 branch、PR 状态、main SHA 只能作为线索，正式判断以本地 Git 与 GitHub 实际状态为准。不得自动 `reset`、`stash`、`clean` 或覆盖未知修改。
@@ -212,11 +212,14 @@ Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 
 - 来源身份官网 `home` 与实际生产采集栏目分离；explicit 配置只抓明确栏目，不因失败自动回退首页；
 - 来源配置走草稿、版本基线、与草稿指纹匹配的近期测试和原子发布；发现候选不等于允许发布；历史版本恢复只恢复为草稿，不自动发布；
-- 配置状态与运行健康分开显示；HTTP 200 不等于解析到真实文章；
-- 官方来源低并发、有限请求；遇到 TLS/403/412/429/521/验证码先分类诊断；禁止关闭证书校验、全局 HTTP 降级、绕过验证码、高频重试；
+- 发布配置前必须由真实生产解析路径验证全部启用栏目；配置状态与运行健康分开显示，HTTP 200 不等于解析到真实文章；
+- 若 Cloudflare 云端测试仅因自身 DNS/网络环境失败，而生产采集实际运行在 Mac，只允许把该结果标为待本机复核；既有签名 Mac worker 必须在自然周期对完全相同的 draft hash、activeRevision 和 cloud testedAt 使用真实生产解析器复核。Mac 成功结果仍走同一 `sourceTestAllowsPublish` 合同和原子发布门禁；失败、过期或版本漂移均不得发布；
+- `source-tests` / `source-test-result` 只能由具备独立 `runtime-source-test` capability 的已登记 Ed25519 签名机器执行；Cloudflare 短期 deployment bearer 不具备该能力。不得用通用 `operate`、HTTP 200、人工浏览器可见或手工摘要替代真实解析验证；
+- 对静态 HTML 仅提供页面壳、且页面明确声明同源 JPaas `page/build/unit` 数据单元的站点，只允许按页面内受限参数构造同源 HTTPS 请求，把 `data.html` 交给既有 parser；不执行站点 JavaScript、不用浏览器作为生产采集器、不跨主机、不降级 TLS/HTTP；
+- JPaas 分页按已实测协议使用 `paramJson={"pageNo":N,"pageSize":20}`。实际采集只在当前页仍存在尚未处理且命中建筑主题召回的记录时继续，遇到已处理相关记录、空页或重复页即停止；单栏目单轮硬上限 5 页，达到上限只记录 partial/warning，不声称历史已全量补齐。后台配置测试仍只验证第一页可解析性，不为一次发布测试遍历历史分页；
+- 官方来源低并发、有限请求；遇到 TLS/403/412/429/521/530/验证码先分类诊断；禁止关闭证书校验、全局 HTTP 降级、绕过验证码、高频重试；
 - 不得把导航、栏目名、错误页、登录页、验证码页当文章，也不得把采集时间冒充发布日期；
-- 动态站点如需专用读取，只允许确定性、可审查、有限请求的适配，不把浏览器渲染默认化为生产采集方案；
-- 发布配置前必须由真实生产解析路径验证启用栏目；若云端环境自身不可访问而采集实际运行在 Mac，可使用既有签名本机链路对完全相同草稿做复核，但不得降低发布门禁。
+- 动态站点如需专用读取，只允许确定性、可审查、有限请求的适配，不把浏览器渲染默认化为生产采集方案。
 
 ## 8. 数据与附件边界
 
@@ -250,7 +253,7 @@ Codex 完成后不以“自报通过”替代 ChatGPT 审查。
 - 未经用户明确同意，不新增收费 API、代理、模型费用或高频推理；
 - 能用确定性 fixture/隔离测试完成的回归，不调用真实 AI；
 - 正常阅读、附件预览、来源测试不调用 AI；
-- 用户要求“额度耗尽就停”时，一旦遇到真实 Actions/预算/API 额度原始错误立即停止相应消耗并报告，不通过重试、充值或降低验证规避。
+- 用户要求“额度耗尽就停”时，一旦遇到真实 Actions/预算/API 额度原始错误，立即停止相应消耗并报告；不得通过重试、充值或降低验证规避。
 
 ## 12. 部署与生产验收
 

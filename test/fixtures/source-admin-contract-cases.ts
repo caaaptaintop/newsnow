@@ -4,6 +4,7 @@ import type { H3Event } from "h3"
 import { intelligenceSources } from "../../shared/official-sources"
 import { intelligenceSourceSeedConfig, intelligenceSourceConfigHash, intelligenceSourceConfigJson, sourceConfigEnvelope, validateIntelligenceSourceConfig, type SourceDraftBase, type IntelligenceSourceConfig } from "../../shared/source-config"
 import { publishSourceDraft, publishedBuildingSourceOverrides, rollbackSourceConfig, saveSourceDraft, saveSourceTest, sourceAdminModel } from "../../server/utils/source-config-store"
+import { pendingRuntimeSourceTests, saveRuntimeSourceTest } from "../../server/source-admin/runtime-source-test"
 import { sourceTestAllowsPublish, testSourceConfig } from "../../server/source-admin/test-source-config"
 
 export const sourceAdminSeed = intelligenceSources.find(source => source.id === "official-beijing")!
@@ -55,6 +56,7 @@ async function ready(f: ReturnType<typeof memorySourceDatabase>, config = synthe
 const cases: [string, (f: ReturnType<typeof memorySourceDatabase>) => Promise<void>][] = [
   ["first catalog reads do not initialize or mutate D1", async (f) => {
     assert.deepEqual(await publishedBuildingSourceOverrides(f.event), [])
+    assert.deepEqual(await pendingRuntimeSourceTests(f.event, 1), { jobs: [] })
     const model = await sourceAdminModel(f.event, topic)
     assert.ok(model.sources.length > 0)
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table'").get()!.n, 0)
@@ -127,6 +129,39 @@ const cases: [string, (f: ReturnType<typeof memorySourceDatabase>) => Promise<vo
     await saveSourceTest(f.event, topic, id, d.config, { schemaVersion: 1, mode: "discover", ok: true, publishable: true, endpoints: [] }, owner, { draftHash: d.hash, activeRevision: 0 }, now)
     await assert.rejects(publishSourceDraft(f.event, topic, id, d.hash, owner, 0, now), { statusCode: 409 })
     assert.equal(f.count("intelligence_source_config_revision"), 0)
+  }],
+  ["cloud DNS fallback can be completed by the signed Mac test path without bypassing the publication contract", async (f) => {
+    const config = syntheticSourceConfig()
+    const draft = await saveSourceDraft(f.event, topic, id, config, owner, emptyBase)
+    const queuedAt = Date.now() - 20
+    const pending = { schemaVersion: 1 as const, mode: "explicit", ok: false, publishable: false, executor: "cloud" as const, runtimePending: true, message: "等待Mac复核",
+      endpoints: config.endpoints.map(endpoint => ({ ...endpoint, ok: false, count: 0, preview: [], status: "failed" as const, message: "Cloudflare DNS", diagnostic: { stage: "fetch" as const, httpStatus: 530, category: "cloudflare_dns" as const, cloudflareCode: "1016" } })) }
+    await saveSourceTest(f.event, topic, id, draft.config, pending, owner, { draftHash: draft.hash, activeRevision: 0 }, queuedAt)
+    const jobs = await pendingRuntimeSourceTests(f.event, 1)
+    assert.equal(jobs.jobs.length, 1)
+    assert.equal(jobs.jobs[0].hash, draft.hash)
+    assert.equal(jobs.jobs[0].sourceId, id)
+    await assert.rejects(publishSourceDraft(f.event, topic, id, draft.hash, owner, 0, queuedAt), { statusCode: 409 })
+    const startedAt = Date.now()
+    const saved = await saveRuntimeSourceTest(f.event, "mac-synthetic", { topic, sourceId: id, hash: draft.hash, activeRevision: 0, requestedAt: queuedAt, startedAt, result: successfulSourceTest(config) })
+    assert.equal(saved.publishable, true)
+    assert.equal((await pendingRuntimeSourceTests(f.event, 1)).jobs.length, 0)
+    assert.equal((await publishSourceDraft(f.event, topic, id, draft.hash, owner, 0, saved.testedAt)).revision, 1)
+  }],
+  ["signed Mac result cannot create a publishable test without the exact pending cloud request", async (f) => {
+    const config = syntheticSourceConfig()
+    const draft = await saveSourceDraft(f.event, topic, id, config, owner, emptyBase)
+    await assert.rejects(saveRuntimeSourceTest(f.event, "mac-synthetic", { topic, sourceId: id, hash: draft.hash, activeRevision: 0, requestedAt: Date.now() - 20, startedAt: Date.now(), result: successfulSourceTest(config) }), { statusCode: 409 })
+  }],
+  ["stale Mac test result cannot overwrite a changed draft", async (f) => {
+    const config = syntheticSourceConfig()
+    const draft = await saveSourceDraft(f.event, topic, id, config, owner, emptyBase)
+    const pending = { schemaVersion: 1 as const, mode: "explicit", ok: false, publishable: false, executor: "cloud" as const, runtimePending: true, message: "等待Mac复核",
+      endpoints: config.endpoints.map(endpoint => ({ ...endpoint, ok: false, count: 0, preview: [], status: "failed" as const, message: "Cloudflare DNS", diagnostic: { stage: "fetch" as const, httpStatus: 530, category: "cloudflare_dns" as const } })) }
+    const queuedAt = Date.now() - 20
+    await saveSourceTest(f.event, topic, id, draft.config, pending, owner, { draftHash: draft.hash, activeRevision: 0 }, queuedAt)
+    await saveSourceDraft(f.event, topic, id, { ...config, name: "newer config" }, owner, { draftHash: draft.hash, activeRevision: 0 })
+    await assert.rejects(saveRuntimeSourceTest(f.event, "mac-synthetic", { topic, sourceId: id, hash: draft.hash, activeRevision: 0, requestedAt: queuedAt, startedAt: Date.now(), result: successfulSourceTest(config) }), { statusCode: 409 })
   }],
   ["expired tests and mismatched testedAt cannot publish", async (f) => {
     const d = await ready(f)

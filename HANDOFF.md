@@ -2,18 +2,18 @@
 
 本文件只记录当前接续现场，不是长期规则真源。长期规则读 `AGENTS.md`，阶段状态读 `PROGRESS.md`，协作说明读 `docs/AI-COLLABORATION.md`，Mac 生产运维读 `docs/mac-subscription-batch.md`。
 
-## 当前流程迁移
+## 当前治理现场
 
 - 当前治理 Issue：#77 `开发流程迁移：local-first + AI Cube 同款自动编排`
-- 流程迁移 branch：`chore/newsnow-local-first-workflow-20260912`
-- branch 创建 base：以 Issue #77 创建时实际 `main` 为基线；后续审查、合并和新任务必须实时读取 `origin/main`，不得把历史 SHA 当长期事实。
-- candidate Head：以该 branch 当前 clean `HEAD` 为准；正式网页端 review 必须读取 GitHub 实际 branch/PR SHA，不在本文件硬编码会被后续提交改变的“最终 SHA”。
-- worktree：交接时必须显式记录 `clean` 或 `dirty`；fixed candidate、push、正式 review 和 merge 候选要求 clean。
-- 下一同步点：本治理分支形成 fixed candidate 后，以 Draft PR 承担正式独立 review；通过后再 merge `main`。
+- 当前 Draft PR：#78 `chore: migrate development workflow to local-first`
+- 活跃 branch：`chore/newsnow-local-first-workflow-20260912`
+- PR #78 初始 branch 基线早于 PR #76；继续开发前已经重新读取实际 `main`，并以双父 merge commit 把 PR #76 的已上线实现和新治理规则合并到同一候选。正式 review 必须以 GitHub 当前实际 Head 为准，不在本文件硬编码“最终 SHA”。
+- fixed candidate、正式 review 和 merge 候选要求 clean worktree；本地有未同步事实时必须明确记录 clean/dirty 和已同步 SHA。
+- 下一同步点：PR #78 当前 Head 完成规则/diff 独立审查；发现问题继续原 Issue/branch/PR 修复，形成新的 fixed Head 后再 review。
 
-## 当前既有产品线保护
+## 已收尾的迁移前产品线
 
-Issue #74 / PR #76 是流程迁移前已经进入本机实网验收的产品工作，继续按其现有线程和已发布任务完成，不在中途改写验收规则、切换工作区或把它强行迁入 #77。流程迁移合并后，新的开发任务默认使用新流程；历史 Issue/PR 保留原事实链。
+Issue #74 / PR #76 的住建部动态列表与分页适配已完成最终代码复审、合并和生产发布。其产品事实链继续保留在 #74/#76，不迁入 #77。当前仍保留的边界是：Cloudflare 对住建部的 530/1016 网络环境问题本身没有消失；系统通过严格的签名 Mac runtime fallback 和独立 `runtime-source-test` capability 保持发布门禁。是否/何时关闭 #74 应按该 Issue 的剩余目标决定，不用流程迁移重写历史结论。
 
 ## local-first 交接字段
 
@@ -50,7 +50,7 @@ git show origin/main:PROGRESS.md
 ```
 
 4. 检查 `git status --short`、branch、HEAD、实际 `origin/main`；
-5. 读取当前 Issue / PR；所有 `gh` 操作显式使用 `--repo caaaptaintop/newsnow`。
+5. 读取当前 Issue/PR；所有 `gh` 操作显式使用 `--repo caaaptaintop/newsnow`。
 
 身份、worktree、remote、当前 Issue/PR 或未知 dirty 状态无法唯一确认时 fail-closed；不得自动 reset/stash/clean、修改 remote、切换到猜测目录或覆盖未知文件。
 
