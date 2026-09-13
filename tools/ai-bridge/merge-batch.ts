@@ -24,7 +24,7 @@ export function mergeBatch(snapshot: any, batch: any) {
     if (!source || key !== article.key || source.topic !== article.topic || article.analysisVersion !== intelligenceVersion
       || !decision || !intelligenceNormalizeDecision({ ...article, keep: true }, new Set([key]), source.topic)
       || (source.topic === "building" && buildingRecallScore(article) <= 0)
-      || !Number.isFinite(article.collectedAt) || article.evidence !== "title") {
+      || !Number.isFinite(article.collectedAt) || !["title", "body"].includes(article.evidence)) {
       throw new Error("Batch article failed validation")
     }
     const matches = batchArticleKeys(article.topic, article.sourceId, article.url).flatMap((alias) => {
