@@ -1,7 +1,7 @@
-# 当前阶段：Issue #93 建筑单栏目与取消标签本地候选已固定
+# 当前阶段：Issue #94 正文分析接入（待本地提交）
 
-已核验 canonical 仓库与 main 1f82ed6 基线。建筑公开读取只按主栏目计数和筛选；旧 relatedCategories 不再让同一文章出现在其他栏目。“全部信息”仍汇总全部已发布。建筑页不再显示顶部快捷标签、标签下拉和卡片标签；遗留 URL tags 参数不造成隐藏筛选。未来建筑 AI 分类只输出一个主栏目，relatedCategories 与 tags 规范化为空；其他主题规范化与安全校验保持原行为。未迁移历史数据，未改 D1。
+已核验 canonical 仓库与工作区 `/Users/imac/Projects/newsnow-issue-94`，branch `codex/building-body-analysis-94`。按入口登记的 Issue #85 候选 AGENTS 覆盖旧 main 冲突规则。
 
-定向回归 71 项通过（building-platform 27、intelligence 33、ai-provider 11）。改动文件 eslint 0 error（building.tsx 保留 hooks 依赖警告）；改动文件 typecheck 无新增错误。全库 lint/typecheck 历史诊断仍在，不声称全库通过。主 agent pnpm build 通过（.local/single-category-93/build.log）。Tabbit 已完成桌面与 390 手机验收：无标签 UI、遗留 tags=BIM 不隐藏结果、手机无横向溢出；证据见 .local/single-category-93/browser-verification.md。正文可行性只读调查见 body-feasibility.md，本任务未改正文链路。
+Mac 批次在 AI 前用既有受限解析器提取详情正文；正文只在内存传给现有分类器，限 1200 字并标注截断。提取成功才标 `evidence=body`，失败或不足仍为 `title`，并用已有来源警告标明原因。同一次解析复用 publisher/documentNo/attachments。PENDING 只在分类验证通过后写入白名单决策与列表元数据，不保存原始 AI 响应。建筑单栏目、`tags=[]` 保持。PDF/附件原站链接和日期验证未改。
 
-本地 Head 3c6ccf8786945c6b109e97d1dc8d6a140f2e8eed，pre-commit lint-staged 已通过。按入口登记的 Issue85 已授权但未合并候选规则执行普通变更自审。未 push、未合并、未部署。
+重分析锁定公开元数据时核验独立 version 与 feed 同版本、无截断/下一页、无重复 key、篇数一致；确认时比较含附件/`otherSources` 的身份字段。公开接口隐藏的 model/analysisVersion 旧值记为 `unknown`。生成候选后再次读取，漂移则拒绝可回填计划。keep=false 标待审并停止对应回填，不删除。默认不发送。生产写入未执行。

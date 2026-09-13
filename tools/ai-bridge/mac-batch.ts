@@ -7,9 +7,9 @@ import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceVersion
 import { buildingRecallScore } from "../../shared/building-recall"
 import { publisherKnown } from "./publisher.mjs"
 import { collectSource } from "./collect-source"
-import { classifyBatch } from "./classify-batch"
+import { classifyEvidence, classifyThenPending } from "./classify-batch"
 import { verifyPublicationDate } from "./publication-date"
-import { enrichOfficialArticleMetadata } from "./enrich-article"
+import { enrichOfficialArticlesForClassify, officialArticlePersistedMetadata } from "./enrich-article"
 import { localCodex } from "./local-codex.mjs"
 import { batchArticleKeys } from "./article-keys"
 import { resolvePublishedSource, sourceConfigProvenance } from "./source-config-client"
@@ -115,39 +115,37 @@ try {
         if (modelFailure) throw new Error(`模型请求暂停，留待下轮：${modelFailure}`)
         const startedAt = Date.now()
         const usage: any[] = []
-        const decisions = await classifyBatch({ model, run: async (_model: string, params: any) => {
-          let response
+        const { enrichments, fetchFailed, insufficient } = await enrichOfficialArticlesForClassify(source, selected)
+        if (fetchFailed) warnings.push(`${fetchFailed} 篇正文获取失败，已按标题证据标记`)
+        if (insufficient) warnings.push(`${insufficient} 篇正文不足，已按标题证据标记`)
+        const classifyItems = selected.map(item => ({
+          key: item.key,
+          title: item.title,
+          column: item.column,
+          ...(enrichments.get(item.key)?.text ? { body: enrichments.get(item.key)!.text } : {}),
+        }))
+        const { decisions, pending: pendingClassification } = await classifyThenPending({ model, run: async (_model: string, params: any) => {
           try {
-            response = await localCodex(model, params.messages, (u: any) => usage.push(u))
+            return await localCodex(model, params.messages, (u: any) => usage.push(u))
           } catch (error: any) {
             modelFailure = error.message
             throw error
           }
-          await writeFile(resolve(outputDir, "PENDING-classification.json"), `${JSON.stringify({ sourceId: source.id, model, input: selected, response, usage }, null, 2)}\n`)
-          return response
-        } }, source.topic, selected.map(item => ({ key: item.key, title: item.title, column: item.column })))
+        } }, source.topic, classifyItems, { sourceId: source.id, model, selected, usage })
+        await writeFile(resolve(outputDir, "PENDING-classification.json"), `${JSON.stringify(pendingClassification, null, 2)}\n`)
         if (decisions.size !== selected.length) throw new Error("Incomplete classifications; no results saved")
         const articles: IntelligenceArticle[] = selected.flatMap((item) => {
           const decision = decisions.get(item.key)!
           if (!decision.keep) return []
-          return [{ key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence: "title", model, analysisVersion: intelligenceVersion }]
+          const enrichment = enrichments.get(item.key)
+          const evidence = classifyEvidence(enrichment?.text)
+          return [{ key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], ...(enrichment ? officialArticlePersistedMetadata(enrichment) : {}), category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence, model, analysisVersion: intelligenceVersion }]
         })
-        const selectedByKey = new Map(selected.map(item => [item.key, item]))
-        let metadataFailures = 0
         for (let i = 0; i < articles.length; i += 5) {
           await Promise.all(articles.slice(i, i + 5).map(async (article) => {
-            const candidate = selectedByKey.get(article.key)
-            if (!source.newsnowId && candidate) {
-              try {
-                Object.assign(article, await enrichOfficialArticleMetadata(source, article, candidate))
-              } catch {
-                metadataFailures++
-              }
-            }
             Object.assign(article, await verifyPublicationDate(source, article, true))
           }))
         }
-        if (metadataFailures) warnings.push(`${metadataFailures} 篇原文附件或文件元数据提取失败；文章保留，附件可能不完整`)
         state.accepted = articles.length
         const result = { ...previous, generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...articles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...selected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
         const pending = resolve(outputDir, "result.pending.json")

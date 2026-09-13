@@ -3,9 +3,89 @@ import { healthTopicLines, healthTopicTriggers } from "../../shared/topics"
 import { type IntelligenceDecision, intelligenceClassify, intelligenceParseAI } from "../../server/utils/intelligence-ai"
 import type { IntelligenceTopic } from "../../shared/intelligence"
 
+export const CLASSIFY_BODY_MAX_CHARS = 1200
+export const CLASSIFY_BODY_MIN_CHARS = 80
+export const CLASSIFY_BODY_TRUNCATION_MARK = "[正文已截断]"
+
+export interface ClassifyBatchItem {
+  key: string
+  title: string
+  column: string
+  body?: string
+}
+
+export function prepareClassifyBody(text: unknown): { body?: string, truncated: boolean } {
+  if (typeof text !== "string") return { truncated: false }
+  const normalized = text.replace(/\s+/g, " ").trim()
+  if (normalized.length < CLASSIFY_BODY_MIN_CHARS) return { truncated: false }
+  if (normalized.length <= CLASSIFY_BODY_MAX_CHARS) return { body: normalized, truncated: false }
+  return { body: `${normalized.slice(0, CLASSIFY_BODY_MAX_CHARS)}${CLASSIFY_BODY_TRUNCATION_MARK}`, truncated: true }
+}
+
+export function classifyEvidence(text: unknown): "body" | "title" {
+  return prepareClassifyBody(text).body ? "body" : "title"
+}
+
+/** PENDING/result must only keep list metadata, never body/HTML. */
+export function serializeSelectedForPending(selected: readonly Record<string, unknown>[]) {
+  return selected.map(item => ({
+    key: item.key,
+    title: item.title,
+    url: item.url,
+    column: item.column,
+    publishedAt: item.publishedAt,
+  }))
+}
+
+export function serializePendingClassification(
+  sourceId: string,
+  model: string,
+  selected: readonly Record<string, unknown>[],
+  decisions: Map<string, IntelligenceDecision>,
+  usage: unknown[] = [],
+) {
+  return {
+    sourceId,
+    model,
+    input: serializeSelectedForPending(selected),
+    decisions: [...decisions.values()].map(decision => ({
+      key: decision.key,
+      keep: decision.keep,
+      category: decision.category,
+      relatedCategories: [...decision.relatedCategories],
+      tags: [...decision.tags],
+      contentType: decision.contentType,
+      importance: decision.importance,
+      summary: decision.summary,
+      reason: decision.reason,
+    })),
+    usage,
+  }
+}
+
+export async function classifyThenPending(
+  ai: any,
+  topic: IntelligenceTopic,
+  items: ClassifyBatchItem[],
+  meta: { sourceId: string, model: string, selected: readonly Record<string, unknown>[], usage?: unknown[] },
+) {
+  const decisions = await classifyBatch(ai, topic, items)
+  return { decisions, pending: serializePendingClassification(meta.sourceId, meta.model, meta.selected, decisions, meta.usage ?? []) }
+}
+
+function classifyPayload(item: ClassifyBatchItem, index: number) {
+  const prepared = prepareClassifyBody(item.body)
+  return {
+    key: `item-${index + 1}`,
+    title: item.title,
+    column: item.column,
+    ...(prepared.body ? { body: prepared.body } : {}),
+  }
+}
+
 /** Short per-request IDs prevent model transcription errors in long URL hashes. */
-export async function classifyBatch(ai: any, topic: IntelligenceTopic, items: { key: string, title: string, column: string }[]) {
-  const inputs = items.map((item, index) => ({ ...item, key: `item-${index + 1}` }))
+export async function classifyBatch(ai: any, topic: IntelligenceTopic, items: ClassifyBatchItem[]) {
+  const inputs = items.map((item, index) => classifyPayload(item, index))
   const decisions = topic === "health" ? await classifyHealth(ai, inputs) : await intelligenceClassify(ai, topic, inputs)
   if (decisions.size !== items.length) throw new Error("Incomplete classifications; no results saved")
   return new Map(items.map((item, index) => {
@@ -15,7 +95,7 @@ export async function classifyBatch(ai: any, topic: IntelligenceTopic, items: { 
   }))
 }
 
-async function classifyHealth(ai: any, inputs: { key: string, title: string }[]) {
+async function classifyHealth(ai: any, inputs: { key: string, title: string, column?: string, body?: string }[]) {
   const response = await ai.run(ai.model, { messages: [{ role: "system", content: healthEditorialPrompt }, { role: "user", content: JSON.stringify(inputs) }] })
   const keys = new Set(inputs.map(i => i.key))
   const matches = new Map<string, IntelligenceDecision>()
