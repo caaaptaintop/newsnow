@@ -160,18 +160,6 @@ async function until(expression, label) {
   }
   throw new Error(`Timed out: ${label}\n${await evaluate("document.body?.innerText ?? document.documentElement?.outerHTML ?? 'document unavailable'")}`)
 }
-async function open(key) {
-  const filename = fixtures[key].filename
-
-  await evaluate(`document.querySelector('.intel-original-attachments').open=true; [...document.querySelectorAll('.intel-preview-open')].find(b=>b.textContent.includes(${JSON.stringify(filename)})).click()`)
-
-  await until("!!document.querySelector('.intel-preview-dialog[open]')", "attachment dialog open")
-}
-async function close() {
-  await evaluate("document.querySelector('.intel-preview-dialog [aria-label=\"关闭附件预览\"]').click()")
-
-  await until("!document.querySelector('.intel-preview-dialog')", "attachment dialog closed")
-}
 await mkdir("attachment-test-results", { recursive: true })
 
 try {
@@ -191,61 +179,11 @@ try {
 
   assert.equal(relayRequests.length, 0, "no attachment prefetch")
 
-  await open("doc")
-
-  await until("document.querySelector('.intel-preview-dialog iframe[title=\"附件阅读预览\"]')?.srcdoc.includes('测试工程')", "binary DOC in worker")
-
-  const html = await evaluate("document.querySelector('.intel-preview-dialog iframe').srcdoc")
-
-  assert(html.includes("<table>"))
-  assert(html.includes("智能建造附件预览"))
-
-  assert.equal(await evaluate("document.querySelector('.intel-preview-dialog iframe').getAttribute('sandbox')"), "")
-
-  assert.equal(relayRequests.length, 1, "CORS fallback uses metadata-only POST")
-
-  await writeFile("attachment-test-results/doc-desktop.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
-
-  await close()
-
-  assert.equal(await evaluate("document.documentElement.style.overflow"), "")
-
-  for (const key of ["docx", "text"]) {
-    const before = relayRequests.length
-
-    await open(key)
-
-    await until("!!document.querySelector('.intel-preview-dialog iframe[srcdoc]')", `${key} preview`)
-
-    assert.equal(relayRequests.length, before, "CORS-enabled origin should read directly")
-
-    assert((await evaluate("document.querySelector('.intel-preview-dialog iframe').srcdoc")).includes(key === "docx" ? "DOCX 预览测试" : "中文文本预览"))
-
-    await close()
-  }
-  await open("html")
-
-  await until("!!document.querySelector('.intel-preview-dialog iframe[srcdoc]')", "Word HTML sandbox")
-
-  assert(!(await evaluate("document.querySelector('.intel-preview-dialog iframe').srcdoc")).includes("<script>"))
-
-  await sleep(300)
-
-  assert.equal(leaks.length, 0, "no external document resource requests")
-
-  assert.equal(await evaluate("Boolean(window.hacked)"), false)
-
-  await close()
-
-  for (const key of ["bad", "rtf"]) {
-    await open(key)
-
-    await until("document.querySelector('.intel-preview-dialog')?.innerText.includes('无法在线预览')", `${key} truthful error`)
-
-    assert(await evaluate("!!document.querySelector('.intel-preview-dialog a.intel-preview-primary')"))
-
-    await close()
-  }
+  assert.equal(await evaluate("document.querySelectorAll('button.intel-preview-open').length"), 0, "non-PDF preview disabled")
+  assert.equal(await evaluate("document.querySelectorAll('.intel-attachment-name').length"), Object.keys(fixtures).length - 1)
+  const downloadLinks = await evaluate("[...document.querySelectorAll('.intel-preview-download')].map(a => ({href:a.href,target:a.target}))")
+  assert.deepEqual(downloadLinks, Object.keys(fixtures).map(key => ({ href: fixtureUrl(key), target: "_blank" })))
+  await evaluate("document.querySelector('.intel-original-attachments').open=true")
   const pdfUrl = fixtureUrl("pdf")
   const beforePdf = relayRequests.length
 
@@ -270,33 +208,15 @@ try {
   for (const popup of (await send("Target.getTargets")).targetInfos) {
     if (popup.targetId !== target.id && popup.url === pdfUrl) await send("Target.closeTarget", { targetId: popup.targetId })
   }
-  await open("image")
-
-  await until("document.querySelector('.intel-preview-dialog .intel-preview-image img')?.src.startsWith('blob:')", "image blob preview")
-
-  const blob = await evaluate("document.querySelector('.intel-preview-dialog .intel-preview-image img').src")
-
-  await close()
-
-  assert(await evaluate(`window.__revoked.includes(${JSON.stringify(blob)})`), "blob URL revoked on close")
-
+  assert.equal(relayRequests.length, 0, "attachment list never calls the relay")
   await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
-
-  await open("doc")
-
-  await until("!!document.querySelector('.intel-preview-dialog iframe[srcdoc]')", "mobile DOC preview")
-
-  assert(await evaluate("document.querySelector('.intel-preview-dialog').getBoundingClientRect().width <= 390"))
-
-  await writeFile("attachment-test-results/doc-mobile.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
-
-  await close()
-
+  assert(await evaluate("document.documentElement.scrollWidth <= 390"), "mobile page does not overflow")
+  await writeFile("attachment-test-results/attachments-mobile.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
   assert.equal(downloads.length, 0, "preview must not trigger browser downloads")
 
   assert.equal(exceptions.length, 0, exceptions.join("\n"))
 
-  const report = { result: "pass", cases: ["no prefetch", "binary Chinese DOC", "table structure", "CORS relay", "DOCX direct", "text direct", "sandbox", "no external resources", "error fallback", "PDF official new window without site relay", "image blob", "blob cleanup", "close cleanup", "mobile", "no downloads"], relayRequests: relayRequests.length, downloads, leaks, exceptions }
+  const report = { result: "pass", cases: ["no prefetch", "non-PDF preview disabled", "all original downloads preserved", "PDF official new window without site relay", "mobile", "no downloads"], relayRequests: relayRequests.length, downloads, leaks, exceptions }
 
   await writeFile("attachment-test-results/report.json", JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))
