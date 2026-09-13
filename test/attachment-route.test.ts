@@ -12,16 +12,18 @@ vi.mock("h3", () => ({
   getHeader: (event: any, name: string) => event.headers[name],
   getRequestURL: () => new URL("https://news.example.com/api/intelligence/attachment"),
   getRequestWebStream: (event: any) => new Response(event.body).body,
-  setHeaders: (event: any, headers: unknown) => { event.responseHeaders = headers },
+  setHeaders: (event: any, headers: unknown) => {
+    event.responseHeaders = headers
+  },
   sendStream: (_event: any, body: unknown) => body,
 }))
 vi.mock("../server/building/store", () => ({ buildingDB: vi.fn(() => ({})), buildingEnv: () => ({ BUILDING_RATE_SALT: "test-salt" }), articleById: vi.fn(async (_db, key) => key === "known" ? { topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] } : undefined) }))
 vi.mock("../server/building/relay-budget", () => ({ reserveRelay: vi.fn(async () => "lease"), settleRelay: vi.fn(async () => {}) }))
 vi.mock("../shared/intelligence-snapshot", () => ({ intelligenceSnapshot: { pipeline: "mac", articles: [{ topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] }, { topic: "health", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }] }] } }))
-vi.mock("../server/utils/attachment-relay", async (original) => ({ ...await original<typeof import("../server/utils/attachment-relay")>(), relayAttachment: vi.fn(async () => new Response("document bytes")) }))
+vi.mock("../server/utils/attachment-relay", async original => ({ ...await original<typeof import("../server/utils/attachment-relay")>(), relayAttachment: vi.fn(async () => new Response("document bytes")) }))
 vi.mock("../server/utils/attachment-backup", () => ({ backupAttachment: vi.fn(async () => new Response("backup bytes")) }))
 const body = { topic: "building", articleKey: "known", url: "https://demo.gov.cn/download?id=1" }
-const event = (data: unknown = body, headers = {}) => ({ body: JSON.stringify(data), headers: { "content-type": "application/json", origin: "https://news.example.com", ...headers }, context: {}, responseHeaders: {} })
+const event = (data: unknown = body, headers = {}) => ({ body: JSON.stringify(data), headers: { "content-type": "application/json", "origin": "https://news.example.com", ...headers }, context: {}, responseHeaders: {} })
 beforeEach(() => vi.clearAllMocks())
 
 describe("indexed attachment authorization", () => {
@@ -167,11 +169,23 @@ describe("whole request deadline", () => {
   it.each(["open", "match", "body"])("terminates a stalled cache %s before HTTP 200 and disposes late results", async (stage) => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
     const pending = deferred<any>()
+    const reached = deferred<void>()
     const cancel = vi.fn()
-    const response = new Response(new ReadableStream({ cancel }), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } })
-    const match = vi.fn(() => stage === "match" ? pending.promise : Promise.resolve(response))
+    const response = new Response(new ReadableStream({
+      pull() {
+        if (stage === "body") reached.resolve()
+      },
+      cancel,
+    }, { highWaterMark: 0 }), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } })
+    const match = vi.fn(() => {
+      if (stage === "match") reached.resolve()
+      return stage === "match" ? pending.promise : Promise.resolve(response)
+    })
     const cache = { match }
-    const open = vi.fn(() => stage === "open" ? pending.promise : Promise.resolve(cache))
+    const open = vi.fn(() => {
+      if (stage === "open") reached.resolve()
+      return stage === "open" ? pending.promise : Promise.resolve(cache)
+    })
     vi.stubGlobal("caches", { open })
     let result: unknown
     const request = handler(event() as any).then((value) => {
@@ -180,7 +194,7 @@ describe("whole request deadline", () => {
       result = error
     })
     try {
-      await flushDeadlineWork()
+      await reached.promise
       expect(open).toHaveBeenCalledOnce()
       await vi.advanceTimersByTimeAsync(75000)
       expect(result).toMatchObject({ statusCode: 424 })
@@ -249,7 +263,11 @@ describe("whole request deadline", () => {
     const pending = deferred<Response>()
     const cancel = vi.fn()
     const response = new Response(new ReadableStream({ cancel }), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } })
-    const match = vi.fn(() => pending.promise)
+    const reached = deferred<void>()
+    const match = vi.fn(() => {
+      reached.resolve()
+      return pending.promise
+    })
     vi.stubGlobal("caches", { open: async () => ({ match }) })
     let result: unknown
     const request = handler(event() as any).then((value) => {
@@ -258,7 +276,7 @@ describe("whole request deadline", () => {
       result = error
     })
     try {
-      await flushDeadlineWork()
+      await reached.promise
       expect(match).toHaveBeenCalledOnce()
       vi.setSystemTime(Date.now() + 75000)
       pending.resolve(response)
@@ -308,12 +326,16 @@ describe("deadline propagation", () => {
     const abort = new AbortController()
     const pending = deferred<Response>()
     const cancel = vi.fn()
-    const match = vi.fn(() => pending.promise)
+    const reached = deferred<void>()
+    const match = vi.fn(() => {
+      reached.resolve()
+      return pending.promise
+    })
     vi.stubGlobal("caches", { open: async () => ({ match }) })
     const request = handler({ ...event(), web: { request: { signal: abort.signal } } } as any)
     const rejected = expect(request).rejects.toMatchObject({ statusCode: 424 })
     try {
-      await flushDeadlineWork()
+      await reached.promise
       expect(match).toHaveBeenCalledOnce()
       abort.abort()
       await rejected
