@@ -3,7 +3,7 @@ import { backupAttachment } from "../server/utils/attachment-backup"
 import { asArrayBuffer, makeFixtures } from "../scripts/attachment-preview-fixtures.mjs"
 import handler from "../server/api/intelligence/attachment.post"
 import { articleById } from "../server/building/store"
-import { reserveRelay } from "../server/building/relay-budget"
+import { reserveRelay, settleRelay } from "../server/building/relay-budget"
 import { AttachmentRelayError, relayAttachment } from "../server/utils/attachment-relay"
 
 vi.mock("h3", () => ({
@@ -120,6 +120,235 @@ describe("diagnosed cloud origin fallback", () => {
     } else {
       await expect(handler(event({ ...body, url }) as any)).rejects.toMatchObject({ statusCode: 424 })
       expect(backupAttachment).not.toHaveBeenCalled()
+    }
+  })
+})
+
+describe("downstream delivery leases", () => {
+  it.each(["relay", "cache"])("holds both slots and leases while a %s consumer pauses, then cancels or reads EOF", async (via) => {
+    if (via === "cache") vi.stubGlobal("caches", { open: async () => ({ match: async () => new Response(new Uint8Array(131072), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "131072" } }) }) })
+    else vi.mocked(relayAttachment).mockResolvedValue(new Response(new Uint8Array(131072)))
+    try {
+      const first = await handler(event() as any) as Response
+      // Each origin response must be independently readable.
+      if (via === "relay") vi.mocked(relayAttachment).mockResolvedValue(new Response(new Uint8Array(131072)))
+      const second = await handler(event() as any) as Response
+      const reader = first.body!.getReader()
+      expect((await reader.read()).value!.byteLength).toBe(65536)
+      expect(settleRelay).not.toHaveBeenCalled()
+      await expect(handler(event() as any)).rejects.toMatchObject({ statusCode: 429 })
+      await reader.cancel()
+      expect(settleRelay).toHaveBeenCalledTimes(1)
+      expect(settleRelay).toHaveBeenLastCalledWith(expect.anything(), "lease", 131072, true)
+      await second.arrayBuffer()
+      expect(settleRelay).toHaveBeenCalledTimes(2)
+      expect(settleRelay).toHaveBeenLastCalledWith(expect.anything(), "lease", 131072, false)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.mocked(relayAttachment).mockImplementation(async () => new Response("document bytes"))
+    }
+  })
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+async function flushDeadlineWork() {
+  // Includes async hashing/cache lookup without advancing the deadline clock.
+  for (let i = 0; i < 4; i++) await new Promise<void>(resolve => setImmediate(resolve))
+}
+
+describe("whole request deadline", () => {
+  it.each(["open", "match", "body"])("terminates a stalled cache %s before HTTP 200 and disposes late results", async (stage) => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
+    const pending = deferred<any>()
+    const cancel = vi.fn()
+    const response = new Response(new ReadableStream({ cancel }), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } })
+    const match = vi.fn(() => stage === "match" ? pending.promise : Promise.resolve(response))
+    const cache = { match }
+    const open = vi.fn(() => stage === "open" ? pending.promise : Promise.resolve(cache))
+    vi.stubGlobal("caches", { open })
+    let result: unknown
+    const request = handler(event() as any).then((value) => {
+      result = value
+    }, (error) => {
+      result = error
+    })
+    try {
+      await flushDeadlineWork()
+      expect(open).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(75000)
+      expect(result).toMatchObject({ statusCode: 424 })
+      expect(settleRelay).toHaveBeenCalledOnce()
+      expect(relayAttachment).not.toHaveBeenCalled()
+      if (stage === "open") pending.resolve(cache)
+      if (stage === "match") pending.resolve(response)
+      await flushDeadlineWork()
+      expect(relayAttachment).not.toHaveBeenCalled()
+      expect(backupAttachment).not.toHaveBeenCalled()
+      if (stage === "open") expect(match).not.toHaveBeenCalled()
+      else expect(cancel).toHaveBeenCalledOnce()
+      expect(settleRelay).toHaveBeenCalledOnce()
+      // Both instance slots remain usable after the expired request is discarded.
+      vi.unstubAllGlobals()
+      const first = await handler(event() as any) as Response
+      const second = await handler(event() as any) as Response
+      await first.body!.cancel()
+      await second.body!.cancel()
+      await request
+    } finally {
+      pending.resolve(stage === "open" ? cache : response)
+      await response.body?.cancel().catch(() => {})
+      await flushDeadlineWork()
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("releases slots on a stalled D1 reserve and settles a late lease once without starting cache or origin", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
+    const pending = deferred<Awaited<ReturnType<typeof reserveRelay>>>()
+    const lateLease = "00000000-0000-4000-8000-000000000088"
+    vi.mocked(reserveRelay).mockReturnValueOnce(pending.promise)
+    const open = vi.fn()
+    vi.stubGlobal("caches", { open })
+    let result: unknown
+    const request = handler(event() as any).then((value) => {
+      result = value
+    }, (error) => {
+      result = error
+    })
+    try {
+      await flushDeadlineWork()
+      expect(reserveRelay).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(75000)
+      expect(result).toMatchObject({ statusCode: 424 })
+      expect(settleRelay).not.toHaveBeenCalled()
+      expect(open).not.toHaveBeenCalled()
+      pending.resolve(lateLease)
+      await flushDeadlineWork()
+      expect(settleRelay).toHaveBeenCalledExactlyOnceWith(expect.anything(), lateLease, 0, true)
+      expect(open).not.toHaveBeenCalled()
+      expect(relayAttachment).not.toHaveBeenCalled()
+      await request
+    } finally {
+      pending.resolve(lateLease)
+      await flushDeadlineWork()
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("rejects at the exact deadline even when the timer callback has not run", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
+    const pending = deferred<Response>()
+    const cancel = vi.fn()
+    const response = new Response(new ReadableStream({ cancel }), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } })
+    const match = vi.fn(() => pending.promise)
+    vi.stubGlobal("caches", { open: async () => ({ match }) })
+    let result: unknown
+    const request = handler(event() as any).then((value) => {
+      result = value
+    }, (error) => {
+      result = error
+    })
+    try {
+      await flushDeadlineWork()
+      expect(match).toHaveBeenCalledOnce()
+      vi.setSystemTime(Date.now() + 75000)
+      pending.resolve(response)
+      await flushDeadlineWork()
+      expect(result).toMatchObject({ statusCode: 424 })
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(relayAttachment).not.toHaveBeenCalled()
+      expect(settleRelay).toHaveBeenCalledOnce()
+      await request
+    } finally {
+      pending.resolve(response)
+      await response.body?.cancel().catch(() => {})
+      await vi.runOnlyPendingTimersAsync()
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe("deadline propagation", () => {
+  it("keeps the original deadline after a slow cache open and during downstream delivery", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
+    const pending = deferred<any>()
+    const open = vi.fn(() => pending.promise)
+    vi.stubGlobal("caches", { open })
+    const request = handler(event() as any)
+    try {
+      await flushDeadlineWork()
+      expect(open).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(60000)
+      pending.resolve({ match: async () => new Response(new Uint8Array(100), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } }) })
+      const response = await request as Response
+      const reader = response.body!.getReader()
+      await reader.read() // Last chunk, deliberately do not request EOF.
+      await vi.advanceTimersByTimeAsync(14999)
+      expect(settleRelay).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(reader.read()).rejects.toMatchObject({ name: "AbortError" })
+      expect(settleRelay).toHaveBeenCalledExactlyOnceWith(expect.anything(), "lease", 100, true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("aborts a pending cache match immediately and cancels its late body without fallback", async () => {
+    const abort = new AbortController()
+    const pending = deferred<Response>()
+    const cancel = vi.fn()
+    const match = vi.fn(() => pending.promise)
+    vi.stubGlobal("caches", { open: async () => ({ match }) })
+    const request = handler({ ...event(), web: { request: { signal: abort.signal } } } as any)
+    const rejected = expect(request).rejects.toMatchObject({ statusCode: 424 })
+    try {
+      await flushDeadlineWork()
+      expect(match).toHaveBeenCalledOnce()
+      abort.abort()
+      await rejected
+      pending.resolve(new Response(new ReadableStream({ cancel }), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } }))
+      await flushDeadlineWork()
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(settleRelay).toHaveBeenCalledExactlyOnceWith(expect.anything(), "lease", 0, true)
+      expect(relayAttachment).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("cancels a late origin response and retains unknown consumption after a deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
+    const pending = deferred<Response>()
+    const cancel = vi.fn()
+    vi.mocked(relayAttachment).mockReturnValueOnce(pending.promise)
+    const request = handler(event() as any)
+    const rejected = expect(request).rejects.toMatchObject({ statusCode: 424 })
+    try {
+      await flushDeadlineWork()
+      expect(relayAttachment).toHaveBeenCalledOnce()
+      const signal = vi.mocked(relayAttachment).mock.calls[0][0].signal!
+      await vi.advanceTimersByTimeAsync(75000)
+      await rejected
+      expect(signal.aborted).toBe(true)
+      expect(settleRelay).toHaveBeenCalledExactlyOnceWith(expect.anything(), "lease", 20 * 1024 * 1024, true)
+      pending.resolve(new Response(new ReadableStream({ cancel })))
+      await flushDeadlineWork()
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(backupAttachment).not.toHaveBeenCalled()
+      expect(settleRelay).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

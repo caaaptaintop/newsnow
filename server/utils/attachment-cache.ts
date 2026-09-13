@@ -48,7 +48,7 @@ export async function cacheAttachment(cache: AttachmentCache | undefined, key: R
   } catch { /* Cache failure never blocks a successful original response. */ }
 }
 
-export function privateAttachmentResponse(bytes: ArrayBuffer, headers: Headers, via: "cache" | "relay") {
+export function privateAttachmentResponse(bytes: ArrayBuffer | ReadableStream<Uint8Array>, headers: Headers, via: "cache" | "relay") {
   return new Response(bytes, { headers: {
     ...attachmentNoStoreHeaders,
     "Content-Type": headers.get("Content-Type") ?? "application/octet-stream",

@@ -34,7 +34,10 @@ describe("private Mac attachment backup", () => {
     requests.push(handle(await signed()))
     await vi.waitFor(() => expect(pending).toHaveLength(6))
     for (const item of pending.slice(1)) item.resolve(new Response("file"))
-    for (const response of await Promise.all(requests.slice(1))) expect(response.status).toBe(200)
+    for (const response of await Promise.all(requests.slice(1))) {
+      expect(response.status).toBe(200)
+      await response.arrayBuffer()
+    }
     const next = handle(await signed())
     await vi.waitFor(() => expect(pending).toHaveLength(7))
     pending[6].resolve(new Response("file"))

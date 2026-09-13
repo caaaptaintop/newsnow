@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer"
 import { timingSafeEqual } from "node:crypto"
+import { attachmentDelivery } from "../../server/utils/attachment-delivery"
 import { attachmentPreviewPolicy } from "../../shared/attachment-preview"
 import { backupSignature } from "../../server/utils/attachment-backup"
 import { attachmentNoStoreHeaders, relayAttachment } from "../../server/utils/attachment-relay"
@@ -17,7 +18,7 @@ export function createBackupHandler(secret: string, fetcher: typeof fetch = fetc
   const seen = new Map<string, number>()
   let active = 0
   const error = (status: number) => new Response("Attachment unavailable", { status, headers: attachmentNoStoreHeaders })
-  return async (request: Request) => {
+  return async (request: Request, transportDone?: Promise<void>) => {
     if (request.method !== "POST" || new URL(request.url).pathname !== "/attachment") return error(404)
     if (!/^application\/json(?:;|$)/i.test(request.headers.get("content-type") ?? "")) return error(415)
     const reader = request.body?.getReader()
@@ -59,14 +60,23 @@ export function createBackupHandler(secret: string, fetcher: typeof fetch = fetc
     if (active >= attachmentPreviewPolicy.relayConcurrent || seen.size >= 256) return error(429)
     seen.set(input.nonce, now() + 60001)
     active++
+    let handedOff = false
+    const release = () => {
+      active--
+    }
     try {
       const response = await relayAttachment({ ...input, allowedHosts: new Set(["www.mohurd.gov.cn"]), signal: request.signal, timeoutMs: 15000, fetcher: (url, options) => fetcher(officialDownload(String(url)), options) })
       const bytes = await readAttachmentResponse(response, request.signal)
-      return new Response(bytes, { headers: response.headers })
+      const result = new Response(attachmentDelivery(bytes, () => {
+        if (!transportDone) release()
+      }, request.signal), { headers: response.headers })
+      handedOff = true
+      if (transportDone) void transportDone.then(release, release)
+      return result
     } catch {
       return error(503)
     } finally {
-      active--
+      if (!handedOff) release()
     }
   }
 }

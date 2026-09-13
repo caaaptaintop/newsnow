@@ -13,7 +13,7 @@
 1. 不预取附件。用户点击后先由浏览器直接读取原站，credentials=omit、cache=no-store、redirect=error。
 2. 跨域、跳转或原站直读失败时，向 `/api/intelligence/attachment` POST **topic、articleKey、url 三个定位字段**；不上传文件。
 3. 后端用已有信息记录核对附件 URL 和域名，先预留额度；命中短期缓存则读取，否则回源。完整读取并执行大小上限后才向浏览器返回成功，避免半途失败变成不透明的流错误。不给调用者任意 URL 代理能力，不复制浏览器 Cookie、Authorization 或上游 Set-Cookie。
-4. 按用户授权，成功且格式预检通过、不超过 5 MiB 的文件可进入 Cloudflare Cache API，逻辑有效期 300 秒；读取时再次检查过期时间，缓存可能提前淘汰，各机房不共享命中。TTL 是不可继续读取的边界，不声称提供物理介质精确擦除保证。不新增磁盘、D1附件字节、R2/KV、转换件或第三方查看器。删除文章后先通过文章校验才可能命中缓存，不提供公开缓存文件地址。
+4. 按用户授权，成功且格式预检通过（拒绝已识别的错误页和明显损坏文件，不保证 PDF、OLE DOC 或图片的完整结构有效）、不超过 5 MiB 的文件可进入 Cloudflare Cache API，逻辑有效期 300 秒；读取时再次检查过期时间，缓存可能提前淘汰，各机房不共享命中。TTL 是不可继续读取的边界，不声称提供物理介质精确擦除保证。不新增磁盘、D1附件字节、R2/KV、转换件或第三方查看器。删除文章后先通过文章校验才可能命中缓存，不提供公开缓存文件地址。
 5. 原站请求与发给浏览器的转发响应均禁用应用缓存；转发还带 CDN 与 Cloudflare-CDN no-store。现有 PWA 的 self-destroy/清缓存策略不变。附件正文不进入日志、快照或全文索引。
 6. 关闭时取消 fetch / DOC Worker，撤销 Blob URL 并释放 UI 引用；已成功读取的边缘缓存按短期有效期处理。DOCX DOM 渲染已开始后可能完成当前解析再释放，但结果不会回写已关闭界面。
 
@@ -50,7 +50,7 @@ Word HTML 在 inert template 中清理后进入不含 allow-scripts/allow-same-o
 
 路径：浏览器直读 → 已索引校验/预算 → 边缘缓存 → 云端回源。仅住建部HTTP530触发Mac备用，不对403/429、重定向拒绝或其他来源扩大重试。Mac无响应、忙碌或额度耗尽时展示原网页/下载入口，不建立排队或轮询。
 
-实现入口：server/utils/attachment-backup.ts；tools/attachment-relay/service.ts、start.ts。Mac只监听127.0.0.1:8792，部署时通过专用Cloudflare Tunnel接入HTTPS /attachment。Pages需配置ATTACHMENT_BACKUP_URL和独立随机ATTACHMENT_BACKUP_SECRET；Mac通过进程环境接收相同密钥。禁止复用发布私钥、向浏览器暴露密钥或写入源码。HMAC覆盖完整请求、时间戳及nonce；有效窗口30秒、重复请求拒绝、8KiB请求上限、最多5任务同时执行。只允许住建部官方download接口及已实测cms_files附件路径，逐跳校验；证书正常验证，无HTTP降级，不访问任意主机。
+实现入口：server/utils/attachment-backup.ts；tools/attachment-relay/service.ts、start.ts。Mac只监听127.0.0.1:8792，部署时通过专用Cloudflare Tunnel接入HTTPS /attachment。Pages需配置ATTACHMENT_BACKUP_URL和独立随机ATTACHMENT_BACKUP_SECRET；Mac通过进程环境接收相同密钥。禁止复用发布私钥、向浏览器暴露密钥或写入源码。HMAC覆盖完整请求、时间戳及nonce；有效窗口30秒、同一进程生命周期内重复请求拒绝（nonce仅存内存，重启会丢失，不能保证跨重启防重放）、8KiB请求上限、最多5任务同时执行。只允许住建部官方download接口及已实测cms_files附件路径，逐跳校验；证书正常验证，无HTTP降级，不访问任意主机。
 
 备用服务内存读取，不落盘；Mac休眠/离线时首次未缓存附件无法保证站内预览，原页面和原站下载始终保留。它是按需服务，不创建第二采集调度器、不改900秒worker或ledger/outbox。运行部署需选择常驻服务目录、配置专用Tunnel与密钥；本轮未改生产配置、未启动常驻服务或正式Tunnel；仅使用已关闭的临时Quick Tunnel做隔离验证。
 
@@ -69,7 +69,7 @@ Word HTML 在 inert template 中清理后进入不含 allow-scripts/allow-same-o
 
 已识别 PDF 的文件名链接直接在新标签页打开官方地址，不调用本站读取、缓存、Mac 或解析器，不占本站名额。隐藏扩展名且读取后才识别的 PDF 不再内嵌渲染，提示使用原站入口。是否直接显示由官方响应头及浏览器设置决定。
 
-其他附件全站最多5个正在转发的文件；完成或失败释放名额，继续阅读不占名额。单实例保留2个内存读取上限、同IP保留2个额度租约限制；资源保护可能在未满5个时拒绝请求。Mac备用服务最多5个并发。繁忙返回429，用户可稍后重试或直接前往官网，不建立自动队列、不自动轮询。此限制统计请求，不保证按独立读者计数或相同文件请求合并。
+其他附件全站最多5个正在转发的文件；返回流读到EOF、取消或错误时释放名额，继续阅读不占名额。单实例保留2个读取及发送名额、同IP保留2个额度租约限制；资源保护可能在未满5个时拒绝请求。Mac备用服务最多5个并发，实际HTTP响应触发finish/close/error后才释放；按背压分块发送，不再在发送前整文件二次arrayBuffer。Cloudflare从占用本实例名额起75秒内结束发送（早于90秒D1租约），Mac发送上限30秒；超时终止流。流完成/Node finish表示已交给运行时或操作系统发送，不代表客户端已读取或渲染；应用层不保证运行时、Tunnel或内核缓冲区的总内存上限。繁忙返回429，用户可稍后重试或直接前往官网，不建立自动队列、不自动轮询。此限制统计请求，不保证按独立读者计数或相同文件请求合并。
 
 ## Issue #88 本次固定提交的 ESLint 豁免
 
@@ -78,3 +78,21 @@ Word HTML 在 inert template 中清理后进入不含 allow-scripts/allow-same-o
 此豁免不代表 ESLint 检查通过，不修改或关闭测试、类型检查、构建、独立审查、合并或生产部署门槛；形成固定 Head 后停止，等待独立审查，不合并、不部署。现有验证结果和已知边界保留。
 
 独立待修问题：仓库 ESLint 配置与 React 插件版本不兼容，引用不存在的 react-dom/no-children-in-void-dom-elements 规则，导致页面 lint 在配置加载阶段失败；此前还发现 react/ensure-forward-ref-using-ref 缺失。后续单独修复配置与依赖兼容性，验收须恢复真实规则加载并执行受影响页面 lint，不能以关掉规则或本次豁免当作修复。本候选不处理该故障，不将历史诊断记为通过。原始证据见本机 .local/attachment-88/lint-next.txt。
+
+
+## PENDING：独立审查整改增量
+
+基于审查FAIL的本地Head `13d0c3ee82497742dd839266bf560c288d99e76e`，本轮修复响应发送生命周期。保留完整上游读取校验，Cloudflare缓存/回源共用无预读、64KiB分块的返回流；结算按实际已读取字节计费，取消不退还已消耗字节。Mac HTTP适配层通过pipeline传递背压、发送错误与取消，并以实际响应事件控制名额。
+
+新增回归覆盖缓存/回源慢消费者、最后一块已取但未请求EOF、取消/超时、Mac发送背压及finish/close/error。原实现5个关键回归失败，修复后通过；证据位于 `.local/attachment-88/revision-lifecycle/`。这属于本地整改验证，需原独立审查任务复审增量；不替代官方PDF、正式Tunnel、生产DOC/DOCX、Cache和限流的生产验收。历史一次性hook豁免不延续至本轮。
+
+
+## PENDING：统一75秒截止整改
+
+上次dirty预审仍发现前置缓存/D1等待没有真正受75秒约束。本轮在实例slot占用时立即建立统一AbortSignal和定时器，D1预留、Cache open/match、缓存key计算、body读取、云端/备用回源及下游交付均沿用同一截止时间；可选缓存失败只在尚未取消/超时时允许回源。每次异步阶段完成及创建成功响应前再次检查绝对时间，避免定时器回调尚未调度时越过截止。
+
+超时在HTTP 200返回前发生时，以424终止等待并只释放一次slot；已经开始的发送则终止流。Cache API与D1操作本身不提供AbortSignal取消：已经发起的操作可能晚到，但不会继续回源或发送。晚到缓存/回源响应取消body；晚到D1预留经waitUntil观察，取得lease后补做一次零读取失败结算。宿主若在晚到结果或结算前终止，仍沿用既有失联预留不退款、lease过期释放占位的fail-closed边界，不保证平台操作或结算一定完成。
+
+尚未确认完成的原站读取在超时时保留最大文件字节预留；缓存body超时按已校验的Content-Length保守结算；完整读取成功后按实际长度结算。不更改D1 SQL、额度上限、Mac实现、签名、白名单和530限定备用条件。
+
+本轮新增8项回归：open/match/body停滞、D1晚到、到达截止而定时器尚未执行、慢open后发送仍沿用原截止、客户端取消时match晚到、回源响应晚到及保守结算。5个核心场景在修复前dirty快照上分别独立执行并失败；记录附完整命令、Head及源码哈希，不冒称该dirty快照就是Head源码。当前8文件104项通过、生产构建通过；本轮证据位于 `.local/attachment-88/revision-deadline/`。历史lint/全库类型诊断及提交、独立复审、生产验收门槛保持。
