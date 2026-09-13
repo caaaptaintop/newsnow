@@ -1,11 +1,7 @@
-# 当前阶段：Issue #88 独立审查整改（PENDING）
+# 当前阶段：Issue #88 PDF官方入口（PENDING）
 
-固定Head `13d0c3ee82497742dd839266bf560c288d99e76e` 被独立审查判为FAIL。第二轮预审确认Cloudflare前置等待缺少统一截止，本轮在其上继续完成本地整改，工作树包含未提交的实现、测试及文档增量；旧Head的FAIL结论不被开发自审覆盖。
+用户明确暂停非PDF附件预览及其他替代方案，仅保留PDF官方URL新标签页查看和所有附件原站下载。本地组件已移除Reader依赖与非PDF预览按钮；不会从附件列表触发解析、缓存或relay。服务端保留实现未改，Mac备用服务不启用。
 
-Cloudflare从占用slot起启动75秒统一定时器和AbortSignal，覆盖D1预留、缓存open/match/key、body读取、云端/备用回源及发送。异步阶段返回和HTTP成功交付前检查绝对时间，超时不继续回源或返回200；晚到响应取消body，晚到D1 lease补一次失败结算。不可取消的平台操作可能继续，宿主终止时保持失联预留不退款。缓存与回源返回流保留64KiB无预读发送，EOF/取消/错误只释放一次。Mac按pipeline背压发送，实际HTTP finish/close/error后释放；HTTP层30秒截止时间覆盖最后一块写入仍阻塞的窗口，消除发送前整文件二次arrayBuffer。
+验证：36项定向测试、CF_PAGES生产构建通过；浏览器冒烟脚本语法和lint通过；Tabbit在当前构建实测7个非PDF静态名称、0非PDF预览按钮、8个原站下载链接、PDF点击产生新窗口、0relay请求/0dialog。合成PDF域名网络失败，不作为官方PDF显示证据。app typecheck仍有历史全库诊断，修改组件无诊断；TSX lint因既有React插件规则缺失未通过。
 
-缓存预检明确只拒绝已识别错误页和明显损坏文件；nonce去重明确为单进程生命周期保证。生产验收缺口保持：官方PDF真实显示、正式Named Tunnel/密钥/常驻服务、生产D1/Cache/限流及真实DOC/DOCX浏览器端到端。
-
-验证：104项定向测试通过。本轮5项核心回归在修复前dirty快照分别独立失败，附命令及文件哈希；生产构建成功。新增文件及Mac改动lint通过；原有路由/测试的28条历史lint诊断无新增。React规则缺失仍导致页面ESLint配置加载失败；全库类型检查存在历史诊断，改动文件无新增诊断。原始记录见 `.local/attachment-88/revision-deadline/`。
-
-本轮未沿用一次性hook豁免，未提交/推送/合并/部署，未写生产D1或操作生产调度。下一步在满足提交门槛后固定新Head，再由用户调用原独立审查任务复审整改增量。
+基线main 0c9e6a7；本轮为普通可逆UI行为收窄，自审完成。未提交、推送或部署，未写生产数据，不沿用历史hook豁免。原Issue88已部署版本与本地新改动必须区分。证据见.local/attachment-88/pdf-only-*.txt。
