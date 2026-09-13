@@ -4,8 +4,13 @@ export const intelligenceVersion = "2026-09-08.1"
 export type IntelligenceTopic = "building" | "health" | "ai" | "finance"
 export const intelligenceTopics = {
   building: { name: "建筑", categories: {
-    intelligent_construction: "智能建造", good_housing: "好房子", smart_building: "智慧建筑",
-    green_building: "绿色低碳", urban_renewal: "城市更新", industrialization: "建筑工业化", policy: "综合政策与标准",
+    intelligent_construction: "智能建造",
+    good_housing: "好房子",
+    smart_building: "智慧建筑",
+    green_building: "绿色低碳",
+    urban_renewal: "城市更新",
+    industrialization: "建筑工业化",
+    policy: "综合政策与标准",
   } },
   health: { name: "运动健康", categories: healthTopicLines },
   ai: { name: "AI 科技", categories: { models: "大模型", products: "AI 产品", agents: "智能体", coding: "AI 编程", hardware: "AI 硬件", research: "研究与治理" } },
@@ -27,7 +32,7 @@ export interface IntelligenceArticle {
   column: string
   publisher?: string
   publishedAt?: number
-  publicationDate?: { status: "verified" | "unknown"; basis?: "article" | "source_api" | "source_list" | "source_id"; url: string; checkedAt: number; reason?: "not_article" | "unavailable" | "not_provided" }
+  publicationDate?: { status: "verified" | "unknown", basis?: "article" | "source_api" | "source_list" | "source_id", url: string, checkedAt: number, reason?: "not_article" | "unavailable" | "not_provided" }
   collectedAt: number
   documentNo?: string
   attachments: { title: string, url: string }[]
@@ -92,15 +97,26 @@ export interface IntelligenceFilters {
   importance: number
   sort: "recommended" | "latest" | "importance"
 }
-export const emptyIntelligenceFilters = (): IntelligenceFilters => ({
-  q: "", category: "", regions: [], cities: [], types: [], sources: [], tags: [], days: 0, importance: 0, sort: "latest",
-})
+export function emptyIntelligenceFilters(): IntelligenceFilters {
+  return {
+    q: "",
+    category: "",
+    regions: [],
+    cities: [],
+    types: [],
+    sources: [],
+    tags: [],
+    days: 0,
+    importance: 0,
+    sort: "latest",
+  }
+}
 export function intelligenceHttpUrl(value: unknown): string | undefined {
   try {
     const u = new URL(String(value))
     if (!["http:", "https:"].includes(u.protocol) || u.username || u.password) return
     return u.href
-  } catch { return }
+  } catch {}
 }
 export function intelligenceCanonicalUrl(value: string) {
   const safe = intelligenceHttpUrl(value)
@@ -108,7 +124,7 @@ export function intelligenceCanonicalUrl(value: string) {
   const u = new URL(safe)
   u.hash = ""
   for (const key of [...u.searchParams.keys()]) {
-    if (/^(utm_|spm$|from$|source$)/i.test(key)) u.searchParams.delete(key)
+    if (/^(?:utm_|spm$|from$|source$)/i.test(key)) u.searchParams.delete(key)
   }
   u.searchParams.sort()
   return u.href
@@ -116,7 +132,7 @@ export function intelligenceCanonicalUrl(value: string) {
 export function intelligenceDate(value: unknown): number | undefined {
   if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : undefined
   if (typeof value !== "string") return
-  const match = value.match(/(?:^|\D)((?:19|20)\d{2})[-年/.](\d{1,2})[-月/.](\d{1,2})(?:日|\D|$)/)
+  const match = value.match(/(?:^|\D)((?:19|20)\d{2})[-年/.](\d{1,2})[-月/.](\d{1,2})(?:\D|$)/)
   if (!match) return
   const [, year, month, day] = match
   const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
@@ -126,13 +142,13 @@ export function intelligenceDate(value: unknown): number | undefined {
 }
 export function intelligenceFilter<T extends Omit<IntelligenceArticle, "model" | "analysisVersion">>(items: T[], f: IntelligenceFilters, now = Date.now()) {
   const words = f.q.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
-  return items.filter(a => {
-    if (f.category && a.category !== f.category && !a.relatedCategories.includes(f.category)) return false
+  return items.filter((a) => {
+    if (f.category && a.category !== f.category && (a.topic === "building" || !a.relatedCategories.includes(f.category))) return false
     if (f.regions.length && !f.regions.includes(a.region)) return false
     if (f.cities.length && !f.cities.includes(a.city)) return false
     if (f.types.length && !f.types.includes(a.contentType)) return false
     if (f.sources.length && !f.sources.includes(a.sourceId) && !f.sources.includes(a.sourceGroup)) return false
-    if (f.tags.length && !f.tags.some(tag => a.tags.includes(tag))) return false
+    if (a.topic !== "building" && f.tags.length && !f.tags.some(tag => a.tags.includes(tag))) return false
     if (f.importance && a.importance < f.importance) return false
     // Unknown publication dates are never substituted with collection dates.
     if (f.days && (!a.publishedAt || a.publishedAt < now - f.days * 86400000 || a.publishedAt > now + 86400000)) return false
@@ -157,7 +173,10 @@ export function intelligenceDedupe(items: IntelligenceArticle[]) {
     aliases.set(`${a.topic}:${url}`, key)
     if (titleKey) aliases.set(titleKey, key)
     const existing = output.get(key)
-    if (!existing) { output.set(key, a); continue }
+    if (!existing) {
+      output.set(key, a)
+      continue
+    }
     const preferred = priority(a) > priority(existing) ? a : existing
     const other = preferred === a ? existing : a
     preferred.otherSources = [...(preferred.otherSources ?? []), ...(other.otherSources ?? []), { name: other.sourceName, url: other.url }]

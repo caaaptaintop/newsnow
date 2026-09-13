@@ -1,9 +1,7 @@
-# 当前阶段：Issue #91 ESLint React 兼容性本地验收
+# 当前阶段：Issue #93 建筑单栏目与取消标签本地验收
 
-已核验canonical仓库与main e45490a基线。预设3.2.3-beta.6搭配React插件2.13.0引用6个已移除名称；逐项按上游v2迁移表重命名，完整保留原规则级别与显式选项。通过预设现有tsconfigPath选项提供no-implicit-key所需类型信息，同时保留预设在类型模式下启用的no-leaked-conditional-rendering警告。依赖版本、hook、lint-staged与所有产品源码未改。
+已核验 canonical 仓库与 main 1f82ed6 基线。建筑公开读取只按主栏目计数和筛选；旧 relatedCategories 不再让同一文章出现在其他栏目。“全部信息”仍汇总全部已发布。建筑页不再显示顶部快捷标签、标签下拉和卡片标签；遗留 URL tags 参数不造成隐藏筛选。未来建筑 AI 分类只输出一个主栏目，relatedCategories 与 tags 规范化为空；其他主题规范化与安全校验保持原行为。未迁移历史数据，未改 D1。
 
-9项配置回归验证原预设规则保留、6项迁移实际诊断、Hooks/危险HTML错误级别及合法TSX；36项附件回归通过。实际共享pre-commit拒绝违规TSX并放行合法TSX，未使用任何hook豁免。
+定向回归覆盖跨栏旧数据不重复计数、不匹配关联栏目、遗留 tags 参数、单栏目 AI 规范化、无标签 UI 合同。改动文件 eslint 0 error（building.tsx 保留既有 hooks 依赖警告）；改动文件 typecheck 无新增错误。全库 lint/typecheck 历史诊断仍在，不声称全库通过。未跑真实浏览器；smoke 脚本已适配无标签合同，本轮不接管 Chrome。
 
-全库ESLint完成304文件检查，无fatal，仍有6346错误和16警告；全库typecheck失败，包括shared/types.ts循环类型。附件组件17个格式错误和2个警告留作范围外诊断，未执行该组件自动修复。本轮不声称全库通过。配置变更不影响构建产物，未进行生产构建或部署。
-
-按入口登记的Issue85已授权但未合并候选规则执行普通变更自审。本地测试和diff自审完成，正常提交用于固定候选；未形成远端同步或生产发布授权。详细证据见.local/eslint-91/RESULT.md。
+按入口登记的 Issue85 已授权但未合并候选规则执行普通变更自审。正常提交用于固定候选；未形成远端同步或生产发布授权。
