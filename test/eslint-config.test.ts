@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { ESLint } from "eslint"
 import { react } from "@ourongxing/eslint-config"
@@ -6,8 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 const eslint = new ESLint()
 const filePath = "src/components/attachment-preview/index.tsx"
-const probeRoot = join("src", "eslint-config-probe")
 const probes = new Map<string, string>()
+let probeRoot = ""
 const migrations = [
   ["react-dom/no-children-in-void-dom-elements", "react-dom/no-void-elements-with-children", "export const Probe = () => <img>child</img>"],
   ["react/ensure-forward-ref-using-ref", "react/no-useless-forward-ref", "import { forwardRef } from 'react'; export const Probe = forwardRef(() => <div />)"],
@@ -22,8 +22,7 @@ const extraProbes = {
 } as const
 
 function writeProbe(name: string, code: string) {
-  const directory = mkdtempSync(join(probeRoot, `${name.replaceAll("/", "-")}-`))
-  const probePath = join(directory, "probe.tsx")
+  const probePath = join(probeRoot, `${name.replaceAll("/", "-")}.tsx`)
   writeFileSync(probePath, code.endsWith("\n") ? code : `${code}\n`)
   probes.set(name, probePath)
 }
@@ -37,13 +36,13 @@ async function lintProbe(name: string) {
 
 describe("react preset compatibility", () => {
   beforeAll(() => {
-    mkdirSync(probeRoot, { recursive: true })
+    probeRoot = mkdtempSync(join("src", "eslint-config-probe-"))
     for (const [oldName, , code] of migrations) writeProbe(oldName, code)
     for (const [name, code] of Object.entries(extraProbes)) writeProbe(name, code)
   })
 
   afterAll(() => {
-    rmSync(probeRoot, { recursive: true, force: true })
+    if (probeRoot) rmSync(probeRoot, { recursive: true, force: true })
   })
 
   it("preserves every preset rule's severity and options", async () => {
