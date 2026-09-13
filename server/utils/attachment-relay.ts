@@ -1,7 +1,7 @@
 import { attachmentFilename, attachmentPreviewPolicy } from "../../shared/attachment-preview"
 
 export class AttachmentRelayError extends Error {
-  constructor(public statusCode: number, message: string) { super(message); this.name = "AttachmentRelayError" }
+  constructor(public statusCode: number, message: string, public upstreamStatus?: number) { super(message); this.name = "AttachmentRelayError" }
 }
 
 /** Exact operator-controlled hosts, plus government domains. Never trust a host from the request body. */
@@ -74,7 +74,7 @@ export async function relayAttachment(input: {
     }
     if (!upstream?.ok || upstream.status === 206 || !upstream.body) {
       await upstream?.body?.cancel()
-      throw new AttachmentRelayError(502, `原站未返回完整附件（HTTP ${upstream?.status ?? 0}），请从原网页打开`)
+      throw new AttachmentRelayError(502, `原站未返回完整附件（HTTP ${upstream?.status ?? 0}），请从原网页打开`, upstream?.status)
     }
     const maxBytes = input.maxBytes ?? attachmentPreviewPolicy.maxBytes
     if (Number(upstream.headers.get("content-length")) > maxBytes) {

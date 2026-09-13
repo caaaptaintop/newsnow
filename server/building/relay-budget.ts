@@ -1,3 +1,4 @@
+import { attachmentPreviewPolicy } from "../../shared/attachment-preview"
 import { buildingHash,BuildingError } from "../../shared/building-contract"
 import { buildingMeta,type BuildingDB } from "./store"
 export async function reserveRelay(db:BuildingDB,ip:string,salt:string,maximum:number,now=Date.now()){
@@ -10,10 +11,10 @@ export async function reserveRelay(db:BuildingDB,ip:string,salt:string,maximum:n
     db.prepare("INSERT OR IGNORE INTO building_usage_v3(id) VALUES(?)").bind(day),db.prepare("INSERT OR IGNORE INTO building_usage_v3(id) VALUES(?)").bind(minute),
     db.prepare(`INSERT INTO building_guards_v3 VALUES(?,CASE WHEN
       (SELECT relay_enabled FROM building_policy_v3 WHERE id=1)=1 AND
-      (SELECT requests FROM building_usage_v3 WHERE id=?)<(SELECT per_day FROM building_policy_v3 WHERE id=1) AND
+      (SELECT requests FROM building_usage_v3 WHERE id=?)<(SELECT MIN(per_day,${attachmentPreviewPolicy.relayRequestsPerDay}) FROM building_policy_v3 WHERE id=1) AND
       (SELECT reserved FROM building_usage_v3 WHERE id=?)+?<=(SELECT bytes_per_day FROM building_policy_v3 WHERE id=1) AND
       (SELECT requests FROM building_usage_v3 WHERE id=?)<(SELECT per_minute FROM building_policy_v3 WHERE id=1) AND
-      (SELECT COUNT(*) FROM building_leases_v3 WHERE expires>?)<(SELECT concurrent FROM building_policy_v3 WHERE id=1) AND
+      (SELECT COUNT(*) FROM building_leases_v3 WHERE expires>?)<(SELECT MIN(concurrent,${attachmentPreviewPolicy.relayConcurrent}) FROM building_policy_v3 WHERE id=1) AND
       (SELECT COUNT(*) FROM building_leases_v3 WHERE ip_key=? AND expires>?)<2 THEN 1 ELSE 0 END)`).bind(guard,day,day,maximum,minute,now,ipKey,now),
     db.prepare("UPDATE building_usage_v3 SET requests=requests+1,reserved=reserved+? WHERE id=?").bind(maximum,day),
     db.prepare("UPDATE building_usage_v3 SET requests=requests+1 WHERE id=?").bind(minute),
