@@ -50,7 +50,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
         if (controller.signal.aborted) return
         setStage("正在浏览器内解析附件…")
         const detected = detectAttachment(file.buffer, file.filename, file.mime)
-        if (detected.format === "pdf" && !navigator.pdfViewerEnabled) throw new Error("浏览器未启用 PDF 内嵌预览；为避免自动下载，请主动点击下载原文件")
+        if (detected.format === "pdf") throw new Error("此附件实际为 PDF，请点击原站下载在新标签页打开官方文件")
         let html = ""
         if (detected.format === "doc") html = await renderLegacyDoc(file.buffer, controller.signal)
         else if (detected.format === "docx") html = await renderDocx(file.buffer)
@@ -68,7 +68,7 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
   }, [target, attempt])
   const frame = useMemo(() => preview?.html ? previewFrameHtml(preview.html, "", zoom) : "", [preview?.html, zoom])
   return createPortal(<dialog ref={dialog} className="intel-preview-dialog" aria-labelledby={headingId}>
-    <header className="intel-preview-header"><div><h2 id={headingId}>{preview?.filename ?? target.title}</h2><p>{target.sourceName} · 按需读取，不保存附件</p></div><button type="button" data-preview-close-button aria-label="关闭附件预览"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
+    <header className="intel-preview-header"><div><h2 id={headingId}>{preview?.filename ?? target.title}</h2><p>{target.sourceName} · 按需读取 · 临时缓存最多 5 分钟</p></div><button type="button" data-preview-close-button aria-label="关闭附件预览"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></header>
     <nav className="intel-preview-toolbar" aria-label="附件预览操作">
       {preview?.html && <label>缩放 <select value={zoom} onChange={event => setZoom(Number(event.target.value))}>{[60, 80, 100, 120, 150].map(value => <option key={value} value={value}>{value}%</option>)}</select></label>}
       <span className="intel-preview-toolbar-spacer" />
@@ -77,11 +77,10 @@ export default function AttachmentReader({ target, onClose }: { target: Attachme
     </nav>
     <div className="intel-preview-content" aria-busy={!!stage}>
       {stage && <div className="intel-preview-message" role="status"><p>{stage}</p><button type="button" onClick={onClose}>取消预览</button></div>}
-      {error && <div className="intel-preview-message" role="alert"><h3>无法在线预览</h3><p>{error}</p><p>不会改用服务器转换、上传到第三方查看器或自动下载。</p>{originPdf && browserCanPreviewPdf && <><a data-preview-origin-pdf className="intel-preview-origin-link" href={originPdf} target="_blank" rel="noreferrer">在新标签页预览原站 PDF</a><p>此方式由浏览器直接读取政府网站 PDF，不经过本站附件转发；部分政府网站禁止跨站嵌入，因此使用新标签页。</p></>}<button type="button" onClick={() => setAttempt(value => value + 1)}>重试本站预览</button></div>}
+      {error && <div className="intel-preview-message" role="alert"><h3>无法在线预览</h3><p>{error}</p><p>可直接打开原网页查看，或下载原文件；无需排队。</p>{originPdf && browserCanPreviewPdf && <><a data-preview-origin-pdf className="intel-preview-origin-link" href={originPdf} target="_blank" rel="noreferrer">在新标签页预览原站 PDF</a><p>此方式由浏览器直接读取政府网站 PDF，不经过本站附件转发；部分政府网站禁止跨站嵌入，因此使用新标签页。</p></>}<button type="button" onClick={() => setAttempt(value => value + 1)}>重试本站预览</button></div>}
       {preview?.html && <iframe title="附件阅读预览" sandbox="" referrerPolicy="no-referrer" srcDoc={frame} />}
-      {preview?.blobUrl && preview.format === "pdf" && <iframe title="PDF 附件预览" referrerPolicy="no-referrer" src={preview.blobUrl} />}
       {preview?.blobUrl && preview.format === "image" && <div className="intel-preview-image"><img src={preview.blobUrl} alt={preview.filename} /></div>}
     </div>
-    <footer className="intel-preview-footer">{preview?.via === "relay" ? "读取方式：无存储流式转发 → 浏览器" : preview?.via === "direct" ? "读取方式：原站 → 浏览器" : "仅在点击预览后读取附件"}。{preview && ["doc", "docx", "word-html"].includes(preview.format) ? "阅读级预览；复杂图形、修订和分页可能与原件不同，以原文件为准。" : "关闭后释放本次预览资源。"}</footer>
+    <footer className="intel-preview-footer">{preview?.via === "cache" ? "读取方式：短期缓存 → 浏览器" : preview?.via === "relay" ? "读取方式：原站转发 → 浏览器" : preview?.via === "direct" ? "读取方式：原站 → 浏览器" : "仅在点击预览后读取附件"}。{preview && ["doc", "docx", "word-html"].includes(preview.format) ? "阅读级预览；复杂图形、修订和分页可能与原件不同，以原文件为准。" : "关闭后释放本次预览资源。"}</footer>
   </dialog>, document.body)
 }

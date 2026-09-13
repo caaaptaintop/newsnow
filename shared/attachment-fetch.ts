@@ -1,6 +1,11 @@
-import { attachmentFilename, attachmentPreviewPolicy, publicAttachmentUrl, type AttachmentPreviewTarget } from "@shared/attachment-preview"
+import { type AttachmentPreviewTarget, attachmentFilename, attachmentPreviewPolicy, publicAttachmentUrl } from "./attachment-preview"
 
-export interface LoadedAttachment { buffer: ArrayBuffer, filename: string, mime: string, via: "direct" | "relay" }
+export interface LoadedAttachment {
+  buffer: ArrayBuffer
+  filename: string
+  mime: string
+  via: "direct" | "relay" | "cache"
+}
 
 export async function readAttachmentResponse(response: Response, signal: AbortSignal): Promise<ArrayBuffer> {
   if (!response.body) throw new Error("附件没有可读取的内容")
@@ -55,7 +60,7 @@ export async function loadAttachment(target: AttachmentPreviewTarget, signal: Ab
     if (error instanceof Error && error.message.includes("预览上限")) throw error
   } finally { clearTimeout(timer); signal.removeEventListener("abort", abortDirect) }
   if (signal.aborted) throw new DOMException("预览已取消", "AbortError")
-  onStage("原站无法直接读取，正在通过无存储转发读取…")
+  onStage("原站无法直接读取，正在通过本站临时预览服务读取…")
   const controller = new AbortController()
   const abort = () => controller.abort()
   signal.addEventListener("abort", abort, { once: true })
@@ -80,7 +85,7 @@ export async function loadAttachment(target: AttachmentPreviewTarget, signal: Ab
       throw new Error(message)
     }
     const buffer = await readAttachmentResponse(response, controller.signal)
-    return { buffer, filename: attachmentFilename(response.headers.get("content-disposition"), target.title), mime: response.headers.get("content-type") ?? "", via: "relay" }
+    return { buffer, filename: attachmentFilename(response.headers.get("content-disposition"), target.title), mime: response.headers.get("content-type") ?? "", via: response.headers.get("X-Attachment-Via") === "cache" ? "cache" : "relay" }
   } catch (error) {
     if (signal.aborted) throw new DOMException("预览已取消", "AbortError")
     if (controller.signal.aborted) throw new Error("原站读取超时，请使用原站下载")

@@ -1,4 +1,4 @@
-# 附件按需预览（不存储文件）
+# 附件按需预览（受限临时缓存）
 
 ## 操作与格式
 
@@ -12,10 +12,10 @@
 
 1. 不预取附件。用户点击后先由浏览器直接读取原站，credentials=omit、cache=no-store、redirect=error。
 2. 跨域、跳转或原站直读失败时，向 `/api/intelligence/attachment` POST **topic、articleKey、url 三个定位字段**；不上传文件。
-3. 后端用已有信息记录核对附件 URL，按块流式转发原站 GET 响应。不给调用者任意 URL 代理能力，不复制浏览器 Cookie、Authorization 或上游 Set-Cookie。
-4. 不写附件到磁盘、数据库、R2/KV/Cache API；不保存转换件，不调用 AI、不向 Google/Microsoft 等查看器上传。沿用既有 metadata-only 存储策略。边缘运行时有暂时的传输缓冲，这不等于持久保存；不承诺操作系统永不交换内存。
-5. 原站与转发请求均禁用应用缓存；转发还带 CDN 与 Cloudflare-CDN no-store。现有 PWA 的 self-destroy/清缓存策略不变。附件正文不进入日志、快照或全文索引。
-6. 关闭时取消 fetch / DOC Worker，撤销 Blob URL 并释放 UI 引用。DOCX DOM 渲染已开始后可能完成当前解析再释放，但结果不会回写已关闭界面。
+3. 后端用已有信息记录核对附件 URL 和域名，先预留额度；命中短期缓存则读取，否则回源。完整读取并执行大小上限后才向浏览器返回成功，避免半途失败变成不透明的流错误。不给调用者任意 URL 代理能力，不复制浏览器 Cookie、Authorization 或上游 Set-Cookie。
+4. 按用户授权，成功且格式预检通过、不超过 5 MiB 的文件可进入 Cloudflare Cache API，逻辑有效期 300 秒；读取时再次检查过期时间，缓存可能提前淘汰，各机房不共享命中。TTL 是不可继续读取的边界，不声称提供物理介质精确擦除保证。不新增磁盘、D1附件字节、R2/KV、转换件或第三方查看器。删除文章后先通过文章校验才可能命中缓存，不提供公开缓存文件地址。
+5. 原站请求与发给浏览器的转发响应均禁用应用缓存；转发还带 CDN 与 Cloudflare-CDN no-store。现有 PWA 的 self-destroy/清缓存策略不变。附件正文不进入日志、快照或全文索引。
+6. 关闭时取消 fetch / DOC Worker，撤销 Blob URL 并释放 UI 引用；已成功读取的边缘缓存按短期有效期处理。DOCX DOM 渲染已开始后可能完成当前解析再释放，但结果不会回写已关闭界面。
 
 ## 约束与隔离
 
@@ -35,3 +35,46 @@ Word HTML 在 inert template 中清理后进入不含 allow-scripts/allow-same-o
 - `pnpm exec vitest run test/attachment-preview.test.ts test/attachment-route.test.ts`：文件识别、中文 DOC 表格、流转发、取消、大小、跳转、超时与已索引授权。
 - `CF_PAGES=1 pnpm run build` 后，CI 用真实 Chrome 加载生产客户端：直接读取/跨域兜底、DOC Worker、DOCX、搜索、隔离、错误回退、PDF/图片 Blob 释放、Esc、手机布局、无自动下载。
 - 类型检查沿用仓库规则：改动文件不得新增错误，既有未触及文件的诊断另存 CI 证据；不把“改动文件通过”说成“全仓库零诊断”。
+
+## 免费资源预算与降级
+
+2026-09-12 已登录核对 Workers 免费套餐：100000 请求/日、10ms CPU/次；D1 免费 500万读行/日、10万写行/日、5GB 总存储。当时账户显示请求5061、读行529.44k、写行4.22k、存储1.88MB，均为取样而非实时承诺。R2 未开通，免费层超额会计费，本方案不引入。
+
+用独立临时 D1 执行真实 reserveRelay/settleRelay SQL，首次日计数和分钟计数均不存在时：预留13写行/13读行，结算2写行/5读行，共15写行/18读行。保守按每次16写行分配48,000写行/日，对应代码最多3000次；生产既有管理员per_day=2000，实际采用较小值，不在本轮修改生产配置。这是全站转发预算，不是每位读者限制；缓存命中也经过额度保护。拒绝、维护、异常及账户其他业务仍消耗资源，不能保证账户实际总量；预算不可用时失败关闭。
+
+撤销此前人为500次和512MiB的额外硬限制。字节限制沿用既有管理员配置（当前5GiB/日），属于运行保护，不冒称Cloudflare免费流量额度；每文件20MiB、边缘缓存5MiB/300秒、全站5并发、单云端实例2并发属于内存/等待保护。失联预留不退款，备用读取失败按最大文件预留计费，避免未知消耗被退回。免费日计量按UTC零点（北京时间08:00）复位。
+
+## 住建部回源与 Mac 备用方案（本地候选，尚未启用）
+
+隔离、无生产绑定的 Cloudflare Worker 直接读取真实 DOCX 返回HTTP530、正文error code:1016；同一云端DNS查询返回SERVFAIL及“No Reachable Authority at delegation mohurd.gov.cn”。本机真实文件200、61634字节，SHA256为0a94f84c91ea49c4ebce3621bd2d7940d848208505c67c3c0e3b270b5071cc25。此证据确认该取样时刻的云端DNS故障；不把它泛化为原站永久故障。临时Worker及临时D1均已删除。
+
+路径：浏览器直读 → 已索引校验/预算 → 边缘缓存 → 云端回源。仅住建部HTTP530触发Mac备用，不对403/429、重定向拒绝或其他来源扩大重试。Mac无响应、忙碌或额度耗尽时展示原网页/下载入口，不建立排队或轮询。
+
+实现入口：server/utils/attachment-backup.ts；tools/attachment-relay/service.ts、start.ts。Mac只监听127.0.0.1:8792，部署时通过专用Cloudflare Tunnel接入HTTPS /attachment。Pages需配置ATTACHMENT_BACKUP_URL和独立随机ATTACHMENT_BACKUP_SECRET；Mac通过进程环境接收相同密钥。禁止复用发布私钥、向浏览器暴露密钥或写入源码。HMAC覆盖完整请求、时间戳及nonce；有效窗口30秒、重复请求拒绝、8KiB请求上限、最多5任务同时执行。只允许住建部官方download接口及已实测cms_files附件路径，逐跳校验；证书正常验证，无HTTP降级，不访问任意主机。
+
+备用服务内存读取，不落盘；Mac休眠/离线时首次未缓存附件无法保证站内预览，原页面和原站下载始终保留。它是按需服务，不创建第二采集调度器、不改900秒worker或ledger/outbox。运行部署需选择常驻服务目录、配置专用Tunnel与密钥；本轮未改生产配置、未启动常驻服务或正式Tunnel；仅使用已关闭的临时Quick Tunnel做隔离验证。
+
+验收：签名/重放/越界跳转、云端530选择性回退等隔离测试通过；真实文件通过签名Mac处理器返回200。隔离Cloudflare→Quick Tunnel→Mac→原站实测200/61634字节/808ms，哈希一致；后续首次Mac682ms、缓存7ms；停Mac后缓存仍200/17ms，冷缓存返回503/715ms。真实同文件在Tabbit当前构建预览组件显示标题和1个表格（内存响应替换验证渲染，未冒充生产API验收）。浏览器直接访问临时workers.dev文件端点超时，云端传输与渲染分别取证，不声称该浏览器网络链路端到端通过。最初脚本生成被hook拦截，后改用不读取凭据文件的独立内存渲染验证，未改安全规则。
+
+该候选增加请求认证和短期缓存边界，按项目2.6节需高级独立审查后才能合并；尚未形成clean固定提交，不以本地通过替代最终审查。下一阶段是固定候选及适用独立审查，通过后按生产授权配置专用Named Tunnel/密钥/常驻服务并发布验收。不能将隔离通道成功称为生产预览已恢复。
+
+参考：
+- https://developers.cloudflare.com/workers/runtime-apis/cache/
+- https://developers.cloudflare.com/workers/platform/pricing/
+
+- Cloudflare Tunnel公开应用无需付费Access套餐：https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/
+- Workers DNS故障说明：https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1016/
+
+## 2026-09-13 并发与 PDF 调整
+
+已识别 PDF 的文件名链接直接在新标签页打开官方地址，不调用本站读取、缓存、Mac 或解析器，不占本站名额。隐藏扩展名且读取后才识别的 PDF 不再内嵌渲染，提示使用原站入口。是否直接显示由官方响应头及浏览器设置决定。
+
+其他附件全站最多5个正在转发的文件；完成或失败释放名额，继续阅读不占名额。单实例保留2个内存读取上限、同IP保留2个额度租约限制；资源保护可能在未满5个时拒绝请求。Mac备用服务最多5个并发。繁忙返回429，用户可稍后重试或直接前往官网，不建立自动队列、不自动轮询。此限制统计请求，不保证按独立读者计数或相同文件请求合并。
+
+## Issue #88 本次固定提交的 ESLint 豁免
+
+2026-09-13 用户明确批准：仅为 Issue #88 本次建立固定本地 commit，一次性绕过已确认的仓库历史 ESLint 配置阻断。当前唯一活动 Git hook 是 pre-commit，其内容仅调用 npx lint-staged（eslint --fix）；使用该次提交进程的 SKIP_SIMPLE_GIT_HOOKS=1，不修改 hook、配置或永久环境。
+
+此豁免不代表 ESLint 检查通过，不修改或关闭测试、类型检查、构建、独立审查、合并或生产部署门槛；形成固定 Head 后停止，等待独立审查，不合并、不部署。现有验证结果和已知边界保留。
+
+独立待修问题：仓库 ESLint 配置与 React 插件版本不兼容，引用不存在的 react-dom/no-children-in-void-dom-elements 规则，导致页面 lint 在配置加载阶段失败；此前还发现 react/ensure-forward-ref-using-ref 缺失。后续单独修复配置与依赖兼容性，验收须恢复真实规则加载并执行受影响页面 lint，不能以关掉规则或本次豁免当作修复。本候选不处理该故障，不将历史诊断记为通过。原始证据见本机 .local/attachment-88/lint-next.txt。

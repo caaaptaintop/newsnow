@@ -112,6 +112,20 @@ describe("SQL pagination and full-range filters",()=>{
   it.each([{limit:"101"},{sort:"bad"},{days:"3"},{category:"constructor"},{cursor:"broken"}])("rejects invalid queries %j",async query=>{await publish([article(1)]);await expect(readPage(memory.db,new URLSearchParams(Object.entries(query).filter((entry): entry is [string,string] => typeof entry[1] === "string")),now)).rejects.toMatchObject({statusCode:400})})
 })
 describe("durable relay limits",()=>{
+  it("caps permissive operator settings at the attachment safety budget", async () => {
+    await relayPolicy(memory.db, { enabled: true, perDay: 100000, bytesPerDay: 107374182400, concurrent: 100 })
+    const day = `day:${Math.floor(now / 86400000)}`
+    await memory.db.prepare("INSERT INTO building_usage_v3(id,requests) VALUES(?,?)").bind(day, 3000).run()
+    await expect(reserveRelay(memory.db, "ip", "salt", 1024, now)).rejects.toMatchObject({ statusCode: 429 })
+    await memory.db.prepare("UPDATE building_usage_v3 SET requests=0,reserved=? WHERE id=?").bind(107374182400, day).run()
+    await expect(reserveRelay(memory.db, "ip", "salt", 1024, now)).rejects.toMatchObject({ statusCode: 429 })
+    await memory.db.prepare("UPDATE building_usage_v3 SET reserved=0 WHERE id=?").bind(day).run()
+    const leases = []
+    for (let i = 0; i < 5; i++) leases.push(await reserveRelay(memory.db, `reader-${i}`, "salt", 1024, now))
+    await expect(reserveRelay(memory.db, "sixth", "salt", 1024, now)).rejects.toMatchObject({ statusCode: 429 })
+    await settleRelay(memory.db, leases[0], 1024, false)
+    expect(await reserveRelay(memory.db, "sixth", "salt", 1024, now)).toBeTruthy()
+  })
   it("enforces concurrent reservations with idempotent settlement",async()=>{
     const size=20*1024*1024,one=await reserveRelay(memory.db,"ip","salt",size,now),two=await reserveRelay(memory.db,"ip","salt",size,now)
     await expect(reserveRelay(memory.db,"ip","salt",size,now)).rejects.toMatchObject({statusCode:429})

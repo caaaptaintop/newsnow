@@ -6,6 +6,13 @@ export const attachmentPreviewPolicy = Object.freeze({
   fetchTimeoutMs: 45000,
   parseTimeoutMs: 20000,
   maxRedirects: 3,
+  cacheTtlSeconds: 300,
+  maxCacheBytes: 5 * 1024 * 1024,
+  // D1 measurement: 15 written rows; conservatively budget 16 rows per successful reservation/settlement.
+  // 3,000 requests allocate 48,000 of 100,000 daily writes; operator policy may be lower.
+  relayRequestsPerDay: 3000,
+  relayConcurrent: 5,
+  relayInstanceConcurrent: 2,
   persistFiles: false,
   externalViewers: false,
 })
