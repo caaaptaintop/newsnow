@@ -1,7 +1,9 @@
-# 当前阶段：Issue #88 PDF官方入口（PENDING）
+# 当前阶段：Issue #91 ESLint React 兼容性本地验收
 
-用户明确暂停非PDF附件预览及其他替代方案，仅保留PDF官方URL新标签页查看和所有附件原站下载。本地组件已移除Reader依赖与非PDF预览按钮；不会从附件列表触发解析、缓存或relay。服务端保留实现未改，Mac备用服务不启用。
+已核验canonical仓库与main e45490a基线。预设3.2.3-beta.6搭配React插件2.13.0引用6个已移除名称；逐项按上游v2迁移表重命名，完整保留原规则级别与显式选项。通过预设现有tsconfigPath选项提供no-implicit-key所需类型信息，同时保留预设在类型模式下启用的no-leaked-conditional-rendering警告。依赖版本、hook、lint-staged与所有产品源码未改。
 
-验证：36项定向测试、CF_PAGES生产构建通过；浏览器冒烟脚本语法和lint通过；Tabbit在当前构建实测7个非PDF静态名称、0非PDF预览按钮、8个原站下载链接、PDF点击产生新窗口、0relay请求/0dialog。合成PDF域名网络失败，不作为官方PDF显示证据。app typecheck仍有历史全库诊断，修改组件无诊断；TSX lint因既有React插件规则缺失未通过。
+9项配置回归验证原预设规则保留、6项迁移实际诊断、Hooks/危险HTML错误级别及合法TSX；36项附件回归通过。实际共享pre-commit拒绝违规TSX并放行合法TSX，未使用任何hook豁免。
 
-基线main 0c9e6a7；本轮为普通可逆UI行为收窄，自审完成。未提交、推送或部署，未写生产数据，不沿用历史hook豁免。原Issue88已部署版本与本地新改动必须区分。证据见.local/attachment-88/pdf-only-*.txt。
+全库ESLint完成304文件检查，无fatal，仍有6346错误和16警告；全库typecheck失败，包括shared/types.ts循环类型。附件组件17个格式错误和2个警告留作范围外诊断，未执行该组件自动修复。本轮不声称全库通过。配置变更不影响构建产物，未进行生产构建或部署。
+
+按入口登记的Issue85已授权但未合并候选规则执行普通变更自审。本地测试和diff自审完成，正常提交用于固定候选；未形成远端同步或生产发布授权。详细证据见.local/eslint-91/RESULT.md。
