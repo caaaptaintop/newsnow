@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { emptyIntelligenceFilters, intelligenceDate, intelligenceHttpUrl, intelligenceCanonicalUrl, intelligenceFilter, intelligenceDedupe, intelligenceTopics, type IntelligenceArticle } from "../shared/intelligence"
-import { officialIntelligenceSources, intelligenceSources } from "../shared/official-sources"
-import { intelligenceAllowedUrl, intelligenceDiscoverColumns, intelligenceParseList, intelligenceParseArticle } from "../server/utils/intelligence-parser"
-import { intelligenceNormalizeDecision, intelligenceParseAI } from "../server/utils/intelligence-ai"
+import { intelligenceClassify, intelligenceNormalizeDecision, intelligenceParseAI } from "../server/utils/intelligence-ai"
+import { intelligenceAllowedUrl, intelligenceDiscoverColumns, intelligenceParseArticle, intelligenceParseList } from "../server/utils/intelligence-parser"
+import { buildingView } from "../shared/building-view"
+import { type IntelligenceArticle, emptyIntelligenceFilters, intelligenceCanonicalUrl, intelligenceDate, intelligenceDedupe, intelligenceFilter, intelligenceHttpUrl, intelligenceTopics } from "../shared/intelligence"
+import { intelligenceSources, officialIntelligenceSources } from "../shared/official-sources"
 
 const source = officialIntelligenceSources.find(s => s.id === "official-shenzhen")!
 const article: IntelligenceArticle = { key: "a", topic: "building", title: "关于公布本年度智能建造试点项目名单的通知", url: `${source.home}xxgk/tzgg/content/post_123456.html`, sourceId: source.id, sourceName: source.name, sourceGroup: "住建官方", sourceLevel: "市级", region: "广东", city: "深圳", column: "通知公告", publishedAt: intelligenceDate("2026-09-03"), collectedAt: 1788451200000, attachments: [], category: "intelligent_construction", relatedCategories: ["good_housing"], tags: ["BIM", "建筑机器人"], contentType: "通知公告", importance: 80, summary: "发布智能建造试点项目名单。", evidence: "body", model: "test", analysisVersion: "test" }
@@ -43,8 +46,14 @@ describe("multidimensional filters", () => {
     const f = { ...emptyIntelligenceFilters(), regions: ["江苏", "广东"], cities: ["深圳"] }
     expect(intelligenceFilter([article, other], f).map(a => a.key)).toEqual(["a"])
   })
-  it("matches related categories and tag alternatives", () => {
-    expect(intelligenceFilter([article], { ...emptyIntelligenceFilters(), category: "good_housing", tags: ["BIM", "未知标签"] })).toHaveLength(1)
+  it("does not match building relatedCategories or leftover tags", () => {
+    expect(intelligenceFilter([article], { ...emptyIntelligenceFilters(), category: "good_housing" })).toHaveLength(0)
+    expect(intelligenceFilter([article], { ...emptyIntelligenceFilters(), tags: ["BIM"] })).toHaveLength(1)
+    expect(intelligenceFilter([article], { ...emptyIntelligenceFilters(), category: "intelligent_construction" })).toHaveLength(1)
+  })
+  it("matches related categories and tag alternatives for other topics", () => {
+    const otherTopic = { ...article, topic: "ai" as const }
+    expect(intelligenceFilter([otherTopic], { ...emptyIntelligenceFilters(), category: "good_housing", tags: ["BIM", "未知标签"] })).toHaveLength(1)
   })
   it("searches inside the selected region and handles Unicode", () => {
     expect(intelligenceFilter([article, other], { ...emptyIntelligenceFilters(), regions: ["江苏"], q: "试点 名单" }).map(a => a.key)).toEqual(["b"])
@@ -68,12 +77,12 @@ describe("deduplication", () => {
 })
 describe("official-page parsing", () => {
   it("discovers institution columns without external navigation", () => {
-    const found = intelligenceDiscoverColumns('<a href="/policy/">政策文件</a><a href="https://evil.org/">通知公告</a>', source)
+    const found = intelligenceDiscoverColumns("<a href=\"/policy/\">政策文件</a><a href=\"https://evil.org/\">通知公告</a>", source)
     expect(found.some(c => c.url.endsWith("/policy/"))).toBe(true)
     expect(found.some(c => c.url.includes("evil"))).toBe(false)
   })
   it("extracts full title, relative URL and explicit Shenzhen short-year date", () => {
-    const html = '<ul><li><a href="/xxgk/tzgg/content/post_123456.html" title="关于公布本年度智能建造试点项目名单的通知">关于公布…</a><span> 26-09-03 </span></li><li><a href="/xxgk/tzgg/index.html">关于更多通知公告</a></li></ul>'
+    const html = "<ul><li><a href=\"/xxgk/tzgg/content/post_123456.html\" title=\"关于公布本年度智能建造试点项目名单的通知\">关于公布…</a><span> 26-09-03 </span></li><li><a href=\"/xxgk/tzgg/index.html\">关于更多通知公告</a></li></ul>"
     const items = intelligenceParseList(html, source, { name: "通知公告", url: source.home })
     expect(items).toHaveLength(1)
     expect(items[0].title).toBe(article.title)
@@ -81,7 +90,7 @@ describe("official-page parsing", () => {
   })
   it("extracts body and common document attachments but never equates navigation with body", () => {
     const candidate = { title: article.title, url: article.url, column: "通知公告", attachments: [] }
-    expect(intelligenceParseArticle('<nav>智能建造 好房子 智慧建筑</nav>', candidate, source).text).toBeUndefined()
+    expect(intelligenceParseArticle("<nav>智能建造 好房子 智慧建筑</nav>", candidate, source).text).toBeUndefined()
     const html = `<meta name="PubDate" content="2026-09-03"><div class="TRS_Editor">${"深圳市发布智能建造试点项目通知。".repeat(10)}<a href="/file.pdf">项目名单</a><a href="/form.docx">意见反馈表.docx</a><a href="/slides.pptx">宣贯材料</a><a href="/formal.ofd">正式文件</a><a href="/download?id=1" download="数据表.xlsx">附件下载</a></div>`
     const parsed = intelligenceParseArticle(html, candidate, source)
     expect(parsed.text).toContain("智能建造")
@@ -132,7 +141,7 @@ describe("official-page parsing", () => {
     expect(parsed.attachments.map(item => item.url)).toEqual(["https://files.yn.gov.cn/standard.docx"])
   })
 })
-describe("AI output validation", () => {
+describe("aI output validation", () => {
   it("requires explicit keep/drop and rejects hallucinated keys", () => {
     expect(intelligenceNormalizeDecision({ ...decision, key: "other" }, new Set(["a"]), "building")).toBeUndefined()
     expect(intelligenceNormalizeDecision({ ...decision, keep: "true" }, new Set(["a"]), "building")).toBeUndefined()
@@ -141,29 +150,65 @@ describe("AI output validation", () => {
   it("rejects foreign taxonomy, invented types and invalid scores", () => {
     for (const patch of [{ category: "models" }, { contentType: "invented" }, { importance: "NaN" }, { summary: "" }]) expect(intelligenceNormalizeDecision({ ...decision, ...patch }, new Set(["a"]), "building")).toBeUndefined()
   })
-  it("normalizes tags and related categories without a score threshold gate", () => {
+  it("normalizes building decisions to a single category without tags", () => {
     const result = intelligenceNormalizeDecision({ ...decision, importance: 1 }, new Set(["a"]), "building")!
     expect(result.keep).toBe(true)
-    expect(result.tags).toEqual(["BIM"])
-    expect(result.relatedCategories).toEqual(["good_housing"])
+    expect(result.category).toBe("intelligent_construction")
+    expect(result.tags).toEqual([])
+    expect(result.relatedCategories).toEqual([])
+  })
+  it("keeps related categories and tags for other topics", () => {
+    const result = intelligenceNormalizeDecision({
+      key: "a",
+      keep: true,
+      category: "models",
+      relatedCategories: ["products", "invalid", "models"],
+      tags: ["LLM", "LLM"],
+      contentType: "行业动态",
+      importance: 1,
+      summary: "摘要",
+      reason: "ok",
+    }, new Set(["a"]), "ai")!
+    expect(result.relatedCategories).toEqual(["products"])
+    expect(result.tags).toEqual(["LLM"])
+  })
+  it("asks the building classifier for one primary category and empty tags", async () => {
+    const promptOf = async (topic: "building" | "ai") => {
+      let prompt = ""
+      await intelligenceClassify({
+        run: async (_model: string, params: { messages: { content: string }[] }) => {
+          prompt = params.messages[0].content
+          return { response: "{\"items\":[]}" }
+        },
+        model: "x",
+      }, topic, [{ key: "a", title: "t", column: "c" }])
+      return prompt
+    }
+    const building = await promptOf("building")
+    expect(building).toContain("只属于一个主栏目")
+    expect(building).toContain("\"tags\":[]")
+    expect(building).not.toContain("最多三个实质相关栏目")
+    const other = await promptOf("ai")
+    expect(other).toContain("最多三个实质相关栏目")
+    expect(other).toContain("\"tags\":[\"BIM\"]")
   })
   it("parses supported AI envelopes and rejects malformed responses", () => {
-    expect(intelligenceParseAI({ response: '```json\n{"items":[]}\n```' })).toEqual([])
+    expect(intelligenceParseAI({ response: "```json\n{\"items\":[]}\n```" })).toEqual([])
     expect(() => intelligenceParseAI({ response: "not JSON" })).toThrow()
-    expect(() => intelligenceParseAI({ response: '{"other":[]}' })).toThrow()
+    expect(() => intelligenceParseAI({ response: "{\"other\":[]}" })).toThrow()
   })
 })
 
 it("parses Zhengzhou jhtml articles without treating the index as an article", () => {
   const source = { id: "official-zhengzhou", home: "https://zzjsj.zhengzhou.gov.cn/" } as any
-  const items = intelligenceParseList('<a href="/tzgg/index.jhtml">住房城乡建设通知公告栏目</a><a href="/tzgg/10229072.jhtml">关于推进智能建造试点工作的通知</a>', source, { name: "通知公告", url: source.home })
+  const items = intelligenceParseList("<a href=\"/tzgg/index.jhtml\">住房城乡建设通知公告栏目</a><a href=\"/tzgg/10229072.jhtml\">关于推进智能建造试点工作的通知</a>", source, { name: "通知公告", url: source.home })
   expect(items).toHaveLength(1)
   expect(items[0].url).toBe("https://zzjsj.zhengzhou.gov.cn/tzgg/10229072.jhtml")
 })
 
 it("keeps Liaoning date-ID article indexes while excluding directory indexes", () => {
   const source = { home: "https://zjt.ln.gov.cn/" } as any
-  const items = intelligenceParseList('<a href="/zjt/tfwj/gfxwj/index.shtml">住房城乡建设规范性文件</a><a href="/zjt/tfwj/lzj/2026070710405193851/index.shtml">关于印发辽宁省住房品质提升行动方案的通知</a>', source, { name: "规范性文件", url: source.home })
+  const items = intelligenceParseList("<a href=\"/zjt/tfwj/gfxwj/index.shtml\">住房城乡建设规范性文件</a><a href=\"/zjt/tfwj/lzj/2026070710405193851/index.shtml\">关于印发辽宁省住房品质提升行动方案的通知</a>", source, { name: "规范性文件", url: source.home })
   expect(items).toHaveLength(1)
   expect(items[0].url).toContain("2026070710405193851")
 })
@@ -185,4 +230,21 @@ it("keeps corrected publication metadata when a legacy copy follows the same URL
 it("prefers the date label over dates mentioned inside a policy title", () => {
   const html = `<li><a href="/news/4.html">关于2026年8月1日城市更新工作会议的通知</a><span>2026-09-02</span></li>`
   expect(intelligenceParseList(html, source, { name: "通知公告", url: source.home })[0].publishedAt).toBe(intelligenceDate("2026-09-02"))
+})
+
+describe("building page single-category contract", () => {
+  it("ignores leftover tags in the building URL parser", () => {
+    const view = buildingView("?topic=building&tags=BIM&tags=装配式&category=intelligent_construction")
+    expect(view.filters.tags).toEqual([])
+    expect(view.filters.category).toBe("intelligent_construction")
+    expect(view.unavailable).toBe(false)
+  })
+  it("does not render tag shortcuts, dropdowns or card tags", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/intelligence/building.tsx"), "utf8")
+    expect(source).not.toContain("title=\"标签\"")
+    expect(source).not.toContain("内容标签")
+    expect(source).not.toContain("intel-quick-tags")
+    expect(source).not.toContain("article.tags")
+    expect(source).toContain("每篇文章只属于一个栏目")
+  })
 })
