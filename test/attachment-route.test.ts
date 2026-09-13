@@ -228,7 +228,11 @@ describe("whole request deadline", () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
     const pending = deferred<Awaited<ReturnType<typeof reserveRelay>>>()
     const lateLease = "00000000-0000-4000-8000-000000000088"
-    vi.mocked(reserveRelay).mockReturnValueOnce(pending.promise)
+    const reached = deferred<void>()
+    vi.mocked(reserveRelay).mockImplementationOnce(() => {
+      reached.resolve()
+      return pending.promise
+    })
     const open = vi.fn()
     vi.stubGlobal("caches", { open })
     let result: unknown
@@ -238,7 +242,7 @@ describe("whole request deadline", () => {
       result = error
     })
     try {
-      await flushDeadlineWork()
+      await reached.promise
       expect(reserveRelay).toHaveBeenCalledOnce()
       await vi.advanceTimersByTimeAsync(75000)
       expect(result).toMatchObject({ statusCode: 424 })
@@ -300,11 +304,15 @@ describe("deadline propagation", () => {
   it("keeps the original deadline after a slow cache open and during downstream delivery", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
     const pending = deferred<any>()
-    const open = vi.fn(() => pending.promise)
+    const reached = deferred<void>()
+    const open = vi.fn(() => {
+      reached.resolve()
+      return pending.promise
+    })
     vi.stubGlobal("caches", { open })
     const request = handler(event() as any)
     try {
-      await flushDeadlineWork()
+      await reached.promise
       expect(open).toHaveBeenCalledOnce()
       await vi.advanceTimersByTimeAsync(60000)
       pending.resolve({ match: async () => new Response(new Uint8Array(100), { headers: { "X-Attachment-Expires": String(Date.now() + 300000), "Content-Length": "100" } }) })
@@ -353,11 +361,15 @@ describe("deadline propagation", () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] })
     const pending = deferred<Response>()
     const cancel = vi.fn()
-    vi.mocked(relayAttachment).mockReturnValueOnce(pending.promise)
+    const reached = deferred<void>()
+    vi.mocked(relayAttachment).mockImplementationOnce(() => {
+      reached.resolve()
+      return pending.promise
+    })
     const request = handler(event() as any)
     const rejected = expect(request).rejects.toMatchObject({ statusCode: 424 })
     try {
-      await flushDeadlineWork()
+      await reached.promise
       expect(relayAttachment).toHaveBeenCalledOnce()
       const signal = vi.mocked(relayAttachment).mock.calls[0][0].signal!
       await vi.advanceTimersByTimeAsync(75000)
