@@ -13,9 +13,12 @@ import { localAntigravity } from "./local-antigravity.mjs"
 import { agyModel } from "./antigravity-session.mjs"
 import { batchArticleKeys, pageHasUnprocessed } from "./article-keys"
 import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
-import { queuedCandidate, saveBatchResult } from "./candidate-queue"
+import { prioritizeCandidates, queuedCandidate, saveBatchResult } from "./candidate-queue"
+import { collectionCandidates, collectionCutoff, inCollectionWindow, pageEntirelyBeforeWindow } from "./collection-window"
 import { resolvePublishedSource, sourceConfigProvenance } from "./source-config-client"
 
+const collectionNow = Date.now()
+const cutoff = collectionCutoff(collectionNow)
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
 const sourceId = option("--source", "official-shanghai")
@@ -54,6 +57,7 @@ try {
     if (error.code !== "ENOENT") throw error
   }
   const pageNeedsMore = async (source: any, items: any[]) => {
+    if (pageEntirelyBeforeWindow(items, cutoff)) return false
     const relevant = items
     if (!relevant.length) return false
     const keys = [...new Set<string>(relevant.flatMap(item => batchArticleKeys(source.topic, source.id, item.url)))]
@@ -66,7 +70,7 @@ try {
       const source = queue.shift()!
       try {
         collectedCache.set(source.id, await collectSource(source, {
-          maxPages: 100,
+          maxPages: null,
           shouldContinuePage: items => pageNeedsMore(source, items),
         }))
       } catch (error) {
@@ -130,7 +134,9 @@ try {
       const otherPending = (previous.pendingCandidates ?? []).filter((i: any) => i.sourceId !== source.id)
       previous.pendingCandidates = [...otherPending, ...sourceQueue]
       await saveBatchResult(resolve(outputDir, "result.json"), previous)
-      const activeQueue = sourceQueue.filter((item, index) => sourceQueue.findIndex(other => other.key === item.key) === index)
+      const activeQueue = prioritizeCandidates(collectionCandidates(sourceQueue, cutoff, collectionNow))
+      const outsideWindow = sourceQueue.length - activeQueue.length
+      if (outsideWindow) warnings.push(`${outsideWindow} 条候选日期超过一年、未知或无效，本轮不分析；原记录保留`)
       const titleItems = activeQueue.filter(item => !item.titleScreened).slice(0, titleScreenLimit)
       const usage: any[] = []
       const ai = { model, run: async (_model: string, params: any) => {
@@ -163,7 +169,7 @@ try {
       const recalled = activeQueue.filter(item => item.titleScreened && !rejected.has(JSON.stringify([item.key, item.title])))
       const selected = recalled.slice(0, limit)
       selectedCount = selected.length
-      const waiting = sourceQueue.length - rejected.size - selected.length
+      const waiting = activeQueue.length - rejected.size - selected.length
       if (waiting > 0) warnings.push(`${waiting} 条候选已保留，待后续批次处理`)
       console.log(JSON.stringify({ source: source.name, model, newCandidates: candidates.size, selected: selected.map(i => ({ title: i.title, url: i.url })) }))
       if (!selected.length) {
@@ -194,6 +200,7 @@ try {
         for (let i = 0; i < articles.length; i += 5) {
           await Promise.all(articles.slice(i, i + 5).map(async (article) => {
             Object.assign(article, await verifyPublicationDate(source, article, true))
+            if (!inCollectionWindow(article, cutoff, collectionNow)) throw new Error("正文发布日期不在最近一年内或无法确认，本批保留待核对，未发布")
           }))
         }
         state.accepted = articles.length

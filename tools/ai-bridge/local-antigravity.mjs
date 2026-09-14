@@ -64,6 +64,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
       let init
       let result
       let stopped
+      let diagnosticText = ""
       let killTimer
       const stop = (error) => {
         if (stopped) return
@@ -120,7 +121,10 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
           stop(error)
         }
       })
-      child.stderr.resume()
+      child.stderr.setEncoding("utf8")
+      child.stderr.on("data", (chunk) => {
+        diagnosticText = (diagnosticText + chunk).slice(-16000)
+      })
       child.on("error", (error) => {
         stopped = error
       })
@@ -129,7 +133,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
         clearTimeout(killTimer)
         process.removeListener("SIGTERM", signal)
         process.removeListener("SIGINT", signal)
-        if (stopped || code !== 0 || !init || result?.status !== "SUCCESS" || result.conversation_id !== init.conversation_id || !result.response?.trim()) reject(stopped ?? new Error("AGY did not complete classification"))
+        if (stopped || code !== 0 || !init || result?.status !== "SUCCESS" || result.conversation_id !== init.conversation_id || !result.response?.trim()) reject(stopped ?? new Error(`AGY did not complete classification: exit=${code}; status=${["SUCCESS", "ERROR", "FAILED", "TIMEOUT", "CANCELLED"].includes(result?.status) ? result.status : "unknown"}; result=${Boolean(result)}; responseChars=${result?.response?.length ?? 0}; reason=${agyFailureReason(diagnosticText + JSON.stringify({ error: result?.error, errorCode: result?.error_code, errorMessage: result?.error_message }))}`))
         else accept({ init, result })
       })
     })
@@ -150,4 +154,13 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
   if (failure) throw failure
   onUsage(outcome.result.usage)
   return { choices: [{ message: { content: outcome.result.response } }], antigravity: { model, sessionId: outcome.init.conversation_id, cleaned: true } }
+}
+
+// Classify errors without persisting provider text, prompts or account details.
+export function agyFailureReason(text) {
+  if (/unauthenticated|invalid_grant|not logged in|login required|authentication required|\b401\b/i.test(text)) return "authentication"
+  if (/resource_exhausted|quota exceeded|rate.?limit|\b429\b/i.test(text)) return "quota_or_rate_limit"
+  if (/deadline_exceeded|timed? ?out/i.test(text)) return "timeout"
+  if (/unavailable|connection reset|connection refused|\b50[234]\b/i.test(text)) return "service_or_network"
+  return "unspecified"
 }
