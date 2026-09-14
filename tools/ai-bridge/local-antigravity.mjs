@@ -9,7 +9,7 @@ import process from "node:process"
 import { agyModel, agyRoot, cleanupSession, durableJson, jsonFile, pidAlive, recoverSessions, sessionSocket, verifyAgyBinary } from "./antigravity-session.mjs"
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`
-export async function localAntigravity(model, messages, onUsage = () => {}, options = {}) {
+export async function localAntigravity(model, messages, onUsage = (_usage) => {}, options = {}) {
   if (model !== agyModel) throw new Error("Only verified AGY 3.8 Flash low is enabled")
   const payload = JSON.stringify(messages)
   if (!Array.isArray(messages) || messages.some(m => !["system", "user"].includes(m.role) || typeof m.content !== "string") || Buffer.byteLength(payload) > 1500000) throw new Error("Invalid or oversized AGY classification input")
