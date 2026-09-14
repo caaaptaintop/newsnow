@@ -6,7 +6,7 @@ import { intelligenceFetchList } from "../../server/utils/intelligence-dynamic-l
 import { resolvePublishedSource } from "./source-config-client"
 
 export interface CollectSourceOptions {
-  maxPages?: number
+  maxPages?: number | null
   shouldContinuePage?: (items: OfficialCandidate[], pageNumber: number) => boolean | Promise<boolean>
 }
 
@@ -43,9 +43,13 @@ async function collect(source: IntelligenceSource & { collectionMode?: string },
   const items: any[] = []
   for (const column of columns.slice(0, collectionMode === "explicit" ? 12 : 4)) {
     try {
+      const deadline = Date.now() + 120000
       const page = await intelligenceFetchList(column.url, source, column, {
         maxPages: options.maxPages,
-        shouldContinue: options.shouldContinuePage,
+        shouldContinue: async (items, pageNumber) => {
+          if (options.maxPages === null && Date.now() >= deadline) throw new Error("本栏目采集超时，已保留读到的文章；日期范围尚未采集完整")
+          return options.shouldContinuePage ? options.shouldContinuePage(items, pageNumber) : true
+        },
       })
       const parsed = page.items
       if (!parsed.length) warnings.push(`${column.name}：栏目未解析到文章`)

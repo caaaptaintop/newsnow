@@ -10,7 +10,7 @@ const jpaasMaxPages = 100
 const collectionHeaders = { "User-Agent": "CapxIntelligence/1.0 (official public information reader)" }
 
 export interface IntelligenceFetchListOptions {
-  maxPages?: number
+  maxPages?: number | null
   shouldContinue?: (items: OfficialCandidate[], pageNumber: number) => boolean | Promise<boolean>
 }
 
@@ -167,7 +167,7 @@ function staticNextPage(html: string, source: IntelligenceSource, base: string) 
 }
 
 async function staticPages(page: Awaited<ReturnType<typeof intelligenceFetchHtml>>, initial: OfficialCandidate[], source: IntelligenceSource, column: { name: string, url: string }, options: IntelligenceFetchListOptions) {
-  const maxPages = Math.max(1, Math.min(jpaasMaxPages, options.maxPages ?? 1))
+  const maxPages = options.maxPages === null ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(jpaasMaxPages, options.maxPages ?? 1))
   const collected = new Map<string, OfficialCandidate>()
   mergeItems(collected, initial)
   const visited = new Set([page.url])
@@ -234,7 +234,7 @@ export async function intelligenceFetchList(url: string, source: IntelligenceSou
   if (!endpoint) return { ...page, items, dynamic: false, pages: 1, capped: false }
 
   const requestedMax = Number.isSafeInteger(options.maxPages) ? Number(options.maxPages) : 1
-  const maxPages = Math.max(1, Math.min(jpaasMaxPages, requestedMax))
+  const maxPages = options.maxPages === null ? Number.POSITIVE_INFINITY : Math.max(1, Math.min(jpaasMaxPages, requestedMax))
   let fragment = await dynamicFragment(endpoint, page.url, source, 1)
   items = intelligenceParseList(fragment, source, { ...column, url: page.url })
   const collected = new Map<string, OfficialCandidate>()

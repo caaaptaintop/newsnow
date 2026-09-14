@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import { intelligenceSources } from "../shared/official-sources"
 import { intelligenceFetchList } from "../server/utils/intelligence-dynamic-list"
 import { batchArticleKeys, pageHasUnprocessed } from "../tools/ai-bridge/article-keys"
+import { pageEntirelyBeforeWindow } from "../tools/ai-bridge/collection-window"
 
 const source = intelligenceSources.find(s => s.id === "official-mohurd")!
 const column = { name: "政策发布", url: new URL("zhengcefabu/index.html", source.home).href }
@@ -18,6 +19,25 @@ it("pinned processed titles do not stop a mixed page, changed titles remain new"
   expect(pageHasUnprocessed("building", source.id, [old, revised], [...known, { ...known[0], title: revised.title }])).toBe(false)
 })
 const html = (rows: typeof old[], next: string) => `<ul>${rows.map(i => `<li><a href="${i.url}">${i.title}</a><span>2026-09-08</span></li>`).join("")}</ul><a rel="next" href="${next}">下一页</a>`
+it.each(["static", "dynamic"])("%s uses the date boundary even beyond 100 pages", async (mode) => {
+  let pageNumber = 0
+  let shell = false
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    if (mode === "dynamic" && !shell) {
+      shell = true
+      return new Response("<script>const endpoint=\"/api-gateway/jpaas-publish-server/front/page/build/unit\"; const unit={parseType:\"bulidstatic\",webId:\"web\",tplSetId:\"tpl\",pageType:\"column\",tagId:\"list\",pageId:\"page\"};</script>", { headers: { "content-type": "text/html" } })
+    }
+    pageNumber++
+    const item = { title: `第${pageNumber}页住宅项目规范的通知`, url: new URL(`zhengcefabu/art/2026/art_${pageNumber}.html`, source.home).href }
+    let fragment = html([item], `index_${pageNumber + 1}.html`)
+    if (pageNumber === 102) fragment = fragment.replaceAll("2026-09-08", "2024-09-08")
+    return mode === "dynamic" ? Response.json({ data: { html: `${fragment}<a data-page="${pageNumber + 1}">下一页</a>` } }) : new Response(fragment, { headers: { "content-type": "text/html" } })
+  })
+  const page = await intelligenceFetchList(column.url, source, column, { maxPages: null, shouldContinue: items => !pageEntirelyBeforeWindow(items, Date.parse("2025-09-14T00:00:00+08:00")) })
+  expect(page.pages).toBe(102)
+  expect(page.capped).toBe(false)
+  expect(pageNumber).toBe(102)
+})
 it("static next links continue past a pinned duplicate then stop on an all-known page", async () => {
   const fetch = vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(new Response(html([old, fresh], "index_2.html"), { headers: { "content-type": "text/html" } }))
