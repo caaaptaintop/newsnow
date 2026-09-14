@@ -314,3 +314,12 @@ it("hN official API recovers a transient failure and excludes deleted stories", 
     vi.unstubAllGlobals()
   }
 })
+
+it("zero-keyword articles with a valid AI decision pass final merge validation", () => {
+  const candidate = { ...article, title: "关于印发住宅项目规范的通知", column: "政策文件", category: "good_housing" }
+  expect(buildingRecallScore(candidate)).toBe(0)
+  const result = { articles: [candidate], decisions: [{ key, title: candidate.title, keep: true }] }
+  expect(mergeBatch({ articles: [] }, result).articles).toHaveLength(1)
+  expect(() => mergeBatch({ articles: [] }, { ...result, decisions: [] })).toThrow("Batch article failed validation")
+  expect(() => mergeBatch({ articles: [] }, { ...result, articles: [{ ...candidate, sourceId: "unknown" }] })).toThrow("Batch article failed validation")
+})

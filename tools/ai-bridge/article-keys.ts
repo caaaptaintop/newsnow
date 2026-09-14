@@ -14,3 +14,8 @@ export function batchArticleKeys(topic: string, sourceId: string, url: string) {
   }
   return urls.map(value => `${topic}:${createHash("sha256").update(value).digest("hex")}`)
 }
+
+export function pageHasUnprocessed(topic: string, sourceId: string, items: { url: string, title: string }[], records: { key: string, title: string }[]) {
+  const known = new Set(records.map(record => JSON.stringify([record.key, record.title])))
+  return items.some(item => batchArticleKeys(topic, sourceId, item.url).every(alias => !known.has(JSON.stringify([alias, item.title]))))
+}

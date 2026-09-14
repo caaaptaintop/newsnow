@@ -1,7 +1,7 @@
 import { hackernewsFeed } from "../../server/utils/hackernews-feed"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl, intelligenceDate } from "../../shared/intelligence"
-import { intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList, type OfficialCandidate } from "../../server/utils/intelligence-parser"
+import { type OfficialCandidate, intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../../server/utils/intelligence-parser"
 import { intelligenceFetchList } from "../../server/utils/intelligence-dynamic-list"
 import { resolvePublishedSource } from "./source-config-client"
 
@@ -50,10 +50,11 @@ async function collect(source: IntelligenceSource & { collectionMode?: string },
       const parsed = page.items
       if (!parsed.length) warnings.push(`${column.name}：栏目未解析到文章`)
       if ("paginationStalled" in page && page.paginationStalled) warnings.push(`${column.name}：分页返回了重复列表，已停止继续请求`)
-      if (page.capped) warnings.push(`${column.name}：连续发现尚未处理的相关内容，已读取 ${page.pages} 页并达到单轮分页上限`)
+      if ("paginationError" in page && page.paginationError) warnings.push(`${column.name}：分页未完成：${page.paginationError}；已保留本次读到的标题`)
+      if ("paginationUnverified" in page && page.paginationUnverified) warnings.push(`${column.name}：未识别可验证的下一页入口，需核对是否末页或专用分页格式`)
+      if (page.capped) warnings.push(`${column.name}：已读取 ${page.pages} 页，仍有未处理内容；达到安全请求上限，本次分页未完成`)
       items.push(...parsed)
-    }
-    catch (error: any) {
+    } catch (error: any) {
       warnings.push(`${column.name}：${error.message}`)
     }
   }
@@ -68,7 +69,7 @@ async function collect(source: IntelligenceSource & { collectionMode?: string },
     }
   }
   if (!items.length) throw new Error(warnings.join("；") || "未解析到文章，需要专用栏目适配")
-  return { columns, warnings, items: [...new Map(items.map(item => [intelligenceCanonicalUrl(item.url), item])).values()] }
+  return { columns, warnings, items: [...new Map(items.map(item => [JSON.stringify([intelligenceCanonicalUrl(item.url), item.title]), item])).values()] }
 }
 
 export async function collectSource(source: IntelligenceSource, options: CollectSourceOptions = {}) {
@@ -76,8 +77,7 @@ export async function collectSource(source: IntelligenceSource, options: Collect
     const configured = await resolvePublishedSource(source)
     if (configured.enabled === false) return { columns: [], warnings: ["来源已由发布配置停用"], items: [] }
     return await collect(configured, options)
-  }
-  catch (error: any) {
+  } catch (error: any) {
     const code = error.cause?.code ?? error.code
     if (code === "ENOTFOUND") throw new Error("来源域名无法解析，需要核对官网地址")
     if (String(code).startsWith("ERR_TLS") || String(code).startsWith("ERR_SSL")) throw new Error(`官网安全连接失败（${code}），未降低证书或加密校验`)

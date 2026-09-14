@@ -4,14 +4,15 @@ import process from "node:process"
 import { isPublishedSource } from "../../shared/public-site"
 import { intelligenceSources } from "../../shared/official-sources"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceVersion } from "../../shared/intelligence"
-import { buildingRecallScore } from "../../shared/building-recall"
 import { publisherKnown } from "./publisher.mjs"
 import { collectSource } from "./collect-source"
 import { classifyEvidence, classifyThenPending } from "./classify-batch"
 import { verifyPublicationDate } from "./publication-date"
 import { enrichOfficialArticlesForClassify, officialArticlePersistedMetadata } from "./enrich-article"
 import { localCodex } from "./local-codex.mjs"
-import { batchArticleKeys } from "./article-keys"
+import { batchArticleKeys, pageHasUnprocessed } from "./article-keys"
+import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
+import { queuedCandidate, saveBatchResult } from "./candidate-queue"
 import { resolvePublishedSource, sourceConfigProvenance } from "./source-config-client"
 
 const args = process.argv.slice(2)
@@ -45,19 +46,18 @@ try {
   const configuredSources = (await Promise.all(selectedSources.map(source => resolvePublishedSource(source)))).filter(isPublishedSource)
   const sourceConfiguration = await sourceConfigProvenance()
   const collectedCache = new Map<string, any>()
+  let priorBatch: any = {}
+  try {
+    priorBatch = JSON.parse(await readFile(resolve(outputDir, "result.json"), "utf8"))
+  } catch (error: any) {
+    if (error.code !== "ENOENT") throw error
+  }
   const pageNeedsMore = async (source: any, items: any[]) => {
-    const relevant = source.topic === "building" ? items.filter(item => buildingRecallScore(item) > 0) : items
+    const relevant = items
     if (!relevant.length) return false
     const keys = [...new Set<string>(relevant.flatMap(item => batchArticleKeys(source.topic, source.id, item.url)))]
     if (!keys.length) return false
-    try {
-      const known = new Set((await publisherKnown(keys)).map((record: any) => record.key))
-      return relevant.some(item => batchArticleKeys(source.topic, source.id, item.url).every(alias => !known.has(alias)))
-    } catch {
-      // Preserve the current page. The normal dedup query below will surface
-      // the publisher failure rather than turning it into extra origin traffic.
-      return false
-    }
+    return pageHasUnprocessed(source.topic, source.id, relevant, [...await publisherKnown(keys), ...(priorBatch.processedVersions ?? []), ...(priorBatch.decisions ?? [])])
   }
   const queue = [...configuredSources]
   await Promise.all(Array.from({ length: 5 }, async () => {
@@ -65,7 +65,7 @@ try {
       const source = queue.shift()!
       try {
         collectedCache.set(source.id, await collectSource(source, {
-          maxPages: 5,
+          maxPages: 100,
           shouldContinuePage: items => pageNeedsMore(source, items),
         }))
       } catch (error) {
@@ -81,46 +81,101 @@ try {
     let processed = false
     state.collectionCounts = { discovered: 0, duplicates: 0, failed: 0 }
     try {
-      const snapshot = JSON.parse(await readFile(resolve(root, ".data/mac-batch/published.json"), "utf8"))
       let previous: any = { articles: [], decisions: [] }
       try {
         previous = JSON.parse(await readFile(resolve(outputDir, "result.json"), "utf8"))
       } catch (error: any) {
         if (error.code !== "ENOENT") throw error
       }
-      const sourceItems = collectedCache.get(source.id)?.items ?? []
+      const sourceItems = [...(previous.pendingCandidates ?? []).filter((i: any) => i.sourceId === source.id).map((i: any) => ({ ...i, fromQueue: true })), ...(collectedCache.get(source.id)?.items ?? [])]
+      const captured = new Map<string, any>()
+      for (const item of sourceItems) {
+        if (!item.title || !intelligenceCanonicalUrl(item.url)) continue
+        const key = batchArticleKeys(source.topic, source.id, item.url)[0]
+        const version = JSON.stringify([key, item.title])
+        if (!captured.has(version)) captured.set(version, queuedCandidate({ ...item, key }, source.id, item.titleScreened === true))
+      }
+      previous.pendingCandidates = [...(previous.pendingCandidates ?? []).filter((i: any) => i.sourceId !== source.id), ...captured.values()]
+      await saveBatchResult(resolve(outputDir, "result.json"), previous)
+      const snapshot = JSON.parse(await readFile(resolve(root, ".data/mac-batch/published.json"), "utf8"))
       const keys = [...new Set<string>(sourceItems.flatMap((item: any) => batchArticleKeys(source.topic, source.id, item.url)))]
       const online = { articles: await publisherKnown(keys) }
-      const known = new Map<string, string>([...snapshot.articles, ...online.articles, ...previous.articles, ...previous.decisions].map((a: any) => [a.key, a.title]))
+      const knownRecords = [...snapshot.articles, ...online.articles, ...previous.articles, ...previous.decisions, ...(previous.processedVersions ?? [])]
+      const known = new Set(knownRecords.map((a: any) => JSON.stringify([a.key, a.title])))
+      const processedVersions = new Map(knownRecords.map((a: any) => [JSON.stringify([a.key, a.title]), { key: a.key, title: a.title }]))
+      previous.processedVersions = [...processedVersions.values()]
       const candidates = new Map<string, any>()
       const collected = collectedCache.get(source.id)
       if (collected.failure) throw collected.failure
       warnings = collected.warnings
       state = { ...state, fetched: collected.items.length, columns: collected.columns, accepted: 0 }
-      const lists = [collected.items]
+      const lists = [sourceItems]
       for (const list of lists) {
         for (const item of list) {
           if (!item.title || !intelligenceCanonicalUrl(item.url)) continue
           const aliases = batchArticleKeys(source.topic, source.id, item.url)
           const key = aliases[0]
-          if (aliases.some(alias => known.get(alias) === item.title || candidates.get(alias)?.title === item.title)) state.collectionCounts.duplicates++
-          else candidates.set(key, { ...item, key })
+          if (aliases.some(alias => known.has(JSON.stringify([alias, item.title])))) {
+            if (!item.fromQueue) state.collectionCounts.duplicates++
+          } else if (aliases.some(alias => candidates.has(JSON.stringify([alias, item.title])))) {
+            if (!item.fromQueue && !aliases.some(alias => candidates.get(JSON.stringify([alias, item.title]))?.fromQueue)) state.collectionCounts.duplicates++
+          } else {
+            candidates.set(JSON.stringify([key, item.title]), { ...item, key })
+          }
         }
       }
-      state.collectionCounts.discovered = candidates.size
-      const recalled = [...candidates.values()]
-        .filter(item => source.topic !== "building" || buildingRecallScore(item) > 0)
-        .sort((a, b) => source.topic === "building" ? buildingRecallScore(b) - buildingRecallScore(a) : 0)
+      state.collectionCounts.discovered = [...candidates.values()].filter(item => !item.fromQueue).length
+      const sourceQueue = [...candidates.values()].map(item => queuedCandidate(item, source.id, item.titleScreened === true))
+      const otherPending = (previous.pendingCandidates ?? []).filter((i: any) => i.sourceId !== source.id)
+      previous.pendingCandidates = [...otherPending, ...sourceQueue]
+      await saveBatchResult(resolve(outputDir, "result.json"), previous)
+      const activeQueue = sourceQueue.filter((item, index) => sourceQueue.findIndex(other => other.key === item.key) === index)
+      const titleItems = activeQueue.filter(item => !item.titleScreened).slice(0, titleScreenLimit)
+      const usage: any[] = []
+      const ai = { model, run: async (_model: string, params: any) => {
+        if (modelFailure) throw new Error(`模型请求暂停，留待下轮：${modelFailure}`)
+        try {
+          return await localCodex(model, params.messages, (u: any) => usage.push(u))
+        } catch (error: any) {
+          modelFailure = error.message
+          throw error
+        }
+      } }
+      selectedCount = titleItems.length
+      let titleDecisions
+      try {
+        titleDecisions = await screenBuildingTitles(ai, titleItems)
+      } catch (error: any) {
+        modelFailure = error.message
+        throw error
+      }
+      const rejected = new Set<string>()
+      for (const item of titleItems) {
+        const decision = titleDecisions.get(item.key)
+        if (!decision) continue
+        if (decision.keep) {
+          item.titleScreened = true
+        } else {
+          rejected.add(JSON.stringify([item.key, item.title]))
+          processedVersions.set(JSON.stringify([item.key, item.title]), { key: item.key, title: item.title })
+          previous.decisions = previous.decisions.filter((d: any) => d.key !== item.key)
+          previous.decisions.push({ key: item.key, sourceId: source.id, title: item.title, url: item.url, keep: false, reason: decision.reason, at: Date.now() })
+        }
+      }
+      previous.pendingCandidates = [...otherPending, ...sourceQueue.filter(item => !rejected.has(JSON.stringify([item.key, item.title])))]
+      previous.processedVersions = [...processedVersions.values()]
+      await saveBatchResult(resolve(outputDir, "result.json"), previous)
+      const recalled = activeQueue.filter(item => item.titleScreened && !rejected.has(JSON.stringify([item.key, item.title])))
       const selected = recalled.slice(0, limit)
       selectedCount = selected.length
-      if (recalled.length > limit) warnings.push(`${recalled.length - limit} 条候选待后续批次分析`)
+      const waiting = sourceQueue.length - rejected.size - selected.length
+      if (waiting > 0) warnings.push(`${waiting} 条候选已保留，待后续批次处理`)
       console.log(JSON.stringify({ source: source.name, model, newCandidates: candidates.size, selected: selected.map(i => ({ title: i.title, url: i.url })) }))
       if (!selected.length) {
         console.log("No new titles; no model request made")
       } else {
         if (modelFailure) throw new Error(`模型请求暂停，留待下轮：${modelFailure}`)
         const startedAt = Date.now()
-        const usage: any[] = []
         const { enrichments, fetchFailed, insufficient } = await enrichOfficialArticlesForClassify(source, selected)
         if (fetchFailed) warnings.push(`${fetchFailed} 篇正文获取失败，已按标题证据标记`)
         if (insufficient) warnings.push(`${insufficient} 篇正文不足，已按标题证据标记`)
@@ -130,14 +185,14 @@ try {
           column: item.column,
           ...(enrichments.get(item.key)?.text ? { body: enrichments.get(item.key)!.text } : {}),
         }))
-        const { decisions, pending: pendingClassification } = await classifyThenPending({ model, run: async (_model: string, params: any) => {
-          try {
-            return await localCodex(model, params.messages, (u: any) => usage.push(u))
-          } catch (error: any) {
-            modelFailure = error.message
-            throw error
-          }
-        } }, source.topic, classifyItems, { sourceId: source.id, model, selected, usage })
+        let classified
+        try {
+          classified = await classifyThenPending(ai, source.topic, classifyItems, { sourceId: source.id, model, selected, usage })
+        } catch (error: any) {
+          modelFailure = error.message
+          throw error
+        }
+        const { decisions, pending: pendingClassification } = classified
         await writeFile(resolve(outputDir, "PENDING-classification.json"), `${JSON.stringify(pendingClassification, null, 2)}\n`)
         if (decisions.size !== selected.length) throw new Error("Incomplete classifications; no results saved")
         const articles: IntelligenceArticle[] = selected.flatMap((item) => {
@@ -153,10 +208,10 @@ try {
           }))
         }
         state.accepted = articles.length
-        const result = { ...previous, generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...articles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...selected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
-        const pending = resolve(outputDir, "result.pending.json")
-        await writeFile(pending, `${JSON.stringify(result, null, 2)}\n`)
-        await import("node:fs/promises").then(fs => fs.rename(pending, resolve(outputDir, "result.json")))
+        for (const item of selected) processedVersions.set(JSON.stringify([item.key, item.title]), { key: item.key, title: item.title })
+        previous.processedVersions = [...processedVersions.values()]
+        const result = { ...previous, pendingCandidates: previous.pendingCandidates.filter((i: any) => !selected.some(item => item.key === i.key && item.title === i.title)), generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...articles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...selected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
+        await saveBatchResult(resolve(outputDir, "result.json"), result)
         console.log(JSON.stringify({ completed: selected.length, accepted: articles.length, elapsedMs: result.elapsedMs, usage, result: resolve(outputDir, "result.json") }))
       }
       processed = true
@@ -178,8 +233,7 @@ try {
     saved.sourceConfiguration = sourceConfiguration
     saved.pipeline = "mac"
     saved.generatedAt = Date.now()
-    await writeFile(resolve(outputDir, "result.pending.json"), `${JSON.stringify(saved, null, 2)}\n`)
-    await import("node:fs/promises").then(fs => fs.rename(resolve(outputDir, "result.pending.json"), resolve(outputDir, "result.json")))
+    await saveBatchResult(resolve(outputDir, "result.json"), saved)
     console.log(JSON.stringify({ sourceId: source.id, state }))
   }
 } finally {
