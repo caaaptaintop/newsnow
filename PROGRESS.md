@@ -38,3 +38,6 @@
 
 2026-09-14 AGY接入整改：上轮“无法工具隔离”的判断已由实测收敛为默认CLI Project未加载工作区hook。显式--new-project后，本机1.2.2真实write_to_file被PreToolUse deny拒绝；无需降级（1.1.28仅本地探针）。生产候选local-antigravity使用专用1.2.2副本与已核验SHA256，禁止自动回退Codex。正文仅父进程内存，通过0600 Unix socket在新UUID归属和childPid持久登记后注入；ephemeral本身仍落会话数据库，故结束后清理本任务新会话db/sidecar/brain/annotation/presence，fsync父目录并复验，清理失败保留恢复登记且拒绝下一轮。SIGKILL/断电只能在下次启动恢复，未宣称异常立即清除。
 真实合成探针：正常调用成功并清理；timeout返回错误且无待清理目录；crash-result.json验证canary进入会话db后强杀父进程，恢复先拒绝仍活动AGY，结束该写者后清理成功并延迟复查无残留。共享summary/jetbox/history/cache及本日日志的canary布尔检查均未命中，无旧会话正文输出。正式provider8个合成正文8/8收录/栏目匹配，调用会话3ebb301d-603e-4020-869d-6063fd877e8a已清理。中文socket跨UTF-8边界回归通过；独立复核三项安全问题已整改，最后UTF-8问题修复，待固定SHA终核。mac-worker/mac-batch已改AGY low，preflight验证binary和清理残留；未改调度及现有生产数据。
+
+## Issue107 当前有效阶段
+采集范围纠正为住建部政策发布、建设要闻、标准公告、标准征求意见。worker、CLI默认/all、历史候选及附件补查均受限；其他来源配置/历史数据保留。生产暂停等待修复发布，误发布72篇不删除。模型low、近365天及05/12/16时间保持。
