@@ -1,5 +1,5 @@
 import { BuildingError, buildingHash, buildingLimits, publicArticle } from "../../shared/building-contract"
-import { type IntelligenceFilters, emptyIntelligenceFilters, intelligenceTopics } from "../../shared/intelligence"
+import { type IntelligenceFilters, type IntelligenceSource, emptyIntelligenceFilters, intelligenceTopics } from "../../shared/intelligence"
 import { intelligenceSources } from "../../shared/official-sources"
 import { isPublishedSource } from "../../shared/public-site"
 import { type BuildingDB, buildingMeta } from "./store"
@@ -94,7 +94,7 @@ function conditions(f: IntelligenceFilters, at: number) {
   }
   return { where: clauses.join(" AND ") || "1=1", binds }
 }
-export async function readPage(db: BuildingDB, params: URLSearchParams, now = Date.now()) {
+export async function readPage(db: BuildingDB, params: URLSearchParams, now = Date.now(), catalog: IntelligenceSource[] = intelligenceSources) {
   const q = readQuery(params)
   const state = await buildingMeta(db)
   if (!state.initialized || !state.migrationComplete) throw new BuildingError(503, "资讯库尚未发布")
@@ -120,7 +120,7 @@ export async function readPage(db: BuildingDB, params: URLSearchParams, now = Da
   const articles = raw.slice(0, q.limit).map(publicArticle)
   const tail = articles[articles.length - 1]
   const nextCursor = raw.length > q.limit && tail ? btoa(JSON.stringify({ revision: state.revision, hash, at, last: [tail.importance, tail.publishedAt ?? 0, tail.collectedAt, tail.key] })) : null
-  const sources = intelligenceSources.filter(isPublishedSource).map(({ id, name, home, group, region, city }) => ({ id, name, home, group, region, city }))
+  const sources = catalog.filter(isPublishedSource).map(({ id, name, home, group, region, city }) => ({ id, name, home, group, region, city }))
   const grouped = new Map<string, Set<string>>()
   for (const row of [...sources, ...result[4].results]) {
     if (!row.region) continue

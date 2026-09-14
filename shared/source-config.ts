@@ -32,7 +32,11 @@ export interface PublishedSourceConfigEnvelope {
   /** SHA-256 of the ordered, validated catalog. Not its row count. */
   revision: string
   generatedAt: number
-  sources: IntelligenceSourceConfig[]
+  sources: PublishedSourceConfig[]
+}
+export interface PublishedSourceConfig extends IntelligenceSourceConfig {
+  /** Issued by the server after the administrator confirms a tested revision. */
+  collectionApproved?: boolean
 }
 export interface SourceDraftBase {
   draftHash: string | null
@@ -56,27 +60,42 @@ function endpointId(sourceId: string, name: string, index: number) {
 }
 export function intelligenceSourceSeedConfig(source: IntelligenceSource): IntelligenceSourceConfig {
   return {
-    schemaVersion: 1, id: source.id, topic: source.topic, name: source.name, home: source.home,
-    group: source.group, level: source.level, region: source.region, city: source.city,
-    priority: source.priority, enabled: source.enabled,
+    schemaVersion: 1,
+    id: source.id,
+    topic: source.topic,
+    name: source.name,
+    home: source.home,
+    group: source.group,
+    level: source.level,
+    region: source.region,
+    city: source.city,
+    priority: source.priority,
+    enabled: source.enabled,
     collectionMode: source.newsnowId ? "feed" : source.columns?.length ? "explicit" : "discover",
     ...(source.newsnowId ? { newsnowId: source.newsnowId } : {}),
     endpoints: (source.columns ?? []).map((column, index) => ({
-      id: endpointId(source.id, column.name, index), kind: intelligenceEndpointKind(column.name),
-      name: column.name, url: column.url, enabled: true,
+      id: endpointId(source.id, column.name, index),
+      kind: intelligenceEndpointKind(column.name),
+      name: column.name,
+      url: column.url,
+      enabled: true,
     })),
   }
 }
 function text(value: unknown, field: string, max = 160, optional = false) {
-  if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) throw new Error(`${field} 必须是无控制字符的文本`)
+  // eslint-disable-next-line no-control-regex -- Reject control characters in administrator input.
+  if (typeof value !== "string" || /[\u0000-\u001F\u007F]/.test(value)) throw new Error(`${field} 必须是无控制字符的文本`)
   const cleaned = value.replace(/\s+/g, " ").trim()
   if ((!optional && !cleaned) || cleaned.length > max) throw new Error(`${field} 长度无效`)
   return cleaned
 }
 function normalizedUrl(value: unknown, field: string) {
   const raw = text(value, field, 2048)
-  try { return publicAttachmentUrl(raw) }
-  catch { throw new Error(`${field} 必须是公网、无凭据、无非默认端口的 HTTP/HTTPS 地址`) }
+  try {
+    return publicAttachmentUrl(raw)
+  } catch {
+    throw new Error(`${field} 必须是公网、无凭据、无非默认端口的 HTTP/HTTPS 地址`)
+  }
 }
 export function sourceConfigHost(value: string) {
   return new URL(value).hostname.toLowerCase().replace(/^www\./, "")
@@ -85,7 +104,9 @@ export function validateSourceDraftBase(value: unknown): SourceDraftBase {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("缺少当前草稿和发布版本基线，请刷新")
   const base = value as SourceDraftBase
   if (!(base.draftHash === null || (typeof base.draftHash === "string" && /^[a-f0-9]{64}$/.test(base.draftHash)))
-    || !Number.isSafeInteger(base.activeRevision) || base.activeRevision < 0) throw new Error("配置版本基线无效")
+    || !Number.isSafeInteger(base.activeRevision) || base.activeRevision < 0) {
+    throw new Error("配置版本基线无效")
+  }
   return { draftHash: base.draftHash, activeRevision: base.activeRevision }
 }
 export function validateIntelligenceSourceConfig(value: unknown, seed: IntelligenceSource): IntelligenceSourceConfig {
@@ -104,7 +125,8 @@ export function validateIntelligenceSourceConfig(value: unknown, seed: Intellige
   if (typeof input.enabled !== "boolean") throw new Error("启用状态必须是布尔值")
   if (!Number.isSafeInteger(input.priority) || Number(input.priority) < 0 || Number(input.priority) > 1000) throw new Error("优先级须为 0–1000 的整数")
   if (!Array.isArray(input.endpoints) || input.endpoints.length > sourceConfigPolicy.maxEndpoints) throw new Error("单个来源最多配置 12 个栏目")
-  const seenIds = new Set<string>(), seenUrls = new Set<string>()
+  const seenIds = new Set<string>()
+  const seenUrls = new Set<string>()
   const endpoints = input.endpoints.map((raw, index): IntelligenceSourceEndpoint => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`第 ${index + 1} 个栏目无效`)
     const endpoint = raw as Record<string, unknown>
@@ -123,11 +145,20 @@ export function validateIntelligenceSourceConfig(value: unknown, seed: Intellige
   if (input.enabled && mode === "explicit" && !endpoints.some(endpoint => endpoint.enabled)) throw new Error("明确栏目模式至少需要一个启用栏目")
   if (mode === "feed" && endpoints.length) throw new Error("结构化读取器不使用网页栏目")
   return {
-    schemaVersion: 1, id: seed.id, topic: seed.topic, name: text(input.name, "来源名称"), home,
-    group: text(input.group, "来源分组", 80), level: text(input.level, "来源层级", 40),
-    region: text(input.region, "地区", 40, true), city: text(input.city, "城市", 40, true),
-    priority: Number(input.priority), enabled: input.enabled, collectionMode: mode as IntelligenceCollectionMode,
-    ...(seed.newsnowId ? { newsnowId: seed.newsnowId } : {}), endpoints,
+    schemaVersion: 1,
+    id: seed.id,
+    topic: seed.topic,
+    name: text(input.name, "来源名称"),
+    home,
+    group: text(input.group, "来源分组", 80),
+    level: text(input.level, "来源层级", 40),
+    region: text(input.region, "地区", 40, true),
+    city: text(input.city, "城市", 40, true),
+    priority: Number(input.priority),
+    enabled: input.enabled,
+    collectionMode: mode as IntelligenceCollectionMode,
+    ...(seed.newsnowId ? { newsnowId: seed.newsnowId } : {}),
+    endpoints,
   }
 }
 export function sourceConfigCanPublish(config: IntelligenceSourceConfig) {
@@ -135,26 +166,42 @@ export function sourceConfigCanPublish(config: IntelligenceSourceConfig) {
 }
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable)
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, stable(item)]))
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, stable(item)]))
+  }
   return value
 }
-export function intelligenceSourceConfigJson(config: IntelligenceSourceConfig) { return JSON.stringify(stable(config)) }
+export function intelligenceSourceConfigJson(config: IntelligenceSourceConfig) {
+  return JSON.stringify(stable(config))
+}
 async function digest(value: string) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, "0")).join("")
 }
-export function intelligenceSourceConfigHash(config: IntelligenceSourceConfig) { return digest(intelligenceSourceConfigJson(config)) }
+export function intelligenceSourceConfigHash(config: IntelligenceSourceConfig) {
+  return digest(intelligenceSourceConfigJson(config))
+}
 export function sourceCatalogRevision(sources: IntelligenceSourceConfig[]) {
   const sorted = [...sources].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   return digest(JSON.stringify(stable(sorted)))
 }
-export async function sourceConfigEnvelope(sources: IntelligenceSourceConfig[]): Promise<PublishedSourceConfigEnvelope> {
+export async function sourceConfigEnvelope(sources: PublishedSourceConfig[]): Promise<PublishedSourceConfigEnvelope> {
   return { schemaVersion: 1, topic: "building", revision: await sourceCatalogRevision(sources), generatedAt: Date.now(), sources }
 }
 export function applyIntelligenceSourceConfig(seed: IntelligenceSource, config: IntelligenceSourceConfig): IntelligenceSource & { collectionMode: IntelligenceCollectionMode } {
-  return { ...seed, name: config.name, home: config.home, group: config.group, level: config.level,
-    region: config.region, city: config.city, priority: config.priority, enabled: config.enabled,
-    columns: config.endpoints.filter(endpoint => endpoint.enabled).map(endpoint => ({ name: endpoint.name, url: endpoint.url })),
-    collectionMode: config.collectionMode }
+  return { ...seed, name: config.name, home: config.home, group: config.group, level: config.level, region: config.region, city: config.city, priority: config.priority, enabled: config.enabled, columns: config.endpoints.filter(endpoint => endpoint.enabled).map(endpoint => ({ name: endpoint.name, url: endpoint.url })), collectionMode: config.collectionMode }
+}
+export function intelligenceSourceCollectionScope(source: IntelligenceSource) {
+  return JSON.stringify({ id: source.id, home: source.home, columns: source.columns })
+}
+
+/** Only persisted administrator drafts and authenticated catalogs may supply this seed. */
+export function customSourceSeed(value: unknown): IntelligenceSource | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const input = value as Record<string, unknown>
+  if (typeof input.id !== "string" || !/^custom-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(input.id) || input.topic !== "building") return undefined
+  const source: IntelligenceSource = { id: input.id, topic: "building", name: "新来源", home: normalizedUrl(input.home, "官网地址"), group: "公开来源", level: "其他", region: "", city: "", priority: 50, enabled: false }
+  const config = validateIntelligenceSourceConfig(value, source)
+  return applyIntelligenceSourceConfig(source, config)
 }

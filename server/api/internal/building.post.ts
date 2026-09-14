@@ -1,6 +1,7 @@
 import { createError, defineEventHandler, setHeaders } from "h3"
 import { BuildingError } from "@shared/building-contract"
 import { machineRequest } from "../../building/auth"
+import { publishedBuildingSourceOverrides } from "../../utils/source-config-store"
 import { activateBuilding, buildingDB, buildingMeta, initializeBuilding, knownRecords, publishBatch } from "../../building/store"
 import { buildingStatus, maintainBuilding, relayPolicy } from "../../building/relay-budget"
 import { pendingRuntimeSourceTests, saveRuntimeSourceTest } from "../../source-admin/runtime-source-test"
@@ -21,7 +22,7 @@ export default defineEventHandler(async (event) => {
       case "collection-finish":return finishCollection(event, owner, body)
       case "init":return initializeBuilding(db)
       case "version":return buildingMeta(db)
-      case "publish":return publishBatch(db, owner, body)
+      case "publish":return publishBatch(db, owner, body, await publishedBuildingSourceOverrides(event))
       case "known":return knownRecords(db, body.keys)
       case "export":{
         if (typeof body.after !== "string" || body.after.length > 200) throw new BuildingError(400, "导出位置无效")

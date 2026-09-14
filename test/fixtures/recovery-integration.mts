@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises"
 import { registerHooks } from "node:module"
 import { basename } from "node:path"
 import process from "node:process"
+import { intelligenceSources } from "../../shared/official-sources"
 import { buildingHash, normalizeBatchItem } from "../../shared/building-contract"
 
 const importFresh = (path: string) => import(path)
@@ -48,14 +49,15 @@ const fs = {
     return { writeFile: (value: string) => fs.writeFile(path, value), async close() {}, async sync() {} }
   },
 }
-Object.assign(globalThis, { recoveryTestFs: fs, recoveryPair: pair })
+Object.assign(globalThis, { recoveryTestSources: intelligenceSources, recoveryTestFs: fs, recoveryPair: pair })
 const fakeFs = `data:text/javascript,${encodeURIComponent("export const {readFile,writeFile,rename,chmod,mkdir,unlink,open}=globalThis.recoveryTestFs")}`
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.includes("/tools/ai-bridge/")) {
       // Legacy multi-source recovery fixtures exercise alias/receipt semantics;
       // production authorization is independently covered by collection-scope.test.ts.
-      if (specifier === "./collection-scope") return { url: `data:text/javascript,${encodeURIComponent("export const collectionSourceId='official-fujian';export const collectionSourceAllowed=()=>true;export const collectionItemAllowed=()=>true;export const assertCollectionColumns=()=>{};export const scopedPublicationBatch=(_snapshot,batch)=>batch;")}`, shortCircuit: true }
+      if (specifier === "./source-config-client") return { url: `data:text/javascript,${encodeURIComponent("export const collectionSourceCatalog=async()=>globalThis.recoveryTestSources;export const resolveCollectionSource=async(source)=>source;export const sourceConfigProvenance=async()=>({origin:'fixture'});")}`, shortCircuit: true }
+      if (specifier === "./collection-scope") return { url: `data:text/javascript,${encodeURIComponent("export const collectionScopeKey=()=> 'fixture-scope';export const collectionSourceId='official-fujian';export const collectionSourceAllowed=()=>true;export const collectionItemAllowed=()=>true;export const assertCollectionColumns=()=>{};export const scopedPublicationBatch=(_snapshot,batch)=>batch;")}`, shortCircuit: true }
       if (specifier === "./antigravity-session.mjs") return { url: `data:text/javascript,${encodeURIComponent("export const agyModel=\"gemini-3.8-flash-low\"")}`, shortCircuit: true }
       if (specifier === "node:fs/promises") return { url: fakeFs, shortCircuit: true }
       if (specifier === "./collect-source") return { url: `data:text/javascript,${encodeURIComponent("export async function collectSource(source){return {items:globalThis.titleTest.mode==='off'?[globalThis.recoveryPair.pending]:globalThis.titleTest.hidden?[]:globalThis.titleTest.items.map(i=>['body-incomplete','transport-failure'].includes(globalThis.titleTest.mode)?{...i,sourceId:source.id,url:i.url+'?fixture_id='+source.id}:i),warnings:[],columns:[]}}")}`, shortCircuit: true }
@@ -266,6 +268,31 @@ titleTest.mode = "invalid"
 disk.set("published.json", JSON.stringify({ articles: [] }))
 await importFresh("../../tools/ai-bridge/mac-batch.ts?title=versions-fail")
 assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 2)
+for (const scope of ["obsolete-config", undefined]) {
+  reset()
+  titleCalls.length = 0
+  bodyCalls.length = 0
+  titleTest.mode = "keep"
+  titleTest.hidden = false
+  titleTest.items = [pair.pending]
+  disk.set("published.json", JSON.stringify({ articles: [] }))
+  disk.set("result.json", JSON.stringify({ articles: [], decisions: [], pendingCandidates: [{ ...pair.pending, titleScreened: true, collectionScope: scope }] }))
+  await importFresh(`../../tools/ai-bridge/mac-batch.ts?scope=${scope}`)
+  assert.deepEqual(titleCalls, [1], "freshly collected current configuration replaces stale or missing queued scope")
+  assert.deepEqual(bodyCalls, [1])
+  assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 0)
+}
+reset()
+titleCalls.length = 0
+bodyCalls.length = 0
+titleTest.hidden = true
+disk.set("published.json", JSON.stringify({ articles: [] }))
+disk.set("result.json", JSON.stringify({ articles: [], decisions: [], pendingCandidates: [{ ...pair.pending, titleScreened: true, collectionScope: "obsolete-config" }] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?scope=only-obsolete")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 1)
+assert.deepEqual(titleCalls, [])
+assert.deepEqual(bodyCalls, [])
+titleTest.hidden = false
 reset()
 titleTest.mode = "original-title"
 titleTest.items = [pair.pending]

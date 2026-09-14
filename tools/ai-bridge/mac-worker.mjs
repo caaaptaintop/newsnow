@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url"
 
 import { agyModel } from "./antigravity-session.mjs"
 
-export const workerSources = ["official-mohurd"]
+export const workerSources = ["all"]
 export const workerModel = agyModel
 export function shouldRun(status, now = Date.now()) {
   return !status?.retryAfter || now >= status.retryAfter

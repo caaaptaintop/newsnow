@@ -1,41 +1,26 @@
 import type { IntelligenceSource } from "../../shared/intelligence"
+import { intelligenceSourceCollectionScope as collectionScopeKey } from "../../shared/source-config"
 
-export const collectionSourceId = "official-mohurd"
-export const collectionColumns = new Map([
-  ["政策发布", "https://www.mohurd.gov.cn/zhengcefabu/index.html"],
-  ["建设要闻", "https://www.mohurd.gov.cn/xinwen/gzdt/index.html"],
-  ["标准公告", "https://www.mohurd.gov.cn/gongkai/fdzdgknr/bzgg/index.html"],
-  ["标准征求意见", "https://www.mohurd.gov.cn/gongkai/fdzdgknr/zqyj/index.html"],
-])
-
-export function collectionSourceAllowed(id: string) {
-  return id === collectionSourceId
+export { intelligenceSourceCollectionScope as collectionScopeKey } from "../../shared/source-config"
+export function collectionSourceAllowed(id: string, sources: readonly IntelligenceSource[] = []) {
+  return sources.some(source => source.id === id && source.enabled)
+}
+export function collectionItemAllowed(item: { sourceId: string, column?: string }, sources: readonly IntelligenceSource[] = []) {
+  return sources.some(source => source.id === item.sourceId && source.enabled && source.columns?.some(c => c.name === item.column))
 }
 
-export function collectionItemAllowed(item: { sourceId: string, column?: string }) {
-  return collectionSourceAllowed(item.sourceId) && collectionColumns.has(item.column ?? "")
-}
-
-export function assertCollectionColumns(source: IntelligenceSource) {
-  if (!collectionSourceAllowed(source.id) || source.columns?.length !== collectionColumns.size
-    || new Set(source.columns.map(column => column.name)).size !== collectionColumns.size
-    || source.columns.some(column => collectionColumns.get(column.name) !== column.url)) {
-    throw new Error("采集范围必须是已核验的住建部四栏目；配置变更需重新核验")
-  }
-}
-
-/** Keep out-of-scope records on disk, but never include them in a new publication. */
-export function scopedPublicationBatch(snapshot: any, batch: any) {
+/** Keep excluded records on disk and preserve all previously published articles. */
+export function scopedPublicationBatch(snapshot: any, batch: any, sources: readonly IntelligenceSource[] = []) {
   const existing = new Map<string, any>(snapshot.articles.map((a: any) => [a.key, a]))
   return {
     ...batch,
-    articles: batch.articles.filter(collectionItemAllowed),
-    decisions: batch.decisions.filter((d: any) => collectionSourceAllowed(d.sourceId)),
-    states: (batch.states ?? []).filter((s: any) => collectionSourceAllowed(s.id)),
+    articles: batch.articles.filter((a: any) => collectionItemAllowed(a, sources) && (existing.has(a.key) || sources.some(source => source.id === a.sourceId && a.collectionScope === collectionScopeKey(source)))),
+    decisions: batch.decisions.filter((d: any) => collectionSourceAllowed(d.sourceId, sources)),
+    states: (batch.states ?? []).filter((s: any) => collectionSourceAllowed(s.id, sources)),
     attachmentUpdates: (batch.attachmentUpdates ?? []).filter((u: any) => {
       const article = existing.get(u?.key)
       if (!article) throw new Error("附件更新对象不存在，保留批次等待核验")
-      return collectionItemAllowed(article)
+      return collectionItemAllowed(article, sources)
     }),
   }
 }

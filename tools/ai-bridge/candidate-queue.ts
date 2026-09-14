@@ -9,7 +9,7 @@ export function prioritizeCandidates<T extends { publishedAt?: number }>(items: 
 
 /** Store list metadata only; title screening is never a publication decision. */
 export function queuedCandidate(item: any, sourceId: string, screened = false) {
-  return { key: item.key, sourceId, title: item.title, url: item.url, column: item.column ?? "", publishedAt: item.publishedAt, titleScreened: screened }
+  return { key: item.key, sourceId, title: item.title, url: item.url, column: item.column ?? "", publishedAt: item.publishedAt, titleScreened: screened, ...(item.collectionScope ? { collectionScope: item.collectionScope } : {}) }
 }
 export async function saveBatchResult(path: string, value: unknown) {
   const temporary = `${path}.pending`
