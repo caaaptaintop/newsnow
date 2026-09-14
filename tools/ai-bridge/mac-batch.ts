@@ -24,7 +24,7 @@ const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
 const sourceId = option("--source", collectionSourceId)
 if (sourceId !== "all" && sourceId.split(",").some(id => !collectionSourceAllowed(id))) throw new Error("仅允许采集已核验的住建部四栏目")
-const selectedSources = intelligenceSources.filter(s => isPublishedSource(s) && collectionSourceAllowed(s.id))
+const selectedSources = intelligenceSources.filter(s => isPublishedSource(s) && collectionSourceAllowed(s.id) && (sourceId === "all" || sourceId.split(",").includes(s.id)))
 const model = option("--model", agyModel)
 const limit = Number(option("--limit", "12"))
 if (!selectedSources.length || !Number.isInteger(limit) || limit < 1 || limit > 30) throw new Error("Choose a configured source and limit 1–30")
