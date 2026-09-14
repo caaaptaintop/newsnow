@@ -7,10 +7,25 @@ import { basename } from "node:path"
 import process from "node:process"
 import { buildingHash, normalizeBatchItem } from "../../shared/building-contract"
 
+const importFresh = (path: string) => import(path)
+
 const pair = JSON.parse(await readFile(new URL("./fujian-protocol-pair.json", import.meta.url), "utf8"))
 const disk = new Map<string, string>()
 const identity = generateKeyPairSync("ed25519")
 const requests: any[] = []
+const titleCalls: number[] = []
+const bodyCalls: number[] = []
+const titleTest: any = { mode: "off", hidden: false, failKnown: false, items: [] }
+Object.assign(globalThis, { titleTest, titleCalls, bodyCalls })
+const summaries: any[] = []
+const log = console.log
+console.log = (...args) => {
+  try {
+    const value = JSON.parse(args[0])
+    if (value.storage === "D1" && "publishedArticles" in value) summaries.push(value)
+  } catch {}
+  log(...args)
+}
 const fs = {
   async readFile(path: string) {
     const value = disk.get(basename(path))
@@ -30,7 +45,7 @@ const fs = {
     disk.delete(basename(path))
   },
   async open(path: string) {
-    return { writeFile: (value: string) => fs.writeFile(path, value), async close() {} }
+    return { writeFile: (value: string) => fs.writeFile(path, value), async close() {}, async sync() {} }
   },
 }
 Object.assign(globalThis, { recoveryTestFs: fs, recoveryPair: pair })
@@ -38,9 +53,20 @@ const fakeFs = `data:text/javascript,${encodeURIComponent("export const {readFil
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.includes("/tools/ai-bridge/")) {
+      if (specifier === "./antigravity-session.mjs") return { url: `data:text/javascript,${encodeURIComponent("export const agyModel=\"gemini-3.8-flash-low\"")}`, shortCircuit: true }
       if (specifier === "node:fs/promises") return { url: fakeFs, shortCircuit: true }
-      if (specifier === "./collect-source") return { url: `data:text/javascript,${encodeURIComponent("export async function collectSource(){return {items:[globalThis.recoveryPair.pending],warnings:[],columns:[]}}")}`, shortCircuit: true }
-      if (specifier === "./local-codex.mjs") return { url: `data:text/javascript,${encodeURIComponent("export async function localCodex(){throw new Error('MODEL MUST NOT RUN')} ")}`, shortCircuit: true }
+      if (specifier === "./collect-source") return { url: `data:text/javascript,${encodeURIComponent("export async function collectSource(){return {items:globalThis.titleTest.mode==='off'?[globalThis.recoveryPair.pending]:globalThis.titleTest.hidden?[]:globalThis.titleTest.items,warnings:[],columns:[]}}")}`, shortCircuit: true }
+      if (specifier === "./enrich-article") return { url: `data:text/javascript,${encodeURIComponent("export async function enrichOfficialArticlesForClassify(){return {enrichments:new Map(),fetchFailed:0,insufficient:0}};export function officialArticlePersistedMetadata(){return {}}")}`, shortCircuit: true }
+      if (specifier === "./local-antigravity.mjs") {
+        return { url: `data:text/javascript,${encodeURIComponent(`export async function localAntigravity(model,messages){
+        if(globalThis.titleTest.mode==='off')throw new Error('MODEL MUST NOT RUN');
+        const inputs=JSON.parse(messages[1].content),screen=messages[0].content.includes('标题初筛员');
+        (screen?globalThis.titleCalls:globalThis.bodyCalls).push(inputs.length);
+        if(globalThis.titleTest.mode==='invalid')return {items:[]};
+        if(globalThis.titleTest.mode==='original-title')return {items:inputs.map(i=>({key:i.key,keep:true,title:'AI擅自改写的标题',category:'good_housing',relatedCategories:[],tags:[],contentType:'通知公告',importance:80,summary:'住宅品质相关事项',reason:'住宅品质'}))};
+        return {items:inputs.map(i=>({key:i.key,keep:screen&&globalThis.titleTest.mode==='keep',reason:'隔离测试决定'}))};
+      }`)}`, shortCircuit: true }
+      }
     }
     return nextResolve(specifier, context)
   },
@@ -52,7 +78,8 @@ globalThis.fetch = async (url: any, options: any) => {
   assert(verify(null, Buffer.from(message), identity.publicKey, Buffer.from(options.headers["X-Building-Signature"], "base64")))
   const body = JSON.parse(options.body)
   requests.push(body)
-  return Response.json(body.action === "version" ? { revision: 17 } : body.action === "known" ? { records: [{ key: pair.retained.key, title: pair.retained.title }] } : { ok: true })
+  if (body.action === "known" && titleTest.failKnown) return new Response("unavailable", { status: 503 })
+  return Response.json(body.action === "version" ? { revision: 17 } : body.action === "known" ? { records: titleTest.mode === "off" ? [{ key: pair.retained.key, title: pair.retained.title }] : [] } : { ok: true })
 }
 function reset() {
   disk.clear()
@@ -68,6 +95,8 @@ for (const withAttachments of [false, true]) {
   const staleItems = [normalizeBatchItem({ kind: "article", key: pair.pending.key, data: pair.pending })]
   disk.set("publish-outbox.json", JSON.stringify({ hash: await buildingHash(JSON.stringify(staleItems)), batchId: "stale_alias", baseRevision: 16, items: staleItems }))
   await import(`../../tools/ai-bridge/apply-batch.ts?attachments=${withAttachments}`)
+  assert.equal(summaries.at(-1).publishedArticles, 0)
+  assert.equal(summaries.at(-1).updatedArticles, withAttachments ? 1 : 0)
   const published = requests.filter(r => r.action === "publish").flatMap(r => r.items)
   assert.deepEqual(published.filter(item => item.kind === "article").map(item => item.key), withAttachments ? [pair.retained.key] : [])
   assert(!requests.some(r => r.batchId === "stale_alias"))
@@ -75,9 +104,20 @@ for (const withAttachments of [false, true]) {
   console.log(JSON.stringify({ scenario: "apply-publisher", withAttachments, requests }))
   const count = requests.length
   await import(`../../tools/ai-bridge/apply-batch.ts?replay=${withAttachments}`)
+  assert.equal(summaries.at(-1).publishedArticles, 0)
+  assert.equal(summaries.at(-1).updatedArticles, 0)
   assert.deepEqual(requests.slice(count).map(r => r.action), ["maintain"])
   assert.equal(JSON.parse(disk.get("publish-outbox.json")!), null)
 }
+reset()
+disk.set("published.json", JSON.stringify({ articles: [], generatedAt: 1 }))
+disk.set("result.json", JSON.stringify({ articles: [pair.pending], decisions: [{ key: pair.pending.key, sourceId: pair.pending.sourceId, title: pair.pending.title, keep: true, at: 1789002200000 }], states: [] }))
+await importFresh("../../tools/ai-bridge/apply-batch.ts?counts=new")
+assert.equal(summaries.at(-1).publishedArticles, 1)
+assert.equal(summaries.at(-1).updatedArticles, 0)
+await importFresh("../../tools/ai-bridge/apply-batch.ts?counts=replay")
+assert.equal(summaries.at(-1).publishedArticles, 0)
+assert.equal(summaries.at(-1).updatedArticles, 0)
 // R1: inspect actual signed publish requests, not just the outbox state.
 const observeOnly = process.argv.includes("--observe-r1")
 const A = { title: "A.pdf", url: "https://zjt.fujian.gov.cn/files/A.pdf" }
@@ -134,6 +174,80 @@ assert.deepEqual(new Set(known.keys), new Set([pair.pending.key, pair.retained.k
 const collected = JSON.parse(disk.get("result.json")!)
 assert.equal(collected.states[0].status, "ok")
 assert.equal(collected.states[0].accepted, 0)
+assert.deepEqual(collected.states[0].collectionCounts, { discovered: 0, duplicates: 1, failed: 0 })
 assert.equal(collected.articles.length, 0)
 console.log(JSON.stringify({ scenario: "collector-known", requests, state: collected.states[0] }))
+
+reset()
+titleTest.mode = "invalid"
+titleTest.items = [pair.pending]
+process.argv = [process.argv[0], process.argv[1], "--source", "official-fujian,official-shanghai"]
+disk.set("published.json", JSON.stringify({ articles: [] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=invalid")
+assert.equal(titleCalls.length, 1, "invalid AI response stops subsequent source AI calls")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 2)
+assert.equal(JSON.parse(disk.get("result.json")!).decisions.length, 0)
+
+reset()
+titleCalls.length = 0
+titleTest.mode = "reject"
+titleTest.failKnown = true
+process.argv = [process.argv[0], process.argv[1], "--source", "official-fujian"]
+disk.set("published.json", JSON.stringify({ articles: [] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=known-failure")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 1)
+assert.equal(titleCalls.length, 0)
+titleTest.failKnown = false
+titleTest.hidden = true
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=known-recovery")
+assert.equal(titleCalls.length, 1, "queued title survives disappearance from current list")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 0)
+assert.equal(JSON.parse(disk.get("result.json")!).decisions.length, 1)
+
+reset()
+titleCalls.length = 0
+bodyCalls.length = 0
+titleTest.mode = "keep"
+titleTest.hidden = false
+titleTest.items = Array.from({ length: 31 }, (_, n) => ({ ...pair.pending, title: `住宅项目规范第${n}项通知`, url: `${pair.pending.url}?test=${n}` }))
+process.argv = [process.argv[0], process.argv[1], "--source", "official-fujian", "--limit", "1"]
+disk.set("published.json", JSON.stringify({ articles: [] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=queue-first")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 30)
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=queue-second")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 29)
+assert.deepEqual(titleCalls, [30, 1], "screened queued titles do not require another title AI call")
+assert.deepEqual(bodyCalls, [1, 1])
+reset()
+titleCalls.length = 0
+bodyCalls.length = 0
+titleTest.mode = "keep"
+titleTest.hidden = false
+titleTest.items = [pair.pending, { ...pair.pending, title: `${pair.pending.title}修订版` }]
+disk.set("published.json", JSON.stringify({ articles: [] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=versions-first")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 1)
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates[0].title, titleTest.items[1].title)
+assert.deepEqual(titleCalls, [1], "same-key versions are screened separately")
+for (const round of ["second", "third", "fourth"]) {
+  await importFresh(`../../tools/ai-bridge/mac-batch.ts?title=versions-${round}`)
+  assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 0)
+}
+assert.deepEqual(titleCalls, [1, 1], "processed title versions never alternate back into AI")
+assert.deepEqual(bodyCalls, [1, 1])
+assert.equal(JSON.parse(disk.get("result.json")!).processedVersions.length, 2)
+reset()
+titleTest.mode = "invalid"
+disk.set("published.json", JSON.stringify({ articles: [] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=versions-fail")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 2)
+reset()
+titleTest.mode = "original-title"
+titleTest.items = [pair.pending]
+disk.set("published.json", JSON.stringify({ articles: [] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?title=preserve-original")
+const originalResult = JSON.parse(disk.get("result.json")!)
+assert.equal(originalResult.articles[0].title, pair.pending.title, "AI title cannot overwrite source title")
+assert.equal(originalResult.decisions[0].title, pair.pending.title)
+assert.equal(JSON.parse(disk.get("PENDING-classification.json")!).input[0].title, pair.pending.title)
 console.log("RECOVERY_INTEGRATION_PASS")

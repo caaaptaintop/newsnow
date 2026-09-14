@@ -41,7 +41,7 @@ const api="/internal/api/sources"
 let collectionBusy=false
 async function collectionState(method='GET'){
  if(collectionBusy)return;collectionBusy=true
- try{const r=await fetch('/internal/api/collection',{method,credentials:'same-origin',headers:{'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify({action:'collect'})}:{})});if(!r.ok)throw new Error('采集状态暂不可用');const d=await r.json(),j=d.job;document.getElementById('collectionStatus').textContent=j?({queued:'已排队，等待 Mac 接收',running:'正在采集、分析和发布',complete:'更新成功',error:'更新失败，请检查 Mac 后重试'}[j.state]||'状态未知')+(j.message?' · '+j.message:'')+(j.finishedAt?' · '+new Date(j.finishedAt).toLocaleString():''):'暂无手动采集任务';document.getElementById('collectNow').disabled=!!j&&['queued','running'].includes(j.state)}catch(e){document.getElementById('collectionStatus').textContent=e.message}finally{collectionBusy=false}
+ try{const r=await fetch('/internal/api/collection',{method,credentials:'same-origin',headers:{'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify({action:'collect'})}:{})});if(!r.ok)throw new Error('采集状态暂不可用');const d=await r.json(),j=d.job;document.getElementById('collectionStatus').textContent=j?({queued:'已排队，等待 Mac 接收',running:'正在采集、分析和发布',complete:'本轮完成',error:'更新失败，请检查 Mac 后重试'}[j.state]||'状态未知')+(j.message?' · '+j.message:'')+(j.finishedAt?' · '+new Date(j.finishedAt).toLocaleString():''):'暂无手动采集任务';document.getElementById('collectNow').disabled=!!j&&['queued','running'].includes(j.state)}catch(e){document.getElementById('collectionStatus').textContent=e.message}finally{collectionBusy=false}
 }
 document.getElementById('collectNow').onclick=()=>collectionState('POST')
 collectionState();setInterval(()=>collectionState(),10000)

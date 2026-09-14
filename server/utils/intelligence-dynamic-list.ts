@@ -1,11 +1,12 @@
+import { load } from "cheerio"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl } from "../../shared/intelligence"
-import { intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceParseList, type OfficialCandidate } from "./intelligence-parser"
+import { type OfficialCandidate, intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceParseList } from "./intelligence-parser"
 import { sourceFetchError } from "./source-fetch-diagnostic"
 
 const jpaasUnitPath = "/api-gateway/jpaas-publish-server/front/page/build/unit"
 const jpaasPageSize = 20
-const jpaasMaxPages = 5
+const jpaasMaxPages = 100
 const collectionHeaders = { "User-Agent": "CapxIntelligence/1.0 (official public information reader)" }
 
 export interface IntelligenceFetchListOptions {
@@ -14,7 +15,7 @@ export interface IntelligenceFetchListOptions {
 }
 
 function htmlEntityText(value: string) {
-  return value.replace(/&amp;/gi, "&").replace(/&#38;/g, "&").replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+  return value.replace(/&amp;/gi, "&").replace(/&#38;/g, "&").replace(/&quot;/gi, "\"").replace(/&#39;|&apos;/gi, "'")
 }
 function parameter(window: string, key: string) {
   const kebab = key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`)
@@ -29,8 +30,10 @@ function parameter(window: string, key: string) {
     const match = pattern.exec(window)
     if (!match) continue
     let value = htmlEntityText(match[1]).trim()
-    try { value = decodeURIComponent(value) } catch { /* Keep literal value. */ }
-    if (value && value.length <= 180 && !/[\u0000-\u001f<>]/.test(value)) return value
+    try {
+      value = decodeURIComponent(value)
+    } catch { /* Keep literal value. */ }
+    if (value && value.length <= 180 && !/[<>]/.test(value) && ![...value].some(char => char.charCodeAt(0) < 32)) return value
   }
 }
 /** Extract one coherent JPaas unit request without evaluating site JavaScript. */
@@ -54,12 +57,11 @@ export function intelligenceJPaasUnitUrl(html: string, source: IntelligenceSourc
   const candidates = windows.map(({ local, broad }) => {
     const values = Object.fromEntries(required.map(key => [key, parameter(local, key) ?? parameter(broad, key)])) as Record<(typeof required)[number], string | undefined>
     return { window: local, values }
-  }).filter(candidate => required.every(key => candidate.values[key]))
-    .sort((a, b) => {
-      const score = (value: typeof a) => (/list|列表|栏目/i.test(value.values.tagId!) ? 4 : 0)
-        + (value.values.pageType === "column" ? 2 : 0) + (value.values.parseType === "bulidstatic" ? 1 : 0)
-      return score(b) - score(a)
-    })
+  }).filter(candidate => required.every(key => candidate.values[key])).sort((a, b) => {
+    const score = (value: typeof a) => (/list|列表|栏目/i.test(value.values.tagId!) ? 4 : 0)
+      + (value.values.pageType === "column" ? 2 : 0) + (value.values.parseType === "bulidstatic" ? 1 : 0)
+    return score(b) - score(a)
+  })
   const selected = candidates[0]
   if (!selected) return
   const url = new URL(jpaasUnitPath, base)
@@ -76,10 +78,10 @@ function pagedUnitUrl(endpoint: string, source: IntelligenceSource, base: string
 }
 function nextPageAvailable(fragment: string, pageNumber: number, items: OfficialCandidate[]) {
   const controls = [...fragment.matchAll(/\bdata-page\s*=\s*["']?(\d{1,6})["']?/gi)].map(match => Number(match[1]))
-  return controls.length ? controls.includes(pageNumber + 1) : items.length > 0
+  return controls.length ? controls.some(number => number > pageNumber) : items.length > 0
 }
 function pageSignature(items: OfficialCandidate[]) {
-  return items.map(item => intelligenceCanonicalUrl(item.url)).filter(Boolean).sort().join("\n")
+  return items.map(item => JSON.stringify([intelligenceCanonicalUrl(item.url), item.title])).sort().join("\n")
 }
 async function readBounded(response: Response, maxBytes: number) {
   const reader = response.body?.getReader()
@@ -91,31 +93,54 @@ async function readBounded(response: Response, maxBytes: number) {
       const { done, value } = await reader.read()
       if (done) break
       length += value.byteLength
-      if (length > maxBytes) { await reader.cancel(); throw new Error("动态栏目响应超过采集大小上限") }
+      if (length > maxBytes) {
+        await reader.cancel()
+        throw new Error("动态栏目响应超过采集大小上限")
+      }
       chunks.push(value)
     }
-  } finally { reader.releaseLock() }
+  } finally {
+    reader.releaseLock()
+  }
   const bytes = new Uint8Array(length)
   let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
   return bytes
 }
 async function dynamicFragment(endpoint: string, pageUrl: string, source: IntelligenceSource, pageNumber: number) {
   const requestUrl = pagedUnitUrl(endpoint, source, pageUrl, pageNumber)
   if (!requestUrl) throw new Error("动态栏目分页地址未通过白名单校验")
   const response = await fetch(requestUrl, {
-    redirect: "manual", signal: AbortSignal.timeout(12000),
-    headers: { ...collectionHeaders, "Accept": "application/json,text/plain,*/*", "Referer": pageUrl },
+    redirect: "manual",
+    signal: AbortSignal.timeout(12000),
+    headers: { ...collectionHeaders, Accept: "application/json,text/plain,*/*", Referer: pageUrl },
   })
-  if (response.status >= 300 && response.status < 400) { await response.body?.cancel(); throw new Error("动态栏目接口发生跳转，未自动跟随") }
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel()
+    throw new Error("动态栏目接口发生跳转，未自动跟随")
+  }
   if (!response.ok) throw await sourceFetchError(response)
   const type = response.headers.get("content-type") ?? ""
-  if (type && !/json|text/i.test(type)) { await response.body?.cancel(); throw new Error("动态栏目接口未返回 JSON") }
+  if (type && !/json|text/i.test(type)) {
+    await response.body?.cancel()
+    throw new Error("动态栏目接口未返回 JSON")
+  }
   let raw: string
-  try { raw = new TextDecoder("utf-8", { fatal: true }).decode(await readBounded(response, 512_000)) }
-  catch (error) { if (error instanceof TypeError) throw new Error("动态栏目接口不是有效 UTF-8"); throw error }
+  try {
+    raw = new TextDecoder("utf-8", { fatal: true }).decode(await readBounded(response, 512_000))
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("动态栏目接口不是有效 UTF-8")
+    throw error
+  }
   let payload: unknown
-  try { payload = JSON.parse(raw) } catch { throw new Error("动态栏目接口 JSON 无效") }
+  try {
+    payload = JSON.parse(raw)
+  } catch {
+    throw new Error("动态栏目接口 JSON 无效")
+  }
   const fragment = (payload as { data?: { html?: unknown } })?.data?.html
   if (typeof fragment !== "string" || !fragment.trim() || new TextEncoder().encode(fragment).length > 384_000) throw new Error("动态栏目接口未返回可解析列表")
   if (/验证码|安全验证|访问过于频繁|checking your browser|just a moment/i.test(fragment.slice(0, 12000)) && fragment.length < 30000) throw new Error("动态栏目接口要求访问验证，未绕过验证")
@@ -123,21 +148,88 @@ async function dynamicFragment(endpoint: string, pageUrl: string, source: Intell
 }
 function mergeItems(target: Map<string, OfficialCandidate>, items: OfficialCandidate[]) {
   for (const item of items) {
-    const key = intelligenceCanonicalUrl(item.url)
-    if (key && !target.has(key)) target.set(key, item)
+    const url = intelligenceCanonicalUrl(item.url)
+    const key = JSON.stringify([url, item.title])
+    if (url && !target.has(key)) target.set(key, item)
   }
+}
+
+function staticNextPage(html: string, source: IntelligenceSource, base: string) {
+  const $ = load(html)
+  for (const anchor of $("a[href]").toArray()) {
+    const a = $(anchor)
+    if (!/\bnext\b/i.test(a.attr("rel") ?? "") && !/^(?:下一页|下页|next|›|»)$/i.test(a.text().trim())) continue
+    const href = a.attr("href")?.trim()
+    if (!href || /^(?:javascript:|#)/i.test(href)) continue
+    const target = intelligenceAllowedUrl(href, source, base)
+    if (target && new URL(target).origin === new URL(base).origin && target !== base) return target
+  }
+}
+
+async function staticPages(page: Awaited<ReturnType<typeof intelligenceFetchHtml>>, initial: OfficialCandidate[], source: IntelligenceSource, column: { name: string, url: string }, options: IntelligenceFetchListOptions) {
+  const maxPages = Math.max(1, Math.min(jpaasMaxPages, options.maxPages ?? 1))
+  const collected = new Map<string, OfficialCandidate>()
+  mergeItems(collected, initial)
+  const visited = new Set([page.url])
+  const signatures = new Set([pageSignature(initial)])
+  let current = page
+  let currentItems = initial
+  let pages = 1
+  let paginationError: string | undefined
+  const allowNext = async () => {
+    try {
+      return options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true
+    } catch (error: any) {
+      paginationError = error.message
+      return false
+    }
+  }
+  let next = staticNextPage(current.html, source, current.url)
+  let wanted = !!next && maxPages > 1 && await allowNext()
+  let paginationStalled = false
+  while (next && wanted && pages < maxPages) {
+    if (visited.has(next)) {
+      paginationStalled = true
+      break
+    }
+    visited.add(next)
+    try {
+      current = await intelligenceFetchHtml(next, source)
+    } catch (error: any) {
+      paginationError = error.message
+      break
+    }
+    currentItems = intelligenceParseList(current.html, source, { ...column, url: current.url })
+    pages++
+    if (!currentItems.length) {
+      next = undefined
+      break
+    }
+    const signature = pageSignature(currentItems)
+    if (signatures.has(signature)) {
+      paginationStalled = true
+      next = undefined
+      break
+    }
+    signatures.add(signature)
+    mergeItems(collected, currentItems)
+    next = staticNextPage(current.html, source, current.url)
+    wanted = !!next && await allowNext()
+  }
+  const paginationUnverified = maxPages > 1 && !next && /createPageHTML|pageCount|下一页/.test(current.html)
+  return { ...page, items: [...collected.values()], dynamic: false, pages, capped: !!next && wanted && pages >= maxPages, paginationStalled, paginationError, paginationUnverified }
 }
 
 /**
  * Fetch one list page. Production collection may continue through a bounded
  * JPaas pagination window only when the caller says the current page still
- * contains unseen relevant records. Admin configuration tests intentionally
+ * contains unprocessed records. Admin configuration tests intentionally
  * use the default one-page budget.
  */
 export async function intelligenceFetchList(url: string, source: IntelligenceSource, column: { name: string, url: string }, options: IntelligenceFetchListOptions = {}) {
   const page = await intelligenceFetchHtml(url, source)
   let items = intelligenceParseList(page.html, source, { ...column, url: page.url })
-  if (items.length) return { ...page, items, dynamic: false, pages: 1, capped: false }
+  if (items.length) return staticPages(page, items, source, column, options)
   const endpoint = intelligenceJPaasUnitUrl(page.html, source, page.url)
   if (!endpoint) return { ...page, items, dynamic: false, pages: 1, capped: false }
 
@@ -150,25 +242,50 @@ export async function intelligenceFetchList(url: string, source: IntelligenceSou
   let pages = 1
   let currentItems = items
   let signature = pageSignature(currentItems)
+  const signatures = new Set([signature])
   let paginationStalled = false
+  let paginationError: string | undefined
+  const allowNext = async () => {
+    try {
+      return options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true
+    } catch (error: any) {
+      paginationError = error.message
+      return false
+    }
+  }
   let nextAvailable = nextPageAvailable(fragment, pages, currentItems)
   let continueWanted = nextAvailable && maxPages > 1
-    ? options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true
+    ? await allowNext()
     : false
 
   while (nextAvailable && continueWanted && pages < maxPages) {
     const nextPage = pages + 1
-    fragment = await dynamicFragment(endpoint, page.url, source, nextPage)
+    try {
+      fragment = await dynamicFragment(endpoint, page.url, source, nextPage)
+    } catch (error: any) {
+      paginationError = error.message
+      break
+    }
     currentItems = intelligenceParseList(fragment, source, { ...column, url: page.url })
     pages = nextPage
-    if (!currentItems.length) { nextAvailable = false; continueWanted = false; break }
+    if (!currentItems.length) {
+      nextAvailable = false
+      continueWanted = false
+      break
+    }
     const nextSignature = pageSignature(currentItems)
-    if (nextSignature && nextSignature === signature) { paginationStalled = true; nextAvailable = false; continueWanted = false; break }
+    if (nextSignature && signatures.has(nextSignature)) {
+      paginationStalled = true
+      nextAvailable = false
+      continueWanted = false
+      break
+    }
     signature = nextSignature
+    signatures.add(signature)
     mergeItems(collected, currentItems)
     nextAvailable = nextPageAvailable(fragment, pages, currentItems)
-    continueWanted = nextAvailable && (options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true)
+    continueWanted = nextAvailable && await allowNext()
   }
   const capped = pages >= maxPages && nextAvailable && continueWanted
-  return { ...page, items: [...collected.values()], dynamic: true, pages, capped, paginationStalled }
+  return { ...page, items: [...collected.values()], dynamic: true, pages, capped, paginationStalled, paginationError }
 }

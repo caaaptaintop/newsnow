@@ -9,7 +9,7 @@ import { memoryBuildingDB } from "./helpers/building-db"
 const now = 1788960000000
 function article(i: number, extra: any = {}) {
   const key = `building:${createHash("sha256").update(String(i)).digest("hex")}`
-  return normalizeBatchItem({ kind: "article", key, data: { key, topic: "building", title: `建筑测试通知${i}`, url: `https://zjt.jiangsu.gov.cn/a/${i}`, sourceId: "official-jiangsu", sourceName: "江苏住建", sourceGroup: "住建官方", sourceLevel: "省级", region: "江苏", city: i % 2 ? "南京" : "苏州", column: "通知", publishedAt: now - i * 1000, collectedAt: now, publicationDate: { status: "verified", basis: "article", url: `https://zjt.jiangsu.gov.cn/a/${i}`, checkedAt: now }, category: "intelligent_construction", relatedCategories: ["policy"], tags: ["BIM"], contentType: "通知公告", importance: 80, summary: "建筑资讯摘要", evidence: "title", attachments: [], model: "unit-test-model", analysisVersion: "v3-test", ...extra } })
+  return normalizeBatchItem({ kind: "article", key, data: { key, topic: "building", title: `建筑测试通知${i}`, url: `https://zjt.jiangsu.gov.cn/a/${i}`, sourceId: "official-jiangsu", sourceName: "江苏住建", sourceGroup: "住建官方", sourceLevel: "省级", region: "江苏", city: i % 2 ? "南京" : "苏州", column: "通知", publishedAt: now - i * 1000, collectedAt: now, publicationDate: { status: "verified", basis: "article", url: `https://zjt.jiangsu.gov.cn/a/${i}`, checkedAt: now }, category: "intelligent_construction", relatedCategories: ["urban_renewal"], tags: ["BIM"], contentType: "通知公告", importance: 80, summary: "建筑资讯摘要", evidence: "title", attachments: [], model: "unit-test-model", analysisVersion: "v3-test", ...extra } })
 }
 let memory: ReturnType<typeof memoryBuildingDB>
 let counter = 0
@@ -135,15 +135,15 @@ describe("sql pagination and full-range filters", () => {
     expect(second.articles[0].key).not.toBe(first.articles[0].key)
   })
   it("counts and filters only the primary category for historical relatedCategories", async () => {
-    await publish([article(1), article(2, { category: "policy", relatedCategories: ["intelligent_construction"] })])
+    await publish([article(1), article(2, { category: "urban_renewal", relatedCategories: ["intelligent_construction"] })])
     const all = await readPage(memory.db, new URLSearchParams(), now)
     expect(all.total).toBe(2)
     expect(all.totalPublished).toBe(2)
-    expect(all.facets.categories).toEqual({ intelligent_construction: 1, policy: 1 })
+    expect(all.facets.categories).toEqual({ intelligent_construction: 1, urban_renewal: 1 })
     const primary = await readPage(memory.db, new URLSearchParams({ category: "intelligent_construction" }), now)
     expect(primary.total).toBe(1)
     expect(primary.articles.map(a => a.key)).toEqual([article(1).key])
-    const relatedOnly = await readPage(memory.db, new URLSearchParams({ category: "policy" }), now)
+    const relatedOnly = await readPage(memory.db, new URLSearchParams({ category: "urban_renewal" }), now)
     expect(relatedOnly.total).toBe(1)
     expect(relatedOnly.articles.map(a => a.key)).toEqual([article(2).key])
   })

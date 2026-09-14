@@ -39,13 +39,26 @@ function saveJson(path, value) {
     closeSync(directory)
   }
 }
+export function resultMessage(states, result) {
+  const count = value => Number.isSafeInteger(value) && value >= 0
+  const measured = states.length > 0 && states.every(s => s.collectionCounts && ["discovered", "duplicates", "failed"].every(k => count(s.collectionCounts[k])))
+  const sum = key => states.reduce((n, s) => n + s.collectionCounts[key], 0)
+  const publication = result.publication
+  const published = result.state === "complete" && count(publication?.publishedArticles) && count(publication?.updatedArticles)
+    ? `新发布 ${publication.publishedArticles} 条 · 更新 ${publication.updatedArticles} 条`
+    : "发布条数未确认"
+  const counts = measured ? `新发现 ${sum("discovered")} 条 · ${published} · 重复跳过 ${sum("duplicates")} 条 · 处理失败 ${sum("failed")} 条` : `本轮采集条数未记录 · ${published}`
+  const errors = states.filter(s => s.status === "error").length
+  const partial = states.filter(s => s.status === "partial").length
+  return `${counts}；${states.length ? `来源异常 ${errors} 个、部分成功 ${partial} 个` : "来源状态未确认"}`
+}
 export function completion(root, result) {
-  if (result.state !== "complete" || result.skipped) return { state: "error", message: "采集未完成，请检查Mac运行状态后重试" }
   const path = resolve(root, ".data/mac-batch/result.json")
   const states = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")).states ?? []).filter(s => s.checkedAt >= result.startedAt) : []
-  if (states.length && states.every(s => s.status === "error")) return { state: "error", message: "本轮所有信息源采集失败，未获取新文章" }
-  if (states.some(s => s.status !== "ok")) return { state: "complete", message: "发布流程完成，部分信息源受限；请查看来源运行状态" }
-  return { state: "complete", message: "采集与发布流程完成；没有新文章时内容保持不变" }
+  const message = resultMessage(states, result)
+  if (result.state !== "complete" || result.skipped) return { state: "error", message: `${message}；流程未完成，请检查后重试` }
+  if (states.length && states.every(s => s.status === "error")) return { state: "error", message }
+  return { state: "complete", message }
 }
 export async function collectionTick(root, { request = publisherRequest, worker = runWorker, now = new Date() } = {}) {
   const dir = resolve(root, ".data/mac-batch")
@@ -89,10 +102,11 @@ export async function collectionTick(root, { request = publisherRequest, worker 
       saveJson(statePath, { lastSlot: slot })
     }
     let result
+    const startedAt = Date.now()
     try {
       result = await worker(root)
     } catch {
-      result = { state: "error" }
+      result = { state: "error", startedAt }
     }
     if (job) {
       const receipt = { id: job.id, ...completion(root, result) }

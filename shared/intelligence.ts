@@ -10,7 +10,6 @@ export const intelligenceTopics = {
     green_building: "绿色低碳",
     urban_renewal: "城市更新",
     industrialization: "建筑工业化",
-    policy: "综合政策与标准",
   } },
   health: { name: "运动健康", categories: healthTopicLines },
   ai: { name: "AI 科技", categories: { models: "大模型", products: "AI 产品", agents: "智能体", coding: "AI 编程", hardware: "AI 硬件", research: "研究与治理" } },

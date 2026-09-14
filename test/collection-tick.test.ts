@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { it, vi } from "vitest"
-import { blockedByLock, collectionTick, completion, scheduledSlot } from "../tools/ai-bridge/collection-tick.mjs"
+import { blockedByLock, collectionTick, completion, resultMessage, scheduledSlot } from "../tools/ai-bridge/collection-tick.mjs"
 
 it("shanghai schedule has only 5,12,16 hours", () => {
   assert.equal(scheduledSlot(new Date("2026-09-13T21:00:00Z")), "2026-09-14T05")
@@ -150,8 +150,19 @@ it("current source errors are not reported as successful collection", () => {
     writeFileSync(join(dir, "result.json"), JSON.stringify({ states: [{ checkedAt: 20, status: "error" }, { checkedAt: 5, status: "ok" }] }))
     assert.equal(completion(root, { state: "complete", startedAt: 10 }).state, "error")
     writeFileSync(join(dir, "result.json"), JSON.stringify({ states: [{ checkedAt: 20, status: "partial" }] }))
-    assert.match(completion(root, { state: "complete", startedAt: 10 }).message, /部分信息源受限/)
+    assert.match(completion(root, { state: "complete", startedAt: 10 }).message, /部分成功 1 个/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+it("run summary separates articles, updates, duplicates and source failures", () => {
+  const states = [
+    { status: "ok", collectionCounts: { discovered: 12, duplicates: 30, failed: 0 } },
+    { status: "partial", collectionCounts: { discovered: 5, duplicates: 4, failed: 3 } },
+    { status: "error", collectionCounts: { discovered: 0, duplicates: 0, failed: 0 } },
+  ]
+  assert.equal(resultMessage(states, { state: "complete", publication: { publishedArticles: 8, updatedArticles: 2 } }), "新发现 17 条 · 新发布 8 条 · 更新 2 条 · 重复跳过 34 条 · 处理失败 3 条；来源异常 1 个、部分成功 1 个")
+  assert.match(resultMessage(states, { state: "error", publication: { publishedArticles: 8, updatedArticles: 2 } }), /发布条数未确认/)
+  assert.match(resultMessage([{ status: "ok" }], { state: "complete" }), /本轮采集条数未记录/)
 })

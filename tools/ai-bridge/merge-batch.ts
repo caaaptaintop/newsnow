@@ -4,7 +4,6 @@ import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceHttpUrl
 import { intelligenceMetadataOnly } from "../../shared/intelligence-storage"
 import { intelligenceSources } from "../../shared/official-sources"
 import { intelligenceNormalizeDecision } from "../../server/utils/intelligence-ai"
-import { buildingRecallScore } from "../../shared/building-recall"
 import { batchArticleKeys } from "./article-keys"
 
 export function mergeBatch(snapshot: any, batch: any) {
@@ -23,7 +22,6 @@ export function mergeBatch(snapshot: any, batch: any) {
     const decision = batch.decisions.find((d: any) => d.key === key && d.title === article.title && d.keep === true)
     if (!source || key !== article.key || source.topic !== article.topic || article.analysisVersion !== intelligenceVersion
       || !decision || !intelligenceNormalizeDecision({ ...article, keep: true }, new Set([key]), source.topic)
-      || (source.topic === "building" && buildingRecallScore(article) <= 0)
       || !Number.isFinite(article.collectedAt) || !["title", "body"].includes(article.evidence)) {
       throw new Error("Batch article failed validation")
     }
