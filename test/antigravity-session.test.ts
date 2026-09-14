@@ -92,7 +92,9 @@ it("hook preserves Chinese characters split across socket byte boundaries", asyn
     hook.stdin.end(JSON.stringify({ conversationId: v.id, modelName: "gemini-3.8-flash-low", workspacePaths: [v.runDir], transcriptPath: `${v.root}/brain/${v.id}/transcript.jsonl` }))
     const [code] = await once(hook, "close")
     expect(code).toBe(0)
-    expect(JSON.parse(output).injectSteps[0].ephemeralMessage.endsWith(original)).toBe(true)
+    const steps = JSON.parse(output).injectSteps
+    expect(steps[0].ephemeralMessage).toContain("No tools")
+    expect(steps.slice(1).map((step: any) => step.ephemeralMessage.replace(/^Input part \d+\/\d+:\n/, "")).join("")).toBe(original)
   } finally {
     await new Promise<void>(accept => server.close(() => accept()))
     const closed = once(writer, "close")
