@@ -22,6 +22,7 @@ export function sourceAdminPage(email: string, nonce = "") {
   </aside>
   <main class="main">
     <div class="top"><div><h1 id="title">建筑信息源</h1><div class="muted">配置状态与真实运行健康分开显示；修改后须测试并发布。</div></div><button class="btn" id="reload">刷新状态</button></div>
+    <section class="section" aria-label="采集更新"><b>文章更新</b><p class="muted">每天 05:00、12:00、16:00（北京时间）自动采集并上线。</p><button class="btn primary" id="collectNow">立即采集并上线</button><p id="collectionStatus" role="status">正在读取采集状态…</p><small class="muted">Mac 在线且唤醒时执行；手动请求通常在一分钟内接收。重复点击不会重复创建正在进行的任务。</small></section>
     <div class="summary" id="summary"></div>
     <div class="toolbar">
       <input id="search" placeholder="搜索来源名称或域名">
@@ -37,6 +38,14 @@ export function sourceAdminPage(email: string, nonce = "") {
 <div class="toast" id="toast"></div>
 <script nonce="${nonce}">
 const api="/internal/api/sources"
+let collectionBusy=false
+async function collectionState(method='GET'){
+ if(collectionBusy)return;collectionBusy=true
+ try{const r=await fetch('/internal/api/collection',{method,credentials:'same-origin',headers:{'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify({action:'collect'})}:{})});if(!r.ok)throw new Error('采集状态暂不可用');const d=await r.json(),j=d.job;document.getElementById('collectionStatus').textContent=j?({queued:'已排队，等待 Mac 接收',running:'正在采集、分析和发布',complete:'更新成功',error:'更新失败，请检查 Mac 后重试'}[j.state]||'状态未知')+(j.message?' · '+j.message:'')+(j.finishedAt?' · '+new Date(j.finishedAt).toLocaleString():''):'暂无手动采集任务';document.getElementById('collectNow').disabled=!!j&&['queued','running'].includes(j.state)}catch(e){document.getElementById('collectionStatus').textContent=e.message}finally{collectionBusy=false}
+}
+document.getElementById('collectNow').onclick=()=>collectionState('POST')
+collectionState();setInterval(()=>collectionState(),10000)
+
 ${sourceTestResultScript}
 const labels={building:"建筑",ai:"AI",finance:"财经",health:"健康"}
 const kindLabels={policy:"政策文件",notice:"通知/公告",interpretation:"政策解读",news:"工作动态",standard:"标准规范",other:"其他"}
