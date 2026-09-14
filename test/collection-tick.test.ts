@@ -44,7 +44,7 @@ it("manual claim is required and completion reported", async () => {
       return body.action === "collection-poll" ? { job: { id: "test" } } : { claimed: true }
     } })
     assert.equal(calls, 1)
-    assert.equal(events.at(-1).state, "complete")
+    assert.equal(events.at(-1)?.state, "complete")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -98,7 +98,7 @@ it("worker exception completes manual job as error", async () => {
       events.push(body)
       return body.action === "collection-poll" ? { job: { id: "test" } } : { claimed: true }
     } })
-    assert.equal(events.at(-1).state, "error")
+    assert.equal(events.at(-1)?.state, "error")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
