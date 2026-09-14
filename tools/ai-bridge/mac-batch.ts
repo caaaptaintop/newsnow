@@ -143,13 +143,7 @@ try {
         }
       } }
       selectedCount = titleItems.length
-      let titleDecisions
-      try {
-        titleDecisions = await screenBuildingTitles(ai, titleItems)
-      } catch (error: any) {
-        modelFailure = error.message
-        throw error
-      }
+      const titleDecisions = await screenBuildingTitles(ai, titleItems)
       const rejected = new Set<string>()
       for (const item of titleItems) {
         const decision = titleDecisions.get(item.key)
@@ -186,13 +180,7 @@ try {
           column: item.column,
           ...(enrichments.get(item.key)?.text ? { body: enrichments.get(item.key)!.text } : {}),
         }))
-        let classified
-        try {
-          classified = await classifyThenPending(ai, source.topic, classifyItems, { sourceId: source.id, model, selected, usage })
-        } catch (error: any) {
-          modelFailure = error.message
-          throw error
-        }
+        const classified = await classifyThenPending(ai, source.topic, classifyItems, { sourceId: source.id, model, selected, usage })
         const { decisions, pending: pendingClassification } = classified
         await writeFile(resolve(outputDir, "PENDING-classification.json"), `${JSON.stringify(pendingClassification, null, 2)}\n`)
         if (decisions.size !== selected.length) throw new Error("Incomplete classifications; no results saved")
