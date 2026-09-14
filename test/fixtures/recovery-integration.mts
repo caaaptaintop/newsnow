@@ -55,16 +55,18 @@ registerHooks({
     if (context.parentURL?.includes("/tools/ai-bridge/")) {
       if (specifier === "./antigravity-session.mjs") return { url: `data:text/javascript,${encodeURIComponent("export const agyModel=\"gemini-3.8-flash-low\"")}`, shortCircuit: true }
       if (specifier === "node:fs/promises") return { url: fakeFs, shortCircuit: true }
-      if (specifier === "./collect-source") return { url: `data:text/javascript,${encodeURIComponent("export async function collectSource(){return {items:globalThis.titleTest.mode==='off'?[globalThis.recoveryPair.pending]:globalThis.titleTest.hidden?[]:globalThis.titleTest.items,warnings:[],columns:[]}}")}`, shortCircuit: true }
+      if (specifier === "./collect-source") return { url: `data:text/javascript,${encodeURIComponent("export async function collectSource(source){return {items:globalThis.titleTest.mode==='off'?[globalThis.recoveryPair.pending]:globalThis.titleTest.hidden?[]:globalThis.titleTest.items.map(i=>['body-incomplete','transport-failure'].includes(globalThis.titleTest.mode)?{...i,sourceId:source.id,url:i.url+'?fixture_id='+source.id}:i),warnings:[],columns:[]}}")}`, shortCircuit: true }
       if (specifier === "./enrich-article") return { url: `data:text/javascript,${encodeURIComponent("export async function enrichOfficialArticlesForClassify(){return {enrichments:new Map(),fetchFailed:0,insufficient:0}};export function officialArticlePersistedMetadata(){return {}}")}`, shortCircuit: true }
       if (specifier === "./local-antigravity.mjs") {
         return { url: `data:text/javascript,${encodeURIComponent(`export async function localAntigravity(model,messages){
         if(globalThis.titleTest.mode==='off')throw new Error('MODEL MUST NOT RUN');
         const inputs=JSON.parse(messages[1].content),screen=messages[0].content.includes('标题初筛员');
         (screen?globalThis.titleCalls:globalThis.bodyCalls).push(inputs.length);
+        if(globalThis.titleTest.mode==='transport-failure')throw new Error('AGY isolation check failed');
         if(globalThis.titleTest.mode==='invalid')return {items:[]};
+        if(globalThis.titleTest.mode==='body-incomplete'&&!screen&&globalThis.bodyCalls.length===1)return {items:[]};
         if(globalThis.titleTest.mode==='original-title')return {items:inputs.map(i=>({key:i.key,keep:true,title:'AI擅自改写的标题',category:'good_housing',relatedCategories:[],tags:[],contentType:'通知公告',importance:80,summary:'住宅品质相关事项',reason:'住宅品质'}))};
-        return {items:inputs.map(i=>({key:i.key,keep:screen&&globalThis.titleTest.mode==='keep',reason:'隔离测试决定'}))};
+        return {items:inputs.map(i=>({key:i.key,keep:screen&&['keep','body-incomplete'].includes(globalThis.titleTest.mode),reason:'隔离测试决定'}))};
       }`)}`, shortCircuit: true }
       }
     }
@@ -184,9 +186,29 @@ titleTest.items = [pair.pending]
 process.argv = [process.argv[0], process.argv[1], "--source", "official-fujian,official-shanghai"]
 disk.set("published.json", JSON.stringify({ articles: [] }))
 await importFresh("../../tools/ai-bridge/mac-batch.ts?title=invalid")
-assert.equal(titleCalls.length, 1, "invalid AI response stops subsequent source AI calls")
+assert.equal(titleCalls.length, 2, "invalid classification keeps its candidates but allows subsequent source AI calls")
 assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 2)
 assert.equal(JSON.parse(disk.get("result.json")!).decisions.length, 0)
+
+for (const mode of ["body-incomplete", "transport-failure"]) {
+  reset()
+  titleCalls.length = 0
+  bodyCalls.length = 0
+  titleTest.mode = mode
+  disk.set("published.json", JSON.stringify({ articles: [] }))
+  await importFresh(`../../tools/ai-bridge/mac-batch.ts?failure-scope=${mode}`)
+  const result = JSON.parse(disk.get("result.json")!)
+  if (mode === "body-incomplete") {
+    assert.equal(titleCalls.length, 2)
+    assert.equal(bodyCalls.length, 2, "incomplete body classifications do not pause the next source")
+    assert.equal(result.pendingCandidates.length, 1, "failed source is kept for retry")
+    assert.equal(result.decisions.length, 1, "next source completed")
+  } else {
+    assert.equal(titleCalls.length, 1, "provider isolation failure still stops all subsequent calls")
+    assert.equal(result.pendingCandidates.length, 2)
+    assert.equal(result.decisions.length, 0)
+  }
+}
 
 reset()
 titleCalls.length = 0
