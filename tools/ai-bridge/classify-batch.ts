@@ -3,7 +3,7 @@ import { healthTopicLines, healthTopicTriggers } from "../../shared/topics"
 import { type IntelligenceDecision, intelligenceClassify, intelligenceParseAI } from "../../server/utils/intelligence-ai"
 import type { IntelligenceTopic } from "../../shared/intelligence"
 
-export const CLASSIFY_BODY_MAX_CHARS = 1200
+export const CLASSIFY_BODY_MAX_CHARS = 100000
 export const CLASSIFY_BODY_MIN_CHARS = 80
 export const CLASSIFY_BODY_TRUNCATION_MARK = "[正文已截断]"
 
@@ -19,7 +19,7 @@ export function prepareClassifyBody(text: unknown): { body?: string, truncated: 
   const normalized = text.replace(/\s+/g, " ").trim()
   if (normalized.length < CLASSIFY_BODY_MIN_CHARS) return { truncated: false }
   if (normalized.length <= CLASSIFY_BODY_MAX_CHARS) return { body: normalized, truncated: false }
-  return { body: `${normalized.slice(0, CLASSIFY_BODY_MAX_CHARS)}${CLASSIFY_BODY_TRUNCATION_MARK}`, truncated: true }
+  throw new Error("正文超过单篇安全上限，本批停止分析；未截断正文")
 }
 
 export function classifyEvidence(text: unknown): "body" | "title" {

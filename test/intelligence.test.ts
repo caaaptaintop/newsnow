@@ -11,6 +11,21 @@ const source = officialIntelligenceSources.find(s => s.id === "official-shenzhen
 const article: IntelligenceArticle = { key: "a", topic: "building", title: "关于公布本年度智能建造试点项目名单的通知", url: `${source.home}xxgk/tzgg/content/post_123456.html`, sourceId: source.id, sourceName: source.name, sourceGroup: "住建官方", sourceLevel: "市级", region: "广东", city: "深圳", column: "通知公告", publishedAt: intelligenceDate("2026-09-03"), collectedAt: 1788451200000, attachments: [], category: "intelligent_construction", relatedCategories: ["good_housing"], tags: ["BIM", "建筑机器人"], contentType: "通知公告", importance: 80, summary: "发布智能建造试点项目名单。", evidence: "body", model: "test", analysisVersion: "test" }
 const decision = { key: "a", keep: true, category: "intelligent_construction", relatedCategories: ["good_housing", "invalid", "intelligent_construction"], tags: ["BIM", "BIM"], contentType: "通知公告", importance: 80, summary: "发布项目名单", reason: "智能建造试点" }
 
+it("preserves complete long article text without mixing attachment bytes", () => {
+  const text = `${"城市更新正文内容。".repeat(1100)}正文末尾验收标记`
+  const parsed = intelligenceParseArticle(`<div class="article-content">${text}</div>`, article, source)
+  expect(parsed.text).toBe(text)
+})
+
+it("keeps one building type and removes hidden source filters from old URLs", () => {
+  const view = buildingView("?types=热点选题&types=通知公告&types=政策文件&sources=official-shenzhen")
+  expect(view.filters.types).toEqual(["通知公告"])
+  expect(view.filters.sources).toEqual([])
+  for (const contentType of [["通知公告", "政策文件"], "热点选题", "通知公告、政策文件"]) {
+    expect(intelligenceNormalizeDecision({ ...decision, contentType }, new Set(["a"]), "building")).toBeUndefined()
+  }
+})
+
 describe("source registry", () => {
   it("registers 1 national, 31 provincial and 22 city agencies without duplicates", () => {
     expect(officialIntelligenceSources).toHaveLength(54)
@@ -245,6 +260,6 @@ describe("building page single-category contract", () => {
     expect(source).not.toContain("内容标签")
     expect(source).not.toContain("intel-quick-tags")
     expect(source).not.toContain("article.tags")
-    expect(source).toContain("每篇文章只属于一个栏目")
+    expect(source).not.toContain("每篇文章只属于一个栏目")
   })
 })

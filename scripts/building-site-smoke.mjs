@@ -102,7 +102,7 @@ try {
   assert.equal(await evaluate("[...document.querySelectorAll('.intel-filter-trigger')].some(button => button.textContent.includes('标签'))"), false, "no tag dropdown")
   assert.equal(await evaluate("document.body.innerText.includes('内容标签')"), false)
   assert.equal(await evaluate("[...document.querySelectorAll('.intel-card-labels')].some(el => el.textContent.includes('BIM'))"), false)
-  assert.equal(await evaluate("document.body.innerText.includes('每篇文章只属于一个栏目')"), true)
+  assert.equal(await evaluate("document.body.innerText.includes('每篇文章只属于一个栏目')"), false)
   await send("Page.navigate", { url: "http://127.0.0.1:4174/?topic=building&tags=BIM" })
   await until("document.querySelectorAll('.intel-card').length===3", "legacy tags do not hide articles")
   assert.equal(await evaluate("!!document.querySelector('.intel-selected')"), false, "legacy tags are not selected filters")
@@ -127,12 +127,12 @@ try {
   await click("[...document.querySelectorAll('.intel-location-region-button')].find(button=>button.textContent.includes('浙江'))")
   await click("document.querySelector('.intel-location-city-options input')")
   await until("document.querySelectorAll('.intel-card').length===3", "province plus other province city OR")
-  await click(button("类型"))
-  assert.equal(await evaluate(openMenus), 1, "only one menu can be open")
-  assert.equal(await evaluate("!!document.querySelector('.intel-location-cascade')"), false)
+  assert.equal(await evaluate("document.querySelector('[aria-label=信息类型]').multiple"), false, "single type selector")
+  assert.equal(await evaluate("document.querySelector('[aria-label=信息类型]').innerText.includes('热点选题')"), false)
+  assert.equal(await evaluate("[...document.querySelectorAll('.intel-filter-trigger')].some(b=>b.textContent.includes('来源'))"), false)
   await evaluate("document.querySelector('.intel-search input').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))")
   await until(`${openMenus}===0`, "outside pointer closes menus")
-  await click(button("来源"))
+  await click(button("发布地区"))
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
   await until(`${openMenus}===0`, "escape closes menus")
   await writeFile("building-test-results/desktop.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"))
@@ -149,7 +149,7 @@ try {
     assert.equal(requests.length, 0, `disabled route must not request any feed: ${path}`)
   }
   assert.equal(exceptions.length, 0, exceptions.join("\n"))
-  const report = { result: "pass", cases: ["building only", "no tag UI", "legacy tags do not filter", "no login/admin/AI APIs", "five-minute version check", "cities collapsed", "two-level cascader", "province/city selection", "OR geography", "mutually exclusive menus", "outside close", "Escape close", "mobile width", "old routes no fetch"], exceptions }
+  const report = { result: "pass", cases: ["building only", "no tag UI", "legacy tags do not filter", "no login/admin/AI APIs", "five-minute version check", "cities collapsed", "two-level cascader", "province/city selection", "OR geography", "single type and hidden source filter", "outside close", "Escape close", "mobile width", "old routes no fetch"], exceptions }
   await writeFile("building-test-results/report.json", JSON.stringify(report, null, 2))
   console.log(JSON.stringify(report, null, 2))
 } catch (error) {

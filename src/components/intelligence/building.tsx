@@ -5,7 +5,7 @@ import { type IntelligenceFilters, emptyIntelligenceFilters, intelligenceContent
 import { publicSite } from "@shared/public-site"
 import type { PublicIntelligenceArticle, PublicIntelligenceFeed, PublicIntelligenceSource } from "@shared/public-intelligence"
 import { AttachmentList } from "../attachment-preview"
-import { LocationFilter, type LocationGroup, MultiFilter } from "./filters"
+import { LocationFilter, type LocationGroup } from "./filters"
 import "~/styles/intelligence.css"
 import "./building.css"
 
@@ -68,7 +68,10 @@ function ArticleCard({ article }: { article: PublicIntelligenceArticle }) {
         <span className="intel-source-name">{article.sourceName}</span>
         {article.sourceGroup === "住建官方" && <span className="intel-official">官方</span>}
         <span>{[article.region, article.city && article.city !== article.region ? article.city : ""].filter(Boolean).join(" / ")}</span>
-        <time title={article.publicationDate?.status === "verified" ? "已核对信息源发布时间" : "信息源发布时间尚未核实"}>{displayDate(article.publishedAt)}</time>
+        <span className="intel-card-date">
+          <span>{article.importance >= 80 ? "重点关注" : article.importance >= 60 ? "值得关注" : "一般信息"}</span>
+          <time title={article.publicationDate?.status === "verified" ? "已核对信息源发布时间" : "信息源发布时间尚未核实"}>{displayDate(article.publishedAt)}</time>
+        </span>
       </div>
       <h2>
         {url
@@ -84,16 +87,7 @@ function ArticleCard({ article }: { article: PublicIntelligenceArticle }) {
         <span>{article.evidence === "body" ? "AI 摘要" : "标题概述"}</span>
         {article.summary}
       </p>
-      <div className="intel-card-labels">
-        <span>{categories[article.category] ?? article.category}</span>
-        <span>{article.contentType}</span>
-      </div>
-      <div className="intel-card-foot">
-        <span>{article.column}</span>
-        {article.documentNo && <span>{article.documentNo}</span>}
-        <span>{article.evidence === "title" ? "仅依据标题分析" : "依据已提取正文分析"}</span>
-        <span title="AI 编辑排序信号，不代表法定效力或客观评价">{article.importance >= 80 ? "重点关注" : article.importance >= 60 ? "值得关注" : "一般信息"}</span>
-      </div>
+      {article.documentNo && <div className="intel-card-foot">{article.documentNo}</div>}
       <AttachmentList article={article} />
       {!!article.otherSources?.length && (
         <details className="intel-attachments">
@@ -109,26 +103,9 @@ function ArticleCard({ article }: { article: PublicIntelligenceArticle }) {
     </article>
   )
 }
-function SourcePanel({ sources }: { sources: PublicIntelligenceSource[] }) {
-  return (
-    <section className="intel-source-panel" aria-label="建筑信息源">
-      <h2>建筑信息源</h2>
-      <p className="intel-muted">信息来自以下公开网站。来源清单不等于已完整收录，具体内容以原站发布为准。</p>
-      <div className="intel-source-grid">
-        {sources.map(source => (
-          <article key={source.id}>
-            <a href={source.home} target="_blank" rel="noreferrer">{source.name}</a>
-            <p>{[source.group, source.region, source.city && source.city !== source.region ? source.city : ""].filter(Boolean).join(" · ")}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-  )
-}
 export function BuildingWorkspace() {
   const [view, setView] = useState(() => buildingView())
   const [ready, setReady] = useState(false)
-  const [showSources, setShowSources] = useState(false)
   const [activeFilter, setActiveFilter] = useState<string>()
   const [refreshKey, setRefreshKey] = useState(0)
   const [search, setSearch] = useState("")
@@ -261,7 +238,6 @@ export function BuildingWorkspace() {
       <div className="intel-workspace">
         <aside className="intel-sidebar">
           <h2>建筑</h2>
-          <p>二级栏目</p>
           <nav aria-label="建筑栏目">
             <button className={!filters.category ? "is-active" : ""} type="button" onClick={() => patch({ category: "" })}>
               <span>全部信息</span>
@@ -274,7 +250,6 @@ export function BuildingWorkspace() {
               </button>
             ))}
           </nav>
-          <div className="intel-sidebar-note">每篇文章只属于一个栏目，“全部信息”汇总全部已发布资讯。</div>
         </aside>
         <section className="intel-main">
           <div className="intel-heading">
@@ -283,23 +258,16 @@ export function BuildingWorkspace() {
                 建筑 /
                 {filters.category ? categories[filters.category] : "全部信息"}
               </span>
-              <h1>{filters.category ? categories[filters.category] : "建筑情报"}</h1>
+              <h1>{filters.category ? categories[filters.category] : "全部信息"}</h1>
               <p>官方原文与公开来源，按栏目整理的建筑资讯。</p>
             </div>
             <div className="intel-actions">
-              <button type="button" className="intel-button" aria-expanded={showSources} onClick={() => setShowSources(!showSources)}>
-                <Icon kind="sources" />
-                信息源
-                {" "}
-                <small>{sources.length}</small>
-              </button>
               <button type="button" className="intel-button intel-primary" disabled={feed.isFetching} onClick={() => void refresh()}>
                 <Icon kind="refresh" />
                 {feed.isFetching ? "读取中" : "刷新"}
               </button>
             </div>
           </div>
-          {showSources && <SourcePanel sources={sources} />}
           <div className="intel-controls">
             <form className="intel-search" onSubmit={event => event.preventDefault()} role="search">
               <Icon kind="search" />
@@ -308,8 +276,13 @@ export function BuildingWorkspace() {
             </form>
             <div className="intel-filter-row">
               <LocationFilter groups={locationGroups} regions={filters.regions} cities={filters.cities} open={activeFilter === "location"} onToggle={() => toggle("location")} onChange={(regions, cities) => patch({ regions, cities })} />
-              <MultiFilter title="类型" options={intelligenceContentTypes.map(type => ({ id: type, name: type }))} value={filters.types} open={activeFilter === "types"} onToggle={() => toggle("types")} onChange={types => patch({ types })} />
-              <MultiFilter title="来源" options={sourceOptions} value={filters.sources} open={activeFilter === "sources"} onToggle={() => toggle("sources")} onChange={sources => patch({ sources })} />
+              <label className="intel-select">
+                <span>类型</span>
+                <select aria-label="信息类型" value={filters.types[0] ?? ""} onChange={event => patch({ types: event.target.value ? [event.target.value] : [] })}>
+                  <option value="">不限类型</option>
+                  {intelligenceContentTypes.filter(type => type !== "热点选题").map(type => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
               <label className="intel-select">
                 <span>时间</span>
                 <select aria-label="发布时间" value={filters.days} onChange={event => patch({ days: Number(event.target.value) })}>
@@ -413,7 +386,6 @@ export function BuildingWorkspace() {
           )}
           <div className="intel-feed">{filtered.map(article => <ArticleCard key={article.key} article={article} />)}</div>
           {feed.hasNextPage && <button type="button" className="intel-load-more" disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>{feed.isFetchingNextPage ? "正在加载…" : `显示更多（还有 ${Math.max(0, total - articles.length)} 条）`}</button>}
-          <p className="intel-disclaimer">筛选中的地区指发布机构所在地，不等同于政策适用范围。发布日期不明的内容保持未提供；摘要与分类由 AI 辅助生成，具体条款以原文为准。</p>
         </section>
       </div>
     </div>
