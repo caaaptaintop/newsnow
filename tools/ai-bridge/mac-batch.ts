@@ -15,16 +15,15 @@ import { batchArticleKeys, pageHasUnprocessed } from "./article-keys"
 import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
 import { prioritizeCandidates, queuedCandidate, saveBatchResult } from "./candidate-queue"
 import { collectionCandidates, collectionCutoff, inCollectionWindow, pageEntirelyBeforeWindow } from "./collection-window"
-import { resolvePublishedSource, sourceConfigProvenance } from "./source-config-client"
-import { assertCollectionColumns, collectionItemAllowed, collectionSourceAllowed, collectionSourceId } from "./collection-scope"
+import { resolveCollectionSource, sourceConfigProvenance } from "./source-config-client"
+import { collectionItemAllowed, collectionScopeKey } from "./collection-scope"
 
 const collectionNow = Date.now()
 const cutoff = collectionCutoff(collectionNow)
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
-const sourceId = option("--source", collectionSourceId)
-if (sourceId !== "all" && sourceId.split(",").some(id => !collectionSourceAllowed(id))) throw new Error("仅允许采集已核验的住建部四栏目")
-const selectedSources = intelligenceSources.filter(s => isPublishedSource(s) && collectionSourceAllowed(s.id) && (sourceId === "all" || sourceId.split(",").includes(s.id)))
+const sourceId = option("--source", "all")
+const selectedSources = intelligenceSources.filter(s => isPublishedSource(s) && (sourceId === "all" || sourceId.split(",").includes(s.id)))
 const model = option("--model", agyModel)
 const limit = Number(option("--limit", "12"))
 if (!selectedSources.length || !Number.isInteger(limit) || limit < 1 || limit > 30) throw new Error("Choose a configured source and limit 1–30")
@@ -49,8 +48,7 @@ const lock = await import("node:fs/promises").then(fs => fs.open(lockPath, "wx")
 await lock.writeFile(String(process.pid))
 try {
   // Resolve once for the whole process; collection, metadata and dates use the same source.
-  const configuredSources = (await Promise.all(selectedSources.map(source => resolvePublishedSource(source)))).filter(isPublishedSource)
-  configuredSources.forEach(assertCollectionColumns)
+  const configuredSources = (await Promise.all(selectedSources.map(source => resolveCollectionSource(source)))).filter(isPublishedSource)
   const sourceConfiguration = await sourceConfigProvenance()
   const collectedCache = new Map<string, any>()
   let priorBatch: any = {}
@@ -83,6 +81,7 @@ try {
   }))
   let modelFailure = ""
   for (const source of configuredSources) {
+    const scope = collectionScopeKey(source)
     let state: any = { id: source.id, checkedAt: Date.now(), status: "error" }
     let warnings: string[] = []
     let selectedCount = 0
@@ -95,13 +94,13 @@ try {
       } catch (error: any) {
         if (error.code !== "ENOENT") throw error
       }
-      const sourceItems = [...(previous.pendingCandidates ?? []).filter((i: any) => i.sourceId === source.id).map((i: any) => ({ ...i, fromQueue: true })), ...(collectedCache.get(source.id)?.items ?? [])]
+      const sourceItems = [...(previous.pendingCandidates ?? []).filter((i: any) => i.sourceId === source.id).map((i: any) => ({ ...i, fromQueue: true })), ...(collectedCache.get(source.id)?.items ?? []).map((i: any) => ({ ...i, collectionScope: scope }))]
       const captured = new Map<string, any>()
       for (const item of sourceItems) {
         if (!item.title || !intelligenceCanonicalUrl(item.url)) continue
         const key = batchArticleKeys(source.topic, source.id, item.url)[0]
         const version = JSON.stringify([key, item.title])
-        if (!captured.has(version)) captured.set(version, queuedCandidate({ ...item, key }, source.id, item.titleScreened === true))
+        if (!captured.has(version) || (item.collectionScope === scope && captured.get(version).collectionScope !== scope)) captured.set(version, queuedCandidate({ ...item, key }, source.id, item.titleScreened === true))
       }
       previous.pendingCandidates = [...(previous.pendingCandidates ?? []).filter((i: any) => i.sourceId !== source.id), ...captured.values()]
       await saveBatchResult(resolve(outputDir, "result.json"), previous)
@@ -137,9 +136,9 @@ try {
       const otherPending = (previous.pendingCandidates ?? []).filter((i: any) => i.sourceId !== source.id)
       previous.pendingCandidates = [...otherPending, ...sourceQueue]
       await saveBatchResult(resolve(outputDir, "result.json"), previous)
-      const activeQueue = prioritizeCandidates(collectionCandidates(sourceQueue.filter(collectionItemAllowed), cutoff, collectionNow))
+      const activeQueue = prioritizeCandidates(collectionCandidates(sourceQueue.filter(item => collectionItemAllowed(item, configuredSources) && item.collectionScope === scope), cutoff, collectionNow))
       const outsideWindow = sourceQueue.length - activeQueue.length
-      if (outsideWindow) warnings.push(`${outsideWindow} 条候选日期超过一年、未知或无效，本轮不分析；原记录保留`)
+      if (outsideWindow) warnings.push(`${outsideWindow} 条候选超出当前确认配置或日期超过一年、未知或无效，本轮不分析；原记录保留`)
       const titleItems = activeQueue.filter(item => !item.titleScreened).slice(0, titleScreenLimit)
       const usage: any[] = []
       const ai = { model, run: async (_model: string, params: any) => {
@@ -198,7 +197,7 @@ try {
           if (!decision.keep) return []
           const enrichment = enrichments.get(item.key)
           const evidence = classifyEvidence(enrichment?.text)
-          return [{ key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], ...(enrichment ? officialArticlePersistedMetadata(enrichment) : {}), category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence, model, analysisVersion: intelligenceVersion }]
+          return [{ collectionScope: scope, key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], ...(enrichment ? officialArticlePersistedMetadata(enrichment) : {}), category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence, model, analysisVersion: intelligenceVersion }]
         })
         for (let i = 0; i < articles.length; i += 5) {
           await Promise.all(articles.slice(i, i + 5).map(async (article) => {

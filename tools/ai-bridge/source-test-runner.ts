@@ -1,17 +1,19 @@
 import process from "node:process"
 import { type SourceConfigTestResult, testSourceConfig } from "../../server/source-admin/test-source-config"
-import type { IntelligenceSourceConfig } from "../../shared/source-config"
+import { type IntelligenceSourceConfig, validateIntelligenceSourceConfig } from "../../shared/source-config"
+import { intelligenceSources } from "../../shared/official-sources"
 import { publisherRequest } from "./publisher.mjs"
-import { collectionColumns, collectionSourceAllowed } from "./collection-scope"
 
 export function runtimeTestAllowed(job: RuntimeTestJob) {
-  const config = job.config
-  const endpoints = config?.endpoints?.filter(e => e.enabled)
-  return collectionSourceAllowed(job.sourceId) && config.id === job.sourceId
-    && config.home === "https://www.mohurd.gov.cn/" && config.collectionMode === "explicit"
-    && endpoints?.length === collectionColumns.size
-    && new Set(endpoints.map(e => e.name)).size === collectionColumns.size
-    && endpoints.every(e => collectionColumns.get(e.name) === e.url)
+  // Jobs exist only after an authenticated administrator requests a draft test.
+  const source = intelligenceSources.find(s => s.id === job.sourceId && s.topic === job.topic)
+  if (!source) return false
+  try {
+    validateIntelligenceSourceConfig(job.config, source)
+    return true
+  } catch {
+    return false
+  }
 }
 
 interface RuntimeTestJob {

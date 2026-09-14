@@ -5,13 +5,15 @@ import { isPublishedSource } from "../../shared/public-site"
 import { intelligenceSources } from "../../shared/official-sources"
 import { atomicJson, publisherRequest } from "./publisher.mjs"
 import { mergeBatch } from "./merge-batch"
+import { resolveCollectionSource } from "./source-config-client"
 import { scopedPublicationBatch } from "./collection-scope"
 
 const root = resolve(import.meta.dirname, "../..")
 const dir = resolve(root, ".data/mac-batch")
 const path = resolve(dir, "published.json")
 const snapshot = JSON.parse(await readFile(path, "utf8"))
-const batch = scopedPublicationBatch(snapshot, JSON.parse(await readFile(resolve(dir, "result.json"), "utf8")))
+const configuredSources = await Promise.all(intelligenceSources.filter(isPublishedSource).map(source => resolveCollectionSource(source)))
+const batch = scopedPublicationBatch(snapshot, JSON.parse(await readFile(resolve(dir, "result.json"), "utf8")), configuredSources)
 const result = mergeBatch(snapshot, batch)
 const sources = new Set(intelligenceSources.filter(isPublishedSource).map(s => s.id))
 const ledgerPath = resolve(dir, "published-ledger.json")

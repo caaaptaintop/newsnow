@@ -1,11 +1,18 @@
-import { createError, type H3Event } from "h3"
+import process from "node:process"
+import { type H3Event, createError } from "h3"
 import { intelligenceSources } from "../../shared/official-sources"
 import {
-  intelligenceSourceConfigHash, intelligenceSourceConfigJson, intelligenceSourceSeedConfig,
-  sourceConfigPolicy, validateIntelligenceSourceConfig, validateSourceDraftBase,
-  type IntelligenceSourceConfig, type SourceDraftBase,
+  type IntelligenceSourceConfig,
+  type SourceDraftBase,
+  intelligenceSourceConfigHash,
+  intelligenceSourceConfigJson,
+  intelligenceSourceSeedConfig,
+  sourceConfigPolicy,
+  validateIntelligenceSourceConfig,
+  validateSourceDraftBase,
 } from "../../shared/source-config"
 import { sourceTestAllowsPublish } from "../source-admin/test-source-config"
+import { collectionApprovalReason, sourceCollectionApproved } from "../../shared/source-collection-approval"
 
 interface D1Statement {
   bind: (...values: unknown[]) => D1Statement
@@ -17,8 +24,12 @@ interface D1DatabaseLike {
   batch: (statements: D1Statement[]) => Promise<Array<{ results?: Record<string, unknown>[] }>>
 }
 const schemaReady = new WeakSet<object>()
-function unavailable() { return createError({ statusCode: 503, message: "来源配置读取或保存失败；已保留原配置，请稍后重试" }) }
-function conflict() { return createError({ statusCode: 409, message: "草稿、测试或发布版本已变化，请刷新后重新确认" }) }
+function unavailable() {
+  return createError({ statusCode: 503, message: "来源配置读取或保存失败；已保留原配置，请稍后重试" })
+}
+function conflict() {
+  return createError({ statusCode: 409, message: "草稿、测试或发布版本已变化，请刷新后重新确认" })
+}
 function environment(event: H3Event) {
   const context = event.context as Record<string, any>
   return context.cloudflare?.env ?? context.platform?.env ?? context.env ?? process.env
@@ -55,11 +66,16 @@ async function rows(statement: D1Statement) {
   if (!Array.isArray(result.results)) throw unavailable()
   return result.results
 }
-async function first(statement: D1Statement) { return (await rows(statement))[0] ?? null }
+async function first(statement: D1Statement) {
+  return (await rows(statement))[0] ?? null
+}
 function parseJson<T>(value: unknown): T | undefined {
   if (typeof value !== "string") return undefined
-  try { return JSON.parse(value) as T }
-  catch { return undefined }
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
 }
 function seed(topic: string, sourceId: string) {
   const source = intelligenceSources.find(item => item.topic === topic && item.id === sourceId)
@@ -73,8 +89,9 @@ function baseGuard(db: D1DatabaseLike, id: string, topic: string, sourceId: stri
     THEN 1 ELSE 0 END)`).bind(id, topic, sourceId, base.draftHash, topic, sourceId, base.activeRevision)
 }
 async function atomic(db: D1DatabaseLike, statements: D1Statement[]) {
-  try { return await db.batch(statements) }
-  catch (error) {
+  try {
+    return await db.batch(statements)
+  } catch (error) {
     const text = String(error) + String((error as { cause?: unknown })?.cause ?? "")
     if (/source_config_state_match/.test(text)) throw conflict()
     throw unavailable()
@@ -92,7 +109,8 @@ export async function saveSourceDraft(event: H3Event, topic: string, sourceId: s
   const hash = await intelligenceSourceConfigHash(config)
   const db = sourceConfigDatabase(event)
   await ensureSourceConfigSchema(db)
-  const now = Date.now(), guard = crypto.randomUUID()
+  const now = Date.now()
+  const guard = crypto.randomUUID()
   await atomic(db, [
     baseGuard(db, guard, topic, sourceId, base),
     db.prepare(`INSERT INTO intelligence_source_config_entry
@@ -133,11 +151,11 @@ export async function publishSourceDraft(event: H3Event, topic: string, sourceId
   await ensureSourceConfigSchema(db)
   const entrySql = "SELECT * FROM intelligence_source_config_entry WHERE topic = ? AND source_id = ?"
   const repeated = async () => {
-    const row = await first(db.prepare(`SELECT entry.draft_hash, entry.active_revision, r.config_hash, r.created_at
+    const row = await first(db.prepare(`SELECT entry.draft_hash, entry.active_revision, r.config_hash, r.created_at, r.reason
       FROM intelligence_source_config_entry entry JOIN intelligence_source_config_revision r
       ON r.topic = entry.topic AND r.source_id = entry.source_id AND r.revision = entry.active_revision
       WHERE entry.topic = ? AND entry.source_id = ?`).bind(topic, sourceId))
-    if (row?.draft_hash === expectedHash && row.config_hash === expectedHash
+    if (row?.reason === collectionApprovalReason && row?.draft_hash === expectedHash && row.config_hash === expectedHash
       && [expectedRevision, expectedRevision + 1].includes(Number(row.active_revision))) {
       return { revision: Number(row.active_revision), publishedAt: Number(row.created_at), repeated: true }
     }
@@ -151,8 +169,11 @@ export async function publishSourceDraft(event: H3Event, topic: string, sourceId
   const now = Date.now()
   if (!test || Number(test.ok) !== 1 || !Number.isSafeInteger(expectedTestedAt) || Number(test.tested_at) !== expectedTestedAt
     || expectedTestedAt > now || expectedTestedAt < now - sourceConfigPolicy.testMaxAgeMs
-    || !sourceTestAllowsPublish(config, parseJson(test.result_json))) throw createError({ statusCode: 409, message: "需要一小时内、与当前草稿完全匹配且可发布的测试" })
-  const next = expectedRevision + 1, guard = crypto.randomUUID()
+    || !sourceTestAllowsPublish(config, parseJson(test.result_json))) {
+    throw createError({ statusCode: 409, message: "需要一小时内、与当前草稿完全匹配且可发布的测试" })
+  }
+  const next = expectedRevision + 1
+  const guard = crypto.randomUUID()
   try {
     await atomic(db, [
       baseGuard(db, guard, topic, sourceId, base),
@@ -161,17 +182,15 @@ export async function publishSourceDraft(event: H3Event, topic: string, sourceId
           AND ok = 1 AND tested_at = ? AND result_json = ?)
         AND COALESCE((SELECT MAX(revision) FROM intelligence_source_config_revision WHERE topic = ? AND source_id = ?), 0) = ?
         AND (SELECT draft_json FROM intelligence_source_config_entry WHERE topic = ? AND source_id = ?) = ?
-        THEN 1 ELSE 0 END)`).bind(`${guard}:test`, topic, sourceId, expectedHash, expectedTestedAt, test.result_json,
-        topic, sourceId, expectedRevision, topic, sourceId, entry.draft_json),
-      db.prepare(`INSERT INTO intelligence_source_config_revision VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'publish')`)
+        THEN 1 ELSE 0 END)`).bind(`${guard}:test`, topic, sourceId, expectedHash, expectedTestedAt, test.result_json, topic, sourceId, expectedRevision, topic, sourceId, entry.draft_json),
+      db.prepare(`INSERT INTO intelligence_source_config_revision VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collection-confirmed')`)
         .bind(topic, sourceId, next, entry.draft_json, expectedHash, test.result_json, now, email),
       db.prepare(`UPDATE intelligence_source_config_entry SET active_revision = ?, updated_at = ?, updated_by = ?
         WHERE topic = ? AND source_id = ?`).bind(next, now, email, topic, sourceId),
       db.prepare(`INSERT INTO intelligence_source_config_guard VALUES (?, CASE WHEN changes() = 1 THEN 1 ELSE 0 END)`).bind(`${guard}:after`),
       db.prepare("DELETE FROM intelligence_source_config_guard WHERE id IN (?, ?, ?)").bind(guard, `${guard}:test`, `${guard}:after`),
     ])
-  }
-  catch (error) {
+  } catch (error) {
     // A lost success response or a concurrent identical request may reuse the exact committed result.
     const done = await repeated()
     if (done) return done
@@ -203,8 +222,7 @@ async function sourceHealth(db: D1DatabaseLike, topic: string) {
         : { status: "unknown", message: "来源运行记录损坏或状态无效" })
     }
     return { records, error: undefined }
-  }
-  catch {
+  } catch {
     // Keep configuration repair available, but do not disguise a read failure as no history.
     return { records, error: "来源运行记录读取失败；不能据此判断采集健康" }
   }
@@ -217,13 +235,13 @@ function runtimeStatus(row: Record<string, unknown> | undefined, readError?: str
   return {
     status,
     message: String(row.message ?? row.error ?? (["partial", "error"].includes(status)
-      ? "本次发布记录未包含失败详情，需核对采集日志" : "")),
+      ? "本次发布记录未包含失败详情，需核对采集日志"
+      : "")),
     updatedAt: Number.isFinite(checkedAt) && checkedAt > 0 ? checkedAt : undefined,
     candidateCount: Number(row.fetched ?? 0) || 0,
     acceptedCount: Number(row.accepted ?? 0) || 0,
   }
 }
-
 
 async function configTablesExist(db: D1DatabaseLike) {
   const tables = await rows(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'
@@ -238,12 +256,16 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
   const exists = await configTablesExist(db)
   // A first GET is read-only, including the initial empty database case.
   const entries = exists ? await rows(db.prepare("SELECT * FROM intelligence_source_config_entry WHERE topic = ?").bind(topic)) : []
-  const revisions = exists ? await rows(db.prepare(`SELECT source_id, revision, config_json, config_hash, created_at, created_by, reason FROM (
+  const revisions = exists
+    ? await rows(db.prepare(`SELECT source_id, revision, config_json, config_hash, created_at, created_by, reason FROM (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY revision DESC) AS n
-    FROM intelligence_source_config_revision WHERE topic = ?) WHERE n <= 20`).bind(topic)) : []
-  const tests = exists ? await rows(db.prepare(`SELECT t.* FROM intelligence_source_config_test t
+    FROM intelligence_source_config_revision WHERE topic = ?) WHERE n <= 20`).bind(topic))
+    : []
+  const tests = exists
+    ? await rows(db.prepare(`SELECT t.* FROM intelligence_source_config_test t
     JOIN intelligence_source_config_entry e ON t.topic = e.topic AND t.source_id = e.source_id AND t.config_hash = e.draft_hash
-    WHERE t.topic = ?`).bind(topic)) : []
+    WHERE t.topic = ?`).bind(topic))
+    : []
   const health = await sourceHealth(db, topic)
   const sources = await Promise.all(intelligenceSources.filter(source => source.topic === topic).map(async (source) => {
     const entry = entries.find(row => row.source_id === source.id)
@@ -254,11 +276,7 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
     const effective = active ? await checkedConfig(topic, source.id, active.config_json, active.config_hash) : intelligenceSourceSeedConfig(source)
     const draft = entry?.draft_json ? await checkedConfig(topic, source.id, entry.draft_json, entry.draft_hash) : undefined
     const test = tests.find(row => row.source_id === source.id)
-    return { id: source.id, topic, effective, draft, draftHash: entry?.draft_hash ?? null, activeRevision,
-      configStatus: draft && entry?.draft_hash !== active?.config_hash ? "draft" : active ? "published" : effective.collectionMode === "discover" ? "unconfigured" : "seed",
-      runtime: runtimeStatus(health.records.get(source.id), health.error),
-      lastTest: test ? { hash: test.config_hash, testedAt: test.tested_at, result: parseJson(test.result_json) } : undefined,
-      history: history.map(row => ({ revision: Number(row.revision), createdAt: Number(row.created_at), createdBy: String(row.created_by), reason: String(row.reason) })) }
+    return { id: source.id, topic, effective, draft, draftHash: entry?.draft_hash ?? null, activeRevision, collectionEnabled: !!active && effective.enabled && sourceCollectionApproved(effective, active.reason), configStatus: draft && entry?.draft_hash !== active?.config_hash ? "draft" : active ? "published" : effective.collectionMode === "discover" ? "unconfigured" : "seed", runtime: runtimeStatus(health.records.get(source.id), health.error), lastTest: test ? { hash: test.config_hash, testedAt: test.tested_at, result: parseJson(test.result_json) } : undefined, history: history.map(row => ({ revision: Number(row.revision), createdAt: Number(row.created_at), createdBy: String(row.created_by), reason: String(row.reason) })) }
   }))
   const labels: Record<string, string> = { building: "建筑", ai: "AI", finance: "财经", health: "健康" }
   const topics = Object.entries(labels).map(([id, name]) => ({ id, name, count: intelligenceSources.filter(source => source.topic === id).length, enabled: id === "building" }))
@@ -268,11 +286,15 @@ export async function publishedBuildingSourceOverrides(event: H3Event) {
   const db = sourceConfigDatabase(event)
   try {
     if (!await configTablesExist(db)) return [] as IntelligenceSourceConfig[]
-    const result = await rows(db.prepare(`SELECT entry.source_id, revision.config_json, revision.config_hash
+    const result = await rows(db.prepare(`SELECT entry.source_id, revision.config_json, revision.config_hash, revision.reason
       FROM intelligence_source_config_entry entry LEFT JOIN intelligence_source_config_revision revision
       ON revision.topic = entry.topic AND revision.source_id = entry.source_id AND revision.revision = entry.active_revision
       WHERE entry.topic = 'building' AND entry.active_revision IS NOT NULL ORDER BY entry.source_id`))
-    return await Promise.all(result.map(row => checkedConfig("building", String(row.source_id), row.config_json, row.config_hash)))
+    return await Promise.all(result.map(async (row) => {
+      const config = await checkedConfig("building", String(row.source_id), row.config_json, row.config_hash)
+      return { ...config, collectionApproved: sourceCollectionApproved(config, row.reason) }
+    }))
+  } catch {
+    throw unavailable()
   }
-  catch { throw unavailable() }
 }
