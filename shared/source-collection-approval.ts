@@ -1,4 +1,4 @@
-import type { IntelligenceSourceConfig } from "./source-config"
+import type { IntelligenceSourceConfig, PublishedSourceConfig } from "./source-config"
 
 export const collectionApprovalReason = "collection-confirmed"
 const ministryColumns = new Map([
@@ -16,4 +16,30 @@ export function sourceCollectionApproved(config: IntelligenceSourceConfig, reaso
     && config.collectionMode === "explicit" && endpoints.length === 4
     && new Set(endpoints.map(e => e.name)).size === 4
     && endpoints.every(e => ministryColumns.get(e.name) === e.url)
+}
+
+export interface ApprovedSourceScope {
+  sourceId: string
+  columns: string[]
+}
+
+/** 提取当前已启用且已审批通过的公开来源范围与已启用栏目 */
+export function extractApprovedSourceScope(configs?: PublishedSourceConfig[]): ApprovedSourceScope[] | undefined {
+  if (!configs) return undefined
+  return configs
+    .filter(c => c.enabled && c.collectionApproved)
+    .map(c => ({
+      sourceId: c.id,
+      columns: (c.endpoints ?? []).filter(e => e.enabled).map(e => e.name),
+    }))
+}
+
+/** 检查文章是否在公开批准的来源与栏目范围内 */
+export function isArticlePubliclyApproved(
+  article: { sourceId?: string, column?: string },
+  approvedScope?: ApprovedSourceScope[],
+): boolean {
+  if (!approvedScope) return true
+  if (!article.sourceId || !article.column) return false
+  return approvedScope.some(s => s.sourceId === article.sourceId && s.columns.includes(article.column!))
 }
