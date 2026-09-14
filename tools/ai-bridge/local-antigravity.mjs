@@ -6,6 +6,7 @@ import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import process from "node:process"
+import { InputReceipt, inputParts } from "./antigravity-input.mjs"
 import { agyModel, agyRoot, cleanupSession, durableJson, jsonFile, pidAlive, recoverSessions, sessionSocket, verifyAgyBinary } from "./antigravity-session.mjs"
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`
@@ -13,6 +14,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
   if (model !== agyModel) throw new Error("Only verified AGY 3.8 Flash low is enabled")
   const payload = JSON.stringify(messages)
   if (!Array.isArray(messages) || messages.some(m => !["system", "user"].includes(m.role) || typeof m.content !== "string") || Buffer.byteLength(payload) > 1500000) throw new Error("Invalid or oversized AGY classification input")
+  const receipt = new InputReceipt(inputParts(payload).length + 1)
   const binary = join(homedir(), "Library/Application Support/CapxNewsNow/bin/agy-1.2.2")
   await verifyAgyBinary(binary)
   const base = resolve(import.meta.dirname, "../../.data/agy-sessions")
@@ -109,7 +111,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
               init = event
             } else if (event.event === "step_update") {
               const step = event.step_update
-              if (!["user_input", "agent_response"].includes(step.step_type) && !(step.step_type === "unknown" && step.step_index === 1 && step.state === "DONE")) throw new Error("AGY attempted a forbidden or unknown operation")
+              if (!["user_input", "agent_response"].includes(step.step_type) && !receipt.receive(step)) throw new Error("AGY attempted a forbidden or unknown operation")
             } else if (event.event === "result") {
               if (result) throw new Error("Duplicate AGY result")
               result = event.result
@@ -134,6 +136,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
         process.removeListener("SIGTERM", signal)
         process.removeListener("SIGINT", signal)
         if (stopped || code !== 0 || !init || result?.status !== "SUCCESS" || result.conversation_id !== init.conversation_id || !result.response?.trim()) reject(stopped ?? new Error(`AGY did not complete classification: exit=${code}; status=${["SUCCESS", "ERROR", "FAILED", "TIMEOUT", "CANCELLED"].includes(result?.status) ? result.status : "unknown"}; result=${Boolean(result)}; responseChars=${result?.response?.length ?? 0}; reason=${agyFailureReason(diagnosticText + JSON.stringify({ error: result?.error, errorCode: result?.error_code, errorMessage: result?.error_message }))}`))
+        else if (!receipt.complete) reject(new Error("AGY input injection incomplete; classification rejected"))
         else accept({ init, result })
       })
     })
