@@ -121,6 +121,7 @@ try {
         for (const item of list) {
           if (!item.title || !intelligenceCanonicalUrl(item.url)) continue
           const aliases = batchArticleKeys(source.topic, source.id, item.url)
+          if (item.collectionScope !== captured.get(JSON.stringify([aliases[0], item.title]))?.collectionScope) continue
           const key = aliases[0]
           if (aliases.some(alias => known.has(JSON.stringify([alias, item.title])))) {
             if (!item.fromQueue) state.collectionCounts.duplicates++

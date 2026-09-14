@@ -267,6 +267,31 @@ titleTest.mode = "invalid"
 disk.set("published.json", JSON.stringify({ articles: [] }))
 await importFresh("../../tools/ai-bridge/mac-batch.ts?title=versions-fail")
 assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 2)
+for (const scope of ["obsolete-config", undefined]) {
+  reset()
+  titleCalls.length = 0
+  bodyCalls.length = 0
+  titleTest.mode = "keep"
+  titleTest.hidden = false
+  titleTest.items = [pair.pending]
+  disk.set("published.json", JSON.stringify({ articles: [] }))
+  disk.set("result.json", JSON.stringify({ articles: [], decisions: [], pendingCandidates: [{ ...pair.pending, titleScreened: true, collectionScope: scope }] }))
+  await importFresh(`../../tools/ai-bridge/mac-batch.ts?scope=${scope}`)
+  assert.deepEqual(titleCalls, [1], "freshly collected current configuration replaces stale or missing queued scope")
+  assert.deepEqual(bodyCalls, [1])
+  assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 0)
+}
+reset()
+titleCalls.length = 0
+bodyCalls.length = 0
+titleTest.hidden = true
+disk.set("published.json", JSON.stringify({ articles: [] }))
+disk.set("result.json", JSON.stringify({ articles: [], decisions: [], pendingCandidates: [{ ...pair.pending, titleScreened: true, collectionScope: "obsolete-config" }] }))
+await importFresh("../../tools/ai-bridge/mac-batch.ts?scope=only-obsolete")
+assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 1)
+assert.deepEqual(titleCalls, [])
+assert.deepEqual(bodyCalls, [])
+titleTest.hidden = false
 reset()
 titleTest.mode = "original-title"
 titleTest.items = [pair.pending]
