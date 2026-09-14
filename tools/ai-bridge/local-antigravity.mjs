@@ -6,7 +6,7 @@ import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import process from "node:process"
-import { agyModel, agyRoot, cleanupSession, durableJson, jsonFile, pidAlive, recoverSessions, verifyAgyBinary } from "./antigravity-session.mjs"
+import { agyModel, agyRoot, cleanupSession, durableJson, jsonFile, pidAlive, recoverSessions, sessionSocket, verifyAgyBinary } from "./antigravity-session.mjs"
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`
 export async function localAntigravity(model, messages, onUsage = () => {}, options = {}) {
@@ -21,7 +21,7 @@ export async function localAntigravity(model, messages, onUsage = () => {}, opti
   await mkdir(join(runDir, ".agents"), { recursive: true, mode: 0o700 })
   const config = { runDir, root: agyRoot, nonce: randomUUID(), parentPid: process.pid, childPid: null, existingIds: [...new Set((await Promise.all(["conversations", "brain", "annotations", "presence"].map(name => readdir(join(agyRoot, name))))).flat().map(name => name.slice(0, 36)))] }
   await durableJson(join(runDir, "config.json"), config)
-  const socketPath = `/private/tmp/newsnow-agy-${config.nonce}.sock`
+  const socketPath = sessionSocket(config.nonce)
   let server
   let delivered = false
   let outcome

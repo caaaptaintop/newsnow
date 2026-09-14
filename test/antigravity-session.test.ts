@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import process from "node:process"
 import { afterEach, expect, it } from "vitest"
-import { cleanupSession, durableJson, sessionPaths } from "../tools/ai-bridge/antigravity-session.mjs"
+import { cleanupSession, durableJson, sessionPaths, sessionSocket } from "../tools/ai-bridge/antigravity-session.mjs"
 
 const temporary: string[] = []
 afterEach(async () => {
@@ -69,7 +69,7 @@ it("hook preserves Chinese characters split across socket byte boundaries", asyn
   const writer = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" })
   await once(writer, "spawn")
   await durableJson(join(v.runDir, "config.json"), { ...v.config, childPid: writer.pid })
-  const socketPath = `/private/tmp/newsnow-agy-${v.nonce}.sock`
+  const socketPath = sessionSocket(v.nonce)
   const original = "建筑绿色低碳与智能建造，保持完整正文。"
   const bytes = Buffer.from(original)
   const server = createServer((socket) => {

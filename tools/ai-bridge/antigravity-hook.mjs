@@ -1,7 +1,7 @@
 import { createConnection } from "node:net"
 import { join, resolve } from "node:path"
 import process from "node:process"
-import { agyModel, assertPlainPath, durableJson, jsonFile, pidAlive, uuidPattern } from "./antigravity-session.mjs"
+import { agyModel, assertPlainPath, durableJson, jsonFile, pidAlive, sessionSocket, uuidPattern } from "./antigravity-session.mjs"
 
 // Hooks never echo tool arguments or article content into diagnostics.
 try {
@@ -35,7 +35,7 @@ try {
     } else {
       await durableJson(join(runDir, "owned.json"), { id, nonce: config.nonce })
       const payload = await new Promise((accept, reject) => {
-        const socket = createConnection(`/private/tmp/newsnow-agy-${config.nonce}.sock`)
+        const socket = createConnection(sessionSocket(config.nonce))
         socket.setEncoding("utf8")
         let content = ""
         socket.setTimeout(5000, () => socket.destroy(new Error("Input timeout")))

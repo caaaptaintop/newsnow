@@ -8,6 +8,11 @@ export const agyModel = "gemini-3.8-flash-low"
 export const agyBinaryHash = "cabadc15a61944372bede1fdff186701c17467dd9d718e97dc79283055d3c101"
 export const agyRoot = join(homedir(), ".gemini/antigravity-cli")
 export const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/
+export const socketDirectory = process.platform === "darwin" ? "/private/tmp" : "/tmp"
+export function sessionSocket(nonce) {
+  if (!uuidPattern.test(nonce)) throw new Error("Invalid AGY socket nonce")
+  return join(socketDirectory, `newsnow-agy-${nonce}.sock`)
+}
 export async function durableJson(path, value) {
   const temp = `${path}.${randomUUID()}.pending`
   const file = await open(temp, "wx", 0o600)
@@ -95,10 +100,10 @@ export async function cleanupSession(runDir, root = agyRoot) {
     }
   }
   if (!uuidPattern.test(config.nonce)) throw new Error("Invalid AGY cleanup nonce")
-  const socketPath = `/private/tmp/newsnow-agy-${config.nonce}.sock`
+  const socketPath = sessionSocket(config.nonce)
   await assertPlainPath(socketPath)
   await rm(socketPath, { force: true })
-  await syncDirectory("/private/tmp")
+  await syncDirectory(socketDirectory)
   await rm(runDir, { recursive: true, force: true })
   await syncDirectory(resolve(runDir, ".."))
 }
