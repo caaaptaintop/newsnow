@@ -23,3 +23,19 @@ export function assertCollectionColumns(source: IntelligenceSource) {
     throw new Error("采集范围必须是已核验的住建部四栏目；配置变更需重新核验")
   }
 }
+
+/** Keep out-of-scope records on disk, but never include them in a new publication. */
+export function scopedPublicationBatch(snapshot: any, batch: any) {
+  const existing = new Map<string, any>(snapshot.articles.map((a: any) => [a.key, a]))
+  return {
+    ...batch,
+    articles: batch.articles.filter(collectionItemAllowed),
+    decisions: batch.decisions.filter((d: any) => collectionSourceAllowed(d.sourceId)),
+    states: (batch.states ?? []).filter((s: any) => collectionSourceAllowed(s.id)),
+    attachmentUpdates: (batch.attachmentUpdates ?? []).filter((u: any) => {
+      const article = existing.get(u?.key)
+      if (!article) throw new Error("附件更新对象不存在，保留批次等待核验")
+      return collectionItemAllowed(article)
+    }),
+  }
+}

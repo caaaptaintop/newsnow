@@ -1,6 +1,18 @@
-import { publisherRequest } from "./publisher.mjs"
-import { testSourceConfig, type SourceConfigTestResult } from "../../server/source-admin/test-source-config"
+import process from "node:process"
+import { type SourceConfigTestResult, testSourceConfig } from "../../server/source-admin/test-source-config"
 import type { IntelligenceSourceConfig } from "../../shared/source-config"
+import { publisherRequest } from "./publisher.mjs"
+import { collectionColumns, collectionSourceAllowed } from "./collection-scope"
+
+export function runtimeTestAllowed(job: RuntimeTestJob) {
+  const config = job.config
+  const endpoints = config?.endpoints?.filter(e => e.enabled)
+  return collectionSourceAllowed(job.sourceId) && config.id === job.sourceId
+    && config.home === "https://www.mohurd.gov.cn/" && config.collectionMode === "explicit"
+    && endpoints?.length === collectionColumns.size
+    && new Set(endpoints.map(e => e.name)).size === collectionColumns.size
+    && endpoints.every(e => collectionColumns.get(e.name) === e.url)
+}
 
 interface RuntimeTestJob {
   topic: string
@@ -11,11 +23,12 @@ interface RuntimeTestJob {
   requestedAt: number
 }
 
-export async function runPendingSourceTests({ limit = 1, request = publisherRequest, tester = testSourceConfig } = {}) {
+export async function runPendingSourceTests({ limit = 1, request = publisherRequest, tester = testSourceConfig, allowed = (_job: RuntimeTestJob) => true } = {}) {
   const pending = await request({ action: "source-tests", limit }) as { jobs?: RuntimeTestJob[] }
   const jobs = Array.isArray(pending.jobs) ? pending.jobs.slice(0, Math.max(1, Math.min(4, limit))) : []
   const completed: Array<{ sourceId: string, publishable: boolean, testedAt: number }> = []
   for (const job of jobs) {
+    if (!allowed(job)) continue
     const startedAt = Date.now()
     const result = await tester(job.config) as SourceConfigTestResult
     const saved = await request({
@@ -34,6 +47,6 @@ export async function runPendingSourceTests({ limit = 1, request = publisherRequ
 }
 
 if (process.argv[1]?.endsWith("source-test-runner.ts")) {
-  const result = await runPendingSourceTests({ limit: Number(process.argv[2] ?? 1) })
+  const result = await runPendingSourceTests({ limit: Number(process.argv[2] ?? 1), allowed: runtimeTestAllowed })
   console.log(JSON.stringify(result))
 }
