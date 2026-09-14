@@ -1,14 +1,15 @@
+import "./custom-source-http"
 import process from "node:process"
 import { type SourceConfigTestResult, testSourceConfig } from "../../server/source-admin/test-source-config"
-import { type IntelligenceSourceConfig, validateIntelligenceSourceConfig } from "../../shared/source-config"
+import { type IntelligenceSourceConfig, customSourceSeed, validateIntelligenceSourceConfig } from "../../shared/source-config"
 import { intelligenceSources } from "../../shared/official-sources"
 import { publisherRequest } from "./publisher.mjs"
 
 export function runtimeTestAllowed(job: RuntimeTestJob) {
   // Jobs exist only after an authenticated administrator requests a draft test.
-  const source = intelligenceSources.find(s => s.id === job.sourceId && s.topic === job.topic)
-  if (!source) return false
   try {
+    const source = intelligenceSources.find(s => s.id === job.sourceId && s.topic === job.topic) ?? customSourceSeed(job.config)
+    if (!source || source.id !== job.sourceId || source.topic !== job.topic) return false
     validateIntelligenceSourceConfig(job.config, source)
     return true
   } catch {

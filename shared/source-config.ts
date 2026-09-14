@@ -192,3 +192,16 @@ export async function sourceConfigEnvelope(sources: IntelligenceSourceConfig[]):
 export function applyIntelligenceSourceConfig(seed: IntelligenceSource, config: IntelligenceSourceConfig): IntelligenceSource & { collectionMode: IntelligenceCollectionMode } {
   return { ...seed, name: config.name, home: config.home, group: config.group, level: config.level, region: config.region, city: config.city, priority: config.priority, enabled: config.enabled, columns: config.endpoints.filter(endpoint => endpoint.enabled).map(endpoint => ({ name: endpoint.name, url: endpoint.url })), collectionMode: config.collectionMode }
 }
+export function intelligenceSourceCollectionScope(source: IntelligenceSource) {
+  return JSON.stringify({ id: source.id, home: source.home, columns: source.columns })
+}
+
+/** Only persisted administrator drafts and authenticated catalogs may supply this seed. */
+export function customSourceSeed(value: unknown): IntelligenceSource | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const input = value as Record<string, unknown>
+  if (typeof input.id !== "string" || !/^custom-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(input.id) || input.topic !== "building") return undefined
+  const source: IntelligenceSource = { id: input.id, topic: "building", name: "新来源", home: normalizedUrl(input.home, "官网地址"), group: "公开来源", level: "其他", region: "", city: "", priority: 50, enabled: false }
+  const config = validateIntelligenceSourceConfig(value, source)
+  return applyIntelligenceSourceConfig(source, config)
+}

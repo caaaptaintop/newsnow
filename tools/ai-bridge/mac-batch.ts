@@ -2,7 +2,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import process from "node:process"
 import { isPublishedSource } from "../../shared/public-site"
-import { intelligenceSources } from "../../shared/official-sources"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceVersion } from "../../shared/intelligence"
 import { publisherKnown } from "./publisher.mjs"
 import { collectSource } from "./collect-source"
@@ -15,7 +14,7 @@ import { batchArticleKeys, pageHasUnprocessed } from "./article-keys"
 import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
 import { prioritizeCandidates, queuedCandidate, saveBatchResult } from "./candidate-queue"
 import { collectionCandidates, collectionCutoff, inCollectionWindow, pageEntirelyBeforeWindow } from "./collection-window"
-import { resolveCollectionSource, sourceConfigProvenance } from "./source-config-client"
+import { collectionSourceCatalog, resolveCollectionSource, sourceConfigProvenance } from "./source-config-client"
 import { collectionItemAllowed, collectionScopeKey } from "./collection-scope"
 
 const collectionNow = Date.now()
@@ -23,7 +22,7 @@ const cutoff = collectionCutoff(collectionNow)
 const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
 const sourceId = option("--source", "all")
-const selectedSources = intelligenceSources.filter(s => isPublishedSource(s) && (sourceId === "all" || sourceId.split(",").includes(s.id)))
+const selectedSources = (await collectionSourceCatalog()).filter(s => isPublishedSource(s) && (sourceId === "all" || sourceId.split(",").includes(s.id)))
 const model = option("--model", agyModel)
 const limit = Number(option("--limit", "12"))
 if (!selectedSources.length || !Number.isInteger(limit) || limit < 1 || limit > 30) throw new Error("Choose a configured source and limit 1–30")

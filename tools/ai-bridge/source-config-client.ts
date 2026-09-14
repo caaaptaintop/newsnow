@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { dirname, resolve } from "node:path"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceSources } from "../../shared/official-sources"
-import { type IntelligenceSourceConfig, type PublishedSourceConfigEnvelope, applyIntelligenceSourceConfig, sourceCatalogRevision, sourceConfigCanPublish, sourceConfigPolicy, validateIntelligenceSourceConfig } from "../../shared/source-config"
+import { type IntelligenceSourceConfig, type PublishedSourceConfigEnvelope, applyIntelligenceSourceConfig, customSourceSeed, sourceCatalogRevision, sourceConfigCanPublish, sourceConfigPolicy, validateIntelligenceSourceConfig } from "../../shared/source-config"
 
 interface Catalog {
   configs: Map<string, IntelligenceSourceConfig>
@@ -18,14 +18,14 @@ export async function validateSourceEnvelope(value: unknown): Promise<PublishedS
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Source configuration schema invalid")
   const input = value as PublishedSourceConfigEnvelope
   const known = intelligenceSources.filter(source => source.topic === "building")
-  if (input.schemaVersion !== 1 || input.topic !== "building" || !Array.isArray(input.sources) || input.sources.length > known.length
+  if (input.schemaVersion !== 1 || input.topic !== "building" || !Array.isArray(input.sources) || input.sources.length > 1000
     || typeof input.revision !== "string" || !/^[a-f0-9]{64}$/.test(input.revision)
     || !Number.isSafeInteger(input.generatedAt) || input.generatedAt <= 0 || input.generatedAt > Date.now() + 300_000) {
     throw new Error("Source configuration envelope invalid")
   }
   const seen = new Set<string>()
   const sources = input.sources.map((value) => {
-    const seed = value && known.find(source => source.id === value.id)
+    const seed = value && (known.find(source => source.id === value.id) ?? customSourceSeed(value))
     if (!seed || seen.has(seed.id)) throw new Error("Unknown or duplicate source configuration")
     seen.add(seed.id)
     const config = validateIntelligenceSourceConfig(value, seed)
@@ -128,4 +128,16 @@ export async function sourceConfigProvenance() {
 }
 export function resetPublishedSourceConfigForTests() {
   catalogPromise = undefined
+}
+
+export async function collectionSourceCatalog(cachedOnly = false): Promise<IntelligenceSource[]> {
+  const current = await catalog(cachedOnly)
+  const sources = [...intelligenceSources]
+  for (const config of current.configs.values()) {
+    if (sources.some(source => source.id === config.id)) continue
+    const source = customSourceSeed(config)
+    if (!source) throw new Error("Invalid custom source")
+    sources.push(source)
+  }
+  return sources
 }

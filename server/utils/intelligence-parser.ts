@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio"
 import { type IntelligenceSource, intelligenceCanonicalUrl, intelligenceDate, intelligenceHttpUrl } from "@shared/intelligence"
+import { sourceHttp } from "./source-http"
 import { sourceFetchError } from "./source-fetch-diagnostic"
 
 export interface OfficialCandidate {
@@ -101,7 +102,7 @@ export async function intelligenceFetchHtml(url: string, source: IntelligenceSou
   let current = intelligenceAllowedUrl(url, source)
   if (!current) throw new Error("来源地址未通过白名单校验")
   for (let hop = 0; hop < 4; hop++) {
-    const response = await fetch(current, {
+    const response = await sourceHttp(current, source, {
       redirect: "manual",
       signal: AbortSignal.timeout(12000),
       headers: { "User-Agent": "CapxIntelligence/1.0 (official public information reader)", "Accept": "text/html,application/xhtml+xml" },

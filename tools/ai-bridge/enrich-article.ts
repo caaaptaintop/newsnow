@@ -1,3 +1,4 @@
+import "./custom-source-http"
 import type { IntelligenceArticle, IntelligenceSource } from "../../shared/intelligence"
 import { type OfficialCandidate, intelligenceFetchHtml, intelligenceParseArticle } from "../../server/utils/intelligence-parser"
 

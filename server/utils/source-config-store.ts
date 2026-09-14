@@ -4,6 +4,7 @@ import { intelligenceSources } from "../../shared/official-sources"
 import {
   type IntelligenceSourceConfig,
   type SourceDraftBase,
+  customSourceSeed,
   intelligenceSourceConfigHash,
   intelligenceSourceConfigJson,
   intelligenceSourceSeedConfig,
@@ -77,9 +78,9 @@ function parseJson<T>(value: unknown): T | undefined {
     return undefined
   }
 }
-function seed(topic: string, sourceId: string) {
-  const source = intelligenceSources.find(item => item.topic === topic && item.id === sourceId)
-  if (!source) throw createError({ statusCode: 404, message: "未注册的信息源" })
+function seed(topic: string, sourceId: string, value?: unknown) {
+  const source = intelligenceSources.find(item => item.topic === topic && item.id === sourceId) ?? customSourceSeed(value)
+  if (!source || source.id !== sourceId || source.topic !== topic) throw createError({ statusCode: 404, message: "未注册的信息源" })
   return source
 }
 function baseGuard(db: D1DatabaseLike, id: string, topic: string, sourceId: string, base: SourceDraftBase) {
@@ -98,13 +99,35 @@ async function atomic(db: D1DatabaseLike, statements: D1Statement[]) {
   }
 }
 async function checkedConfig(topic: string, sourceId: string, json: unknown, expectedHash: unknown) {
-  const config = validateIntelligenceSourceConfig(parseJson(json), seed(topic, sourceId))
+  const config = validateIntelligenceSourceConfig(parseJson(json), seed(topic, sourceId, parseJson(json)))
   if (typeof expectedHash !== "string" || await intelligenceSourceConfigHash(config) !== expectedHash) throw unavailable()
   return config
 }
 
+export async function registeredSourceSeed(event: H3Event, topic: string, sourceId: string) {
+  const known = intelligenceSources.find(item => item.topic === topic && item.id === sourceId)
+  if (known) return known
+  const db = sourceConfigDatabase(event)
+  if (!await configTablesExist(db)) return seed(topic, sourceId)
+  const entry = await first(db.prepare("SELECT draft_json, draft_hash FROM intelligence_source_config_entry WHERE topic = ? AND source_id = ?").bind(topic, sourceId))
+  const config = await checkedConfig(topic, sourceId, entry?.draft_json, entry?.draft_hash)
+  return seed(topic, sourceId, config)
+}
+export async function createSourceDraft(event: H3Event, value: unknown, email: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("请填写来源名称和官网地址")
+  const input = value as Record<string, unknown>
+  const id = `custom-${crypto.randomUUID()}`
+  const initial = { schemaVersion: 1, id, topic: "building", name: input.name, home: input.home, group: "公开来源", level: "其他", region: "", city: "", priority: 50, enabled: false, collectionMode: "explicit", endpoints: [] }
+  const config = validateIntelligenceSourceConfig(initial, customSourceSeed(initial)!)
+  const hash = await intelligenceSourceConfigHash(config)
+  const db = sourceConfigDatabase(event)
+  await ensureSourceConfigSchema(db)
+  const now = Date.now()
+  await db.prepare("INSERT INTO intelligence_source_config_entry (topic, source_id, draft_json, draft_hash, active_revision, updated_at, updated_by) VALUES (?, ?, ?, ?, NULL, ?, ?)").bind("building", id, intelligenceSourceConfigJson(config), hash, now, email).run()
+  return { config, hash, activeRevision: 0, updatedAt: now }
+}
 export async function saveSourceDraft(event: H3Event, topic: string, sourceId: string, value: unknown, email: string, expected: SourceDraftBase) {
-  const config = validateIntelligenceSourceConfig(value, seed(topic, sourceId))
+  const config = validateIntelligenceSourceConfig(value, await registeredSourceSeed(event, topic, sourceId))
   const base = validateSourceDraftBase(expected)
   const hash = await intelligenceSourceConfigHash(config)
   const db = sourceConfigDatabase(event)
@@ -124,7 +147,7 @@ export async function saveSourceDraft(event: H3Event, topic: string, sourceId: s
 }
 export async function saveSourceTest(event: H3Event, topic: string, sourceId: string, config: IntelligenceSourceConfig, result: unknown, email: string, expected: SourceDraftBase, startedAt: number) {
   const base = validateSourceDraftBase(expected)
-  const normalized = validateIntelligenceSourceConfig(config, seed(topic, sourceId))
+  const normalized = validateIntelligenceSourceConfig(config, await registeredSourceSeed(event, topic, sourceId))
   const hash = await intelligenceSourceConfigHash(normalized)
   if (base.draftHash !== hash || !Number.isSafeInteger(startedAt) || startedAt < Date.now() - sourceConfigPolicy.testMaxAgeMs || startedAt > Date.now()) throw conflict()
   const db = sourceConfigDatabase(event)
@@ -267,7 +290,13 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
     WHERE t.topic = ?`).bind(topic))
     : []
   const health = await sourceHealth(db, topic)
-  const sources = await Promise.all(intelligenceSources.filter(source => source.topic === topic).map(async (source) => {
+  const registered = [...intelligenceSources.filter(source => source.topic === topic)]
+  for (const entry of entries) {
+    if (registered.some(source => source.id === entry.source_id)) continue
+    const config = await checkedConfig(topic, String(entry.source_id), entry.draft_json, entry.draft_hash)
+    registered.push(seed(topic, config.id, config))
+  }
+  const sources = await Promise.all(registered.map(async (source) => {
     const entry = entries.find(row => row.source_id === source.id)
     const activeRevision = Number(entry?.active_revision ?? 0)
     const history = revisions.filter(row => row.source_id === source.id)
@@ -279,7 +308,7 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
     return { id: source.id, topic, effective, draft, draftHash: entry?.draft_hash ?? null, activeRevision, collectionEnabled: !!active && effective.enabled && sourceCollectionApproved(effective, active.reason), configStatus: draft && entry?.draft_hash !== active?.config_hash ? "draft" : active ? "published" : effective.collectionMode === "discover" ? "unconfigured" : "seed", runtime: runtimeStatus(health.records.get(source.id), health.error), lastTest: test ? { hash: test.config_hash, testedAt: test.tested_at, result: parseJson(test.result_json) } : undefined, history: history.map(row => ({ revision: Number(row.revision), createdAt: Number(row.created_at), createdBy: String(row.created_by), reason: String(row.reason) })) }
   }))
   const labels: Record<string, string> = { building: "建筑", ai: "AI", finance: "财经", health: "健康" }
-  const topics = Object.entries(labels).map(([id, name]) => ({ id, name, count: intelligenceSources.filter(source => source.topic === id).length, enabled: id === "building" }))
+  const topics = Object.entries(labels).map(([id, name]) => ({ id, name, count: id === topic ? sources.length : intelligenceSources.filter(source => source.topic === id).length, enabled: id === "building" }))
   return { topics, topic, sources, healthError: health.error }
 }
 export async function publishedBuildingSourceOverrides(event: H3Event) {

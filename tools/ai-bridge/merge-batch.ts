@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto"
 import { isPublishedSource } from "../../shared/public-site"
-import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceHttpUrl, intelligenceVersion } from "../../shared/intelligence"
+import { type IntelligenceArticle, type IntelligenceSource, intelligenceCanonicalUrl, intelligenceHttpUrl, intelligenceVersion } from "../../shared/intelligence"
 import { intelligenceMetadataOnly } from "../../shared/intelligence-storage"
 import { intelligenceSources } from "../../shared/official-sources"
 import { intelligenceNormalizeDecision } from "../../server/utils/intelligence-ai"
 import { batchArticleKeys } from "./article-keys"
 
-export function mergeBatch(snapshot: any, batch: any) {
+export function mergeBatch(snapshot: any, batch: any, sources: IntelligenceSource[] = intelligenceSources) {
   if (!Array.isArray(snapshot.articles) || !Array.isArray(batch.articles) || !Array.isArray(batch.decisions)) throw new Error("Invalid snapshot or batch")
   const rawAttachmentUpdates = batch.attachmentUpdates ?? []
   if (!Array.isArray(rawAttachmentUpdates)) throw new Error("Invalid attachment updates")
@@ -17,7 +17,7 @@ export function mergeBatch(snapshot: any, batch: any) {
   const recoveredAliases = new Map<string, string>()
   for (const article of batch.articles) {
     if (existing.has(article.key)) continue
-    const source = intelligenceSources.find(s => s.id === article.sourceId && isPublishedSource(s))
+    const source = sources.find(s => s.id === article.sourceId && isPublishedSource(s))
     const key = `${source?.topic}:${createHash("sha256").update(intelligenceCanonicalUrl(article.url)).digest("hex")}`
     const decision = batch.decisions.find((d: any) => d.key === key && d.title === article.title && d.keep === true)
     if (!source || key !== article.key || source.topic !== article.topic || article.analysisVersion !== intelligenceVersion
@@ -91,9 +91,9 @@ export function mergeBatch(snapshot: any, batch: any) {
   const states = new Map((snapshot.states ?? []).map((s: any) => [s.id, s]))
   let changed = added.length > 0 || attachmentUpdates.size > 0 || (batch.pipeline === "mac" && snapshot.pipeline !== "mac")
   for (const state of batch.states ?? []) {
-    const registered = intelligenceSources.find(source => source.id === state.id)
+    const registered = sources.find(source => source.id === state.id)
     if (registered && !isPublishedSource(registered)) continue
-    if (!intelligenceSources.some(s => s.id === state.id) || !["ok", "partial", "error"].includes(state.status) || !Number.isFinite(state.checkedAt)) throw new Error("Invalid source state")
+    if (!sources.some(s => s.id === state.id) || !["ok", "partial", "error"].includes(state.status) || !Number.isFinite(state.checkedAt)) throw new Error("Invalid source state")
     const old: any = states.get(state.id)
     if (!old || state.checkedAt > (old.checkedAt ?? 0)) {
       states.set(state.id, state)

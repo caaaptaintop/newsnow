@@ -1,8 +1,7 @@
 import type { IntelligenceSource } from "../../shared/intelligence"
+import { intelligenceSourceCollectionScope as collectionScopeKey } from "../../shared/source-config"
 
-export function collectionScopeKey(source: IntelligenceSource) {
-  return JSON.stringify({ id: source.id, home: source.home, columns: source.columns })
-}
+export { intelligenceSourceCollectionScope as collectionScopeKey } from "../../shared/source-config"
 export function collectionSourceAllowed(id: string, sources: readonly IntelligenceSource[] = []) {
   return sources.some(source => source.id === id && source.enabled)
 }

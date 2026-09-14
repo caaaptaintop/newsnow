@@ -1,3 +1,4 @@
+import "./custom-source-http"
 import { hackernewsFeed } from "../../server/utils/hackernews-feed"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl, intelligenceDate } from "../../shared/intelligence"

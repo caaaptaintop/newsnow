@@ -1,28 +1,38 @@
-import { createError, type H3Event } from "h3"
+import { type H3Event, createError } from "h3"
 import { intelligenceSources } from "../../shared/official-sources"
-import { intelligenceSourceConfigHash, sourceConfigPolicy, validateIntelligenceSourceConfig, type IntelligenceSourceConfig } from "../../shared/source-config"
-import { sourceConfigDatabase, saveSourceTest } from "../utils/source-config-store"
+import { type IntelligenceSourceConfig, customSourceSeed, intelligenceSourceConfigHash, sourceConfigPolicy, validateIntelligenceSourceConfig } from "../../shared/source-config"
+import { saveSourceTest, sourceConfigDatabase } from "../utils/source-config-store"
 import { sourceTestAllowsPublish } from "./test-source-config"
 
-function conflict() { return createError({ statusCode: 409, message: "草稿、测试或发布版本已变化，请刷新后重新确认" }) }
-function unavailable() { return createError({ statusCode: 503, message: "来源配置读取或保存失败；已保留原配置，请稍后重试" }) }
+function conflict() {
+  return createError({ statusCode: 409, message: "草稿、测试或发布版本已变化，请刷新后重新确认" })
+}
+function unavailable() {
+  return createError({ statusCode: 503, message: "来源配置读取或保存失败；已保留原配置，请稍后重试" })
+}
 async function rows(statement: any) {
   const result = await statement.all()
   if (!Array.isArray(result.results)) throw unavailable()
   return result.results as Record<string, unknown>[]
 }
-async function first(statement: any) { return (await rows(statement))[0] ?? null }
+async function first(statement: any) {
+  return (await rows(statement))[0] ?? null
+}
 function parseJson<T>(value: unknown): T | undefined {
   if (typeof value !== "string") return undefined
-  try { return JSON.parse(value) as T } catch { return undefined }
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return undefined
+  }
 }
-function seed(topic: string, sourceId: string) {
-  const source = intelligenceSources.find(item => item.topic === topic && item.id === sourceId)
-  if (!source) throw createError({ statusCode: 404, message: "未注册的信息源" })
+function seed(topic: string, sourceId: string, value: unknown) {
+  const source = intelligenceSources.find(item => item.topic === topic && item.id === sourceId) ?? customSourceSeed(value)
+  if (!source || source.id !== sourceId || source.topic !== topic) throw createError({ statusCode: 404, message: "未注册的信息源" })
   return source
 }
 async function checkedConfig(topic: string, sourceId: string, json: unknown, expectedHash: unknown) {
-  const config = validateIntelligenceSourceConfig(parseJson(json), seed(topic, sourceId))
+  const config = validateIntelligenceSourceConfig(parseJson(json), seed(topic, sourceId, parseJson(json)))
   if (typeof expectedHash !== "string" || await intelligenceSourceConfigHash(config) !== expectedHash) throw unavailable()
   return config
 }
@@ -48,7 +58,8 @@ export async function pendingRuntimeSourceTests(event: H3Event, limit = 1) {
   for (const row of candidates) {
     const result = parseJson<{ runtimePending?: unknown }>(row.result_json)
     if (result?.runtimePending !== true || typeof row.draft_hash !== "string") continue
-    const topic = String(row.topic), sourceId = String(row.source_id)
+    const topic = String(row.topic)
+    const sourceId = String(row.source_id)
     const config = await checkedConfig(topic, sourceId, row.draft_json, row.draft_hash)
     jobs.push({ topic, sourceId, config, hash: row.draft_hash, activeRevision: Number(row.active_revision ?? 0), requestedAt: Number(row.tested_at) })
     if (jobs.length >= safeLimit) break
@@ -59,10 +70,16 @@ export async function pendingRuntimeSourceTests(event: H3Event, limit = 1) {
 export async function saveRuntimeSourceTest(event: H3Event, owner: string, value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw createError({ statusCode: 400, message: "本机测试结果无效" })
   const body = value as Record<string, unknown>
-  const topic = String(body.topic ?? ""), sourceId = String(body.sourceId ?? ""), hash = body.hash
-  const activeRevision = Number(body.activeRevision), requestedAt = Number(body.requestedAt), startedAt = Number(body.startedAt)
+  const topic = String(body.topic ?? "")
+  const sourceId = String(body.sourceId ?? "")
+  const hash = body.hash
+  const activeRevision = Number(body.activeRevision)
+  const requestedAt = Number(body.requestedAt)
+  const startedAt = Number(body.startedAt)
   if (typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash) || !Number.isSafeInteger(activeRevision) || activeRevision < 0
-    || !Number.isSafeInteger(requestedAt) || requestedAt <= 0 || !Number.isSafeInteger(startedAt) || startedAt <= 0) throw createError({ statusCode: 400, message: "本机测试版本信息无效" })
+    || !Number.isSafeInteger(requestedAt) || requestedAt <= 0 || !Number.isSafeInteger(startedAt) || startedAt <= 0) {
+    throw createError({ statusCode: 400, message: "本机测试版本信息无效" })
+  }
   if (!body.result || typeof body.result !== "object" || Array.isArray(body.result)) throw createError({ statusCode: 400, message: "本机测试结果格式无效" })
   const db = sourceConfigDatabase(event)
   if (!await configTablesExist(db)) throw conflict()
@@ -71,7 +88,9 @@ export async function saveRuntimeSourceTest(event: H3Event, owner: string, value
   const pending = await first(db.prepare("SELECT ok, result_json, tested_at FROM intelligence_source_config_test WHERE topic = ? AND source_id = ? AND config_hash = ?").bind(topic, sourceId, hash))
   const pendingResult = parseJson<{ runtimePending?: unknown }>(pending?.result_json)
   if (!pending || Number(pending.ok) !== 0 || Number(pending.tested_at) !== requestedAt || pendingResult?.runtimePending !== true
-    || requestedAt < Date.now() - sourceConfigPolicy.testMaxAgeMs) throw conflict()
+    || requestedAt < Date.now() - sourceConfigPolicy.testMaxAgeMs) {
+    throw conflict()
+  }
   const config = await checkedConfig(topic, sourceId, entry.draft_json, hash)
   const result = { ...(body.result as Record<string, unknown>), executor: "mac", runtimePending: false }
   const saved = await saveSourceTest(event, topic, sourceId, config, result, owner, { draftHash: hash, activeRevision }, startedAt)

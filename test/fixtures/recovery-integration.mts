@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises"
 import { registerHooks } from "node:module"
 import { basename } from "node:path"
 import process from "node:process"
+import { intelligenceSources } from "../../shared/official-sources"
 import { buildingHash, normalizeBatchItem } from "../../shared/building-contract"
 
 const importFresh = (path: string) => import(path)
@@ -48,14 +49,14 @@ const fs = {
     return { writeFile: (value: string) => fs.writeFile(path, value), async close() {}, async sync() {} }
   },
 }
-Object.assign(globalThis, { recoveryTestFs: fs, recoveryPair: pair })
+Object.assign(globalThis, { recoveryTestSources: intelligenceSources, recoveryTestFs: fs, recoveryPair: pair })
 const fakeFs = `data:text/javascript,${encodeURIComponent("export const {readFile,writeFile,rename,chmod,mkdir,unlink,open}=globalThis.recoveryTestFs")}`
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.includes("/tools/ai-bridge/")) {
       // Legacy multi-source recovery fixtures exercise alias/receipt semantics;
       // production authorization is independently covered by collection-scope.test.ts.
-      if (specifier === "./source-config-client") return { url: `data:text/javascript,${encodeURIComponent("export const resolveCollectionSource=async(source)=>source;export const sourceConfigProvenance=async()=>({origin:'fixture'});")}`, shortCircuit: true }
+      if (specifier === "./source-config-client") return { url: `data:text/javascript,${encodeURIComponent("export const collectionSourceCatalog=async()=>globalThis.recoveryTestSources;export const resolveCollectionSource=async(source)=>source;export const sourceConfigProvenance=async()=>({origin:'fixture'});")}`, shortCircuit: true }
       if (specifier === "./collection-scope") return { url: `data:text/javascript,${encodeURIComponent("export const collectionScopeKey=()=> 'fixture-scope';export const collectionSourceId='official-fujian';export const collectionSourceAllowed=()=>true;export const collectionItemAllowed=()=>true;export const assertCollectionColumns=()=>{};export const scopedPublicationBatch=(_snapshot,batch)=>batch;")}`, shortCircuit: true }
       if (specifier === "./antigravity-session.mjs") return { url: `data:text/javascript,${encodeURIComponent("export const agyModel=\"gemini-3.8-flash-low\"")}`, shortCircuit: true }
       if (specifier === "node:fs/promises") return { url: fakeFs, shortCircuit: true }

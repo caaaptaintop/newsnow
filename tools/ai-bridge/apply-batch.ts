@@ -2,20 +2,19 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { type BatchItem, buildingHash, buildingLimits, canonicalItems, normalizeBatchItem } from "../../shared/building-contract"
 import { isPublishedSource } from "../../shared/public-site"
-import { intelligenceSources } from "../../shared/official-sources"
 import { atomicJson, publisherRequest } from "./publisher.mjs"
 import { mergeBatch } from "./merge-batch"
-import { resolveCollectionSource } from "./source-config-client"
-import { scopedPublicationBatch } from "./collection-scope"
+import { collectionSourceCatalog, resolveCollectionSource } from "./source-config-client"
+import { collectionScopeKey, scopedPublicationBatch } from "./collection-scope"
 
 const root = resolve(import.meta.dirname, "../..")
 const dir = resolve(root, ".data/mac-batch")
 const path = resolve(dir, "published.json")
 const snapshot = JSON.parse(await readFile(path, "utf8"))
-const configuredSources = await Promise.all(intelligenceSources.filter(isPublishedSource).map(source => resolveCollectionSource(source)))
+const configuredSources = await Promise.all((await collectionSourceCatalog()).filter(isPublishedSource).map(source => resolveCollectionSource(source)))
 const batch = scopedPublicationBatch(snapshot, JSON.parse(await readFile(resolve(dir, "result.json"), "utf8")), configuredSources)
-const result = mergeBatch(snapshot, batch)
-const sources = new Set(intelligenceSources.filter(isPublishedSource).map(s => s.id))
+const result = mergeBatch(snapshot, batch, configuredSources)
+const sources = new Set(configuredSources.filter(isPublishedSource).map(s => s.id))
 const ledgerPath = resolve(dir, "published-ledger.json")
 const outboxPath = resolve(dir, "publish-outbox.json")
 async function read(path: string, fallback: any) {
@@ -49,16 +48,17 @@ for (let i = 0;
   i < items.length;
   i += buildingLimits.batchItems) {
   const chunk = items.slice(i, i + buildingLimits.batchItems)
-  const hash = await buildingHash(JSON.stringify(chunk))
+  const sourceScopes = Object.fromEntries(await Promise.all(configuredSources.filter(source => source.id.startsWith("custom-") && chunk.some(item => (item.kind === "article" && item.data.sourceId === source.id) || (item.kind === "source" && item.key === source.id))).map(async source => [source.id, await buildingHash(collectionScopeKey(source))])))
+  const hash = await buildingHash(JSON.stringify(Object.keys(sourceScopes).length ? [chunk, sourceScopes] : chunk))
   let outbox = await read(outboxPath, null)
   if (!outbox || outbox.hash !== hash) {
     const version = await publisherRequest({ action: "version" })
     if (!version || typeof version !== "object" || !("revision" in version) || !Number.isSafeInteger(version.revision)) throw new Error("发布版本响应无效")
-    outbox = { hash, batchId: `mac_${crypto.randomUUID()}`, baseRevision: version.revision, items: chunk }
+    outbox = { hash, batchId: `mac_${crypto.randomUUID()}`, baseRevision: version.revision, items: chunk, sourceScopes }
     await atomicJson(outboxPath, outbox)
   }
   try {
-    await publisherRequest({ action: "publish", batchId: outbox.batchId, baseRevision: outbox.baseRevision, items: outbox.items })
+    await publisherRequest({ action: "publish", batchId: outbox.batchId, baseRevision: outbox.baseRevision, items: outbox.items, sourceScopes: outbox.sourceScopes })
   } catch (error: any) {
     if (error.statusCode === 409) await atomicJson(outboxPath, null)
     throw error

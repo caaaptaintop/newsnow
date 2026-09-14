@@ -1,6 +1,7 @@
 import { load } from "cheerio"
 import type { IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl } from "../../shared/intelligence"
+import { sourceHttp } from "./source-http"
 import { type OfficialCandidate, intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceParseList } from "./intelligence-parser"
 import { sourceFetchError } from "./source-fetch-diagnostic"
 
@@ -113,7 +114,7 @@ async function readBounded(response: Response, maxBytes: number) {
 async function dynamicFragment(endpoint: string, pageUrl: string, source: IntelligenceSource, pageNumber: number) {
   const requestUrl = pagedUnitUrl(endpoint, source, pageUrl, pageNumber)
   if (!requestUrl) throw new Error("动态栏目分页地址未通过白名单校验")
-  const response = await fetch(requestUrl, {
+  const response = await sourceHttp(requestUrl, source, {
     redirect: "manual",
     signal: AbortSignal.timeout(12000),
     headers: { ...collectionHeaders, Accept: "application/json,text/plain,*/*", Referer: pageUrl },

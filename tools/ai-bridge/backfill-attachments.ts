@@ -2,10 +2,9 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import process from "node:process"
 import { isPublishedSource } from "../../shared/public-site"
-import { intelligenceSources } from "../../shared/official-sources"
 import { intelligenceAttachmentDiscoveryVersion } from "../../server/utils/intelligence-parser"
 import { enrichOfficialArticleMetadata } from "./enrich-article"
-import { resolveCollectionSource } from "./source-config-client"
+import { collectionSourceCatalog, resolveCollectionSource } from "./source-config-client"
 import { collectionItemAllowed } from "./collection-scope"
 
 const args = process.argv.slice(2)
@@ -35,7 +34,8 @@ ledger.checked ??= {}
 ledger.failures ??= {}
 
 // The preceding collection process already pinned a validated configuration to its LKG file.
-const configured = await Promise.all(intelligenceSources.filter(source => isPublishedSource(source)).map(source => resolveCollectionSource(source, true)))
+const catalog = await collectionSourceCatalog(true)
+const configured = await Promise.all(catalog.filter(source => isPublishedSource(source)).map(source => resolveCollectionSource(source, true)))
 const sources = new Map(configured.filter(isPublishedSource).map(source => [source.id, source]))
 function needsCurrentAttachmentCheck(article: any) {
   const checked = ledger.checked[article.key]
@@ -56,7 +56,7 @@ await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, async (
   while (cursor < candidates.length) {
     const article: any = candidates[cursor++]
     let source = sources.get(article.sourceId)!
-    const original = intelligenceSources.find(item => item.id === article.sourceId)!
+    const original = catalog.find(item => item.id === article.sourceId)!
     if (new URL(article.url).hostname !== new URL(source.home).hostname
       && new URL(article.url).hostname === new URL(original.home).hostname) {
       source = { ...source, home: original.home }
