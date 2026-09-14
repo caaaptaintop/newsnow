@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio"
+import { type IntelligenceSource, intelligenceCanonicalUrl, intelligenceDate, intelligenceHttpUrl } from "@shared/intelligence"
 import { sourceFetchError } from "./source-fetch-diagnostic"
-import { intelligenceCanonicalUrl, intelligenceDate, intelligenceHttpUrl, type IntelligenceSource } from "@shared/intelligence"
 
 export interface OfficialCandidate {
   title: string
@@ -13,7 +13,7 @@ export interface OfficialCandidate {
   attachments: { title: string, url: string }[]
 }
 
-const mojibakeTokens = /[鍏鐨鍚涓缁鏂寤璁鏀鍩骞浣浠鍙鍦鎴垮眿锛銆鈥绉瀹璇闃鏃瀛鍙戞湁鏍煎叕鍛婃剰瑙佹爣鍑嗘湇鍔￠」]/g
+const mojibakeTokens = /[鍏鐨鍚涓缁鏂寤璁鏀鍩骞浣浠鍙鍦鎴垮眿锛銆鈥绉瀹璇闃鏃瀛戞湁鏍煎叕鍛婃剰瑙佹爣鍑嗘湇鍔￠」]/g
 const attachmentExtensions = new Set(["pdf", "ofd", "doc", "docx", "docm", "wps", "rtf", "xls", "xlsx", "xlsm", "xlsb", "csv", "ppt", "pptx", "pptm", "zip", "rar", "7z", "txt"])
 export const intelligenceAttachmentDiscoveryVersion = 2
 
@@ -35,9 +35,13 @@ function attachmentExtension(...values: Array<string | undefined>) {
   for (const value of values) {
     if (!value) continue
     let decoded = value
-    try { decoded = decodeURIComponent(value) } catch { /* Keep the original encoded value. */ }
+    try {
+      decoded = decodeURIComponent(value)
+    } catch { /* Keep the original encoded value. */ }
     const matches = decoded.toLowerCase().matchAll(/\.([a-z0-9]{1,6})(?=$|[?#&=;,\s)）\]}>])/g)
-    for (const match of matches) if (attachmentExtensions.has(match[1])) return match[1]
+    for (const match of matches) {
+      if (attachmentExtensions.has(match[1])) return match[1]
+    }
   }
 }
 function governmentScope(hostname: string) {
@@ -61,7 +65,7 @@ export function intelligenceAllowedAttachmentUrl(value: string, source: Intellig
     const approvedHost = approved.hostname.toLowerCase().replace(/^www\./, "")
     if (host === approvedHost) return safe
     if (host.endsWith(".gov.cn") && approvedHost.endsWith(".gov.cn") && governmentScope(host) === governmentScope(approvedHost)) return safe
-  } catch { return }
+  } catch { }
 }
 
 function replacementCount(value: string) {
@@ -76,7 +80,7 @@ function decodeHtmlBytes(bytes: Uint8Array, contentType: string) {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
   } catch {
     const prefix = new TextDecoder("latin1").decode(bytes.slice(0, 8192))
-    const declaredGb = /(?:charset\s*=\s*["']?\s*(?:gb2312|gbk|gb18030)|(?:gb2312|gbk|gb18030))/i.test(`${contentType} ${prefix}`)
+    const declaredGb = /charset\s*=\s*(?:["']\s*)?(?:gb2312|gbk|gb18030)|gb2312|gbk|gb18030/i.test(`${contentType} ${prefix}`)
     const looseUtf8 = new TextDecoder("utf-8").decode(bytes)
     const gb18030 = new TextDecoder("gb18030").decode(bytes)
     if (declaredGb) return gb18030
@@ -91,14 +95,15 @@ export function intelligenceAllowedUrl(value: string, source: IntelligenceSource
     const host = (s: string) => s.toLowerCase().replace(/^www\./, "")
     if (!intelligenceHttpUrl(url.href) || host(url.hostname) !== host(approved.hostname) || (url.port && !["80", "443"].includes(url.port))) return
     return url.href
-  } catch { return }
+  } catch { }
 }
 export async function intelligenceFetchHtml(url: string, source: IntelligenceSource) {
   let current = intelligenceAllowedUrl(url, source)
   if (!current) throw new Error("来源地址未通过白名单校验")
   for (let hop = 0; hop < 4; hop++) {
     const response = await fetch(current, {
-      redirect: "manual", signal: AbortSignal.timeout(12000),
+      redirect: "manual",
+      signal: AbortSignal.timeout(12000),
       headers: { "User-Agent": "CapxIntelligence/1.0 (official public information reader)", "Accept": "text/html,application/xhtml+xml" },
     })
     if (response.status >= 300 && response.status < 400) {
@@ -110,7 +115,10 @@ export async function intelligenceFetchHtml(url: string, source: IntelligenceSou
     }
     if (!response.ok) throw await sourceFetchError(response)
     const type = response.headers.get("content-type") ?? ""
-    if (type && !/html|xml|text/i.test(type)) { await response.body?.cancel(); throw new Error("来源没有返回可解析的网页") }
+    if (type && !/html|xml|text/i.test(type)) {
+      await response.body?.cancel()
+      throw new Error("来源没有返回可解析的网页")
+    }
     const reader = response.body?.getReader()
     if (!reader) throw new Error("官网响应为空")
     const chunks: Uint8Array[] = []
@@ -120,13 +128,21 @@ export async function intelligenceFetchHtml(url: string, source: IntelligenceSou
         const { done, value } = await reader.read()
         if (done) break
         length += value.byteLength
-        if (length > 2_000_000) { await reader.cancel(); throw new Error("官网页面超过采集大小上限") }
+        if (length > 2_000_000) {
+          await reader.cancel()
+          throw new Error("官网页面超过采集大小上限")
+        }
         chunks.push(value)
       }
-    } finally { reader.releaseLock() }
+    } finally {
+      reader.releaseLock()
+    }
     const bytes = new Uint8Array(length)
     let offset = 0
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
     const html = decodeHtmlBytes(bytes, type)
     if (/验证码|安全验证|访问过于频繁|checking your browser|just a moment/i.test(html.slice(0, 12000)) && html.length < 30000) throw new Error("官网要求访问验证，未绕过验证")
     return { html, url: current }
@@ -140,7 +156,7 @@ function decodeStaticJsString(value: string) {
       const value = Number.parseInt(code, 16)
       return Number.isFinite(value) && value <= 0x10FFFF ? String.fromCodePoint(value) : ""
     }
-    return ({ "\\": "\\", "'": "'", '"': '"', n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", 0: "\0" } as Record<string, string>)[simple] ?? simple
+    return ({ "\\": "\\", "'": "'", "\"": "\"", "n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f", "v": "\v", "0": "\0" } as Record<string, string>)[simple] ?? simple
   })
 }
 
@@ -162,7 +178,7 @@ function staticDocumentWriteHtml(html: string) {
         // quote boundary before using it as a coarse prefilter. Every actual
         // href is still resolved and checked by intelligenceAllowedAttachmentUrl.
         const fileish = attachmentExtension(decoded.replace(/["']/g, " "))
-        const opaque = /<a\b[^>]*href\s*=\s*["'][^"']*(?:download|attachment|file)[^"']*["'][^>]*>[\s\S]{0,240}(?:附件|下载)/i.test(decoded)
+        const opaque = /<a\b[^>]+href\s*=\s*["'][^"']*(?:download|attachment|file)[^"']*["'][^>]*>[\s\S]{0,240}(?:附件|下载)/i.test(decoded)
         if (!fileish && !opaque) continue
         total += decoded.length
         if (total > 100_000) return fragments.join("\n")
@@ -185,7 +201,7 @@ export function intelligenceDiscoverColumns(html: string, source: IntelligenceSo
   const found = [...(source.columns ?? [])]
   $("a[href]").each((_index, el) => {
     const name = $(el).text().replace(/\s+/g, "").trim()
-    if (!/^(通知公告|通知公示|公告公示|公示公告|政策文件|规范性文件|主动公开文件|政策解读|工作动态|建设新闻|建设要闻|行业动态|标准定额|标准规范|最新文件|厅发文件|部门文件)$/.test(name)) return
+    if (!/^(?:通知公告|通知公示|公告公示|公示公告|政策文件|规范性文件|主动公开文件|政策解读|工作动态|建设新闻|建设要闻|行业动态|标准定额|标准规范|最新文件|厅发文件|部门文件)$/.test(name)) return
     const url = intelligenceAllowedUrl($(el).attr("href") ?? "", source, base)
     if (url && !found.some(c => c.url === url)) found.push({ name, url })
   })
@@ -198,11 +214,11 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const a = $(el)
     const title = (a.attr("title") || a.text()).replace(/\s+/g, " ").trim()
     const url = intelligenceAllowedUrl(a.attr("href") ?? "", source, column.url)
-    if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
+    if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(?:首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
     const path = new URL(url).pathname
     const datedArticleIndex = /\/\d{14,22}\/index\.shtml$/i.test(path)
     if (attachmentExtension(path, url) || (!datedArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
-    if (!/\.(?:[sj]?html?|htm)$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
+    if (!/\.[sj]?html?$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
     if (url === column.url || url === source.home) return
     // A date inside this link belongs to this article. Never read dates from
     // a shared list container containing links to other articles.
@@ -210,10 +226,10 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const dateText = (scope: ReturnType<typeof $>) => {
       const values = scope.find("time,em,span,[class*=date],[class*=time]").toArray().map(node => $(node).attr("datetime") || $(node).text())
       values.push(...scope.contents().toArray().filter(node => node.type === "text").map(node => $(node).text()))
-      return values.map(value => value.trim()).find(value => /^(?:(?:19|20)?\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2}日?)(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/.test(value)) || ""
+      return values.map(value => value.trim()).find(value => /^(?:19|20)?\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2}日?(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/.test(value)) || ""
     }
     const ownContext = dateText(a)
-    const singleArticleRow = row.find("a[href]").toArray().every(link => {
+    const singleArticleRow = row.find("a[href]").toArray().every((link) => {
       const href = intelligenceAllowedUrl($(link).attr("href") ?? "", source, column.url)
       return href === url
     })
@@ -250,7 +266,11 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   for (const selector of selectors) {
     const root = $(selector).first()
     const value = root.text().replace(/\s+/g, " ").trim()
-    if (value.length >= 80 && value.length <= 100000) { text = value.slice(0, 8000); articleRoot = root; break }
+    if (value.length >= 80 && value.length <= 100000) {
+      text = value
+      articleRoot = root
+      break
+    }
   }
   // Do not treat the entire site navigation as article text when a template is unknown.
   const foundAttachments = new Map<string, { title: string, url: string }>()
@@ -269,14 +289,16 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
     let opaqueDownload = !!download
     try {
       const parsed = new URL(url)
-      opaqueDownload ||= /附件|下载/i.test(rawTitle) && /(?:download|attachment|file)/i.test(`${parsed.pathname}${parsed.search}`)
+      opaqueDownload ||= /附件|下载/.test(rawTitle) && /download|attachment|file/i.test(`${parsed.pathname}${parsed.search}`)
     } catch { /* The URL has already passed validation. */ }
     if (!extension && !opaqueDownload) return
     let filename = ""
     try {
       const parsed = new URL(url)
-      filename = [...parsed.searchParams.entries()].find(([key, value]) => /(?:file|name|attachment)/i.test(key) && value)?.[1] || parsed.pathname.split("/").pop() || ""
-      try { filename = decodeURIComponent(filename) } catch { /* Keep encoded filename. */ }
+      filename = [...parsed.searchParams.entries()].find(([key, value]) => /file|name|attachment/i.test(key) && value)?.[1] || parsed.pathname.split("/").pop() || ""
+      try {
+        filename = decodeURIComponent(filename)
+      } catch { /* Keep encoded filename. */ }
     } catch { /* The URL has already passed validation. */ }
     const preferredTitle = rawTitle && !intelligenceLooksGarbled(rawTitle) ? rawTitle : download && !intelligenceLooksGarbled(download) ? download : filename && !intelligenceLooksGarbled(filename) ? filename : "原文附件"
     const key = intelligenceCanonicalUrl(url) || url
@@ -285,14 +307,16 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   const attachments = [...foundAttachments.values()].slice(0, 16)
   const visible = $("body").text().replace(/\s+/g, " ").slice(0, 5000)
   const dateText = meta(["PubDate", "pubdate", "publishdate", "PublishDate", "article:published_time", "DC.date.issued"])
-    || visible.match(/(?:发布时间|发布日期|发布日|时间)\s*[:：]?\s*((?:19|20)\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2})/)?.[1]
-  const documentNo = text.match(/[\u4E00-\u9FFF]{1,14}[〔\[]\d{4}[〕\]]\s*\d{1,6}\s*号/)?.[0]
+    || visible.match(/(?:发布时间|发布日期|发布日|时间)\s*(?:[:：]\s*)?((?:19|20)\d{2}[-年/.]\d{1,2}[-月/.]\d{1,2})/)?.[1]
+  const documentNo = text.match(/[\u4E00-\u9FFF]{1,14}[〔[]\d{4}[〕\]]\s*\d{1,6}\s*号/)?.[0]
   const publisher = meta(["ContentSource", "source", "Source"]).slice(0, 100)
   return {
-    ...candidate, title: fullTitle.length >= 9 && fullTitle.length <= 240 && !intelligenceLooksGarbled(fullTitle) ? fullTitle : candidate.title,
+    ...candidate,
+    title: fullTitle.length >= 9 && fullTitle.length <= 240 && !intelligenceLooksGarbled(fullTitle) ? fullTitle : candidate.title,
     text: text && !intelligenceLooksGarbled(text.slice(0, 500)) ? text : undefined,
     publishedAt: intelligenceDate(dateText) ?? candidate.publishedAt,
     publisher: publisher && !intelligenceLooksGarbled(publisher) ? publisher : undefined,
-    documentNo, attachments,
+    documentNo,
+    attachments,
   }
 }

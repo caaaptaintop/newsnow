@@ -1,4 +1,6 @@
 .intel-current-topic{color:var(--i-accent);font-weight:600;white-space:nowrap}
 .intel-source-grid article>a{font-size:12px;font-weight:550}
 .intel-empty>a{margin-top:18px}
+.intel-meta .intel-card-date{margin-left:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end}
+.intel-meta .intel-card-date time{margin-left:0}
 @media(max-width:760px){.intel-current-topic{font-size:12px;margin-left:10px}.intel-topbar{padding-bottom:17px}.intel-location-menu{min-width:0;width:min(330px,calc(100vw - 60px));max-width:calc(100vw - 60px)}}

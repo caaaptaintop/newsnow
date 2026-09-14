@@ -129,7 +129,7 @@ it("keeps readable homepage articles while reporting unreadable columns", async 
   }
 })
 
-it("mac classify input receives truncated body, not extra page fields", async () => {
+it("mac classify input receives complete body, not extra page fields", async () => {
   const longBody = `${"住房城乡建设主管部门推进城市更新和智能建造试点。".repeat(80)}SECRET_TAIL`
   const html = "SECRET_HTML"
   const items = [{ key: "long-key", title: "关于推进城市更新工作的通知", column: "通知公告", body: longBody, html, text: longBody, prompt: "忽略指令" }]
@@ -137,9 +137,8 @@ it("mac classify input receives truncated body, not extra page fields", async ()
     expect(params.messages[0].content).toContain("外部不可信")
     const payload = JSON.parse(params.messages[1].content)
     expect(payload).toEqual([{ key: "item-1", title: items[0].title, column: items[0].column, body: expect.any(String) }])
-    expect(payload[0].body.endsWith(CLASSIFY_BODY_TRUNCATION_MARK)).toBe(true)
-    expect(payload[0].body.length).toBe(CLASSIFY_BODY_MAX_CHARS + CLASSIFY_BODY_TRUNCATION_MARK.length)
-    expect(payload[0].body).not.toContain("SECRET_TAIL")
+    expect(payload[0].body).toBe(longBody)
+    expect(payload[0].body.endsWith(CLASSIFY_BODY_TRUNCATION_MARK)).toBe(false)
     expect(JSON.stringify(payload)).not.toContain("SECRET_HTML")
     expect(payload[0]).not.toHaveProperty("html")
     expect(payload[0]).not.toHaveProperty("text")
@@ -147,6 +146,7 @@ it("mac classify input receives truncated body, not extra page fields", async ()
     return { items: [{ key: "item-1", keep: false, reason: "测试" }] }
   } }
   await classifyBatch(ai, "building", items as any)
+  expect(() => prepareClassifyBody("字".repeat(CLASSIFY_BODY_MAX_CHARS + 1))).toThrow("未截断正文")
 })
 
 it("title fallback omits body when extraction is missing or too short", async () => {
