@@ -53,11 +53,12 @@ const fakeFs = `data:text/javascript,${encodeURIComponent("export const {readFil
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.includes("/tools/ai-bridge/")) {
+      if (specifier === "./antigravity-session.mjs") return { url: `data:text/javascript,${encodeURIComponent("export const agyModel=\"gemini-3.8-flash-low\"")}`, shortCircuit: true }
       if (specifier === "node:fs/promises") return { url: fakeFs, shortCircuit: true }
       if (specifier === "./collect-source") return { url: `data:text/javascript,${encodeURIComponent("export async function collectSource(){return {items:globalThis.titleTest.mode==='off'?[globalThis.recoveryPair.pending]:globalThis.titleTest.hidden?[]:globalThis.titleTest.items,warnings:[],columns:[]}}")}`, shortCircuit: true }
       if (specifier === "./enrich-article") return { url: `data:text/javascript,${encodeURIComponent("export async function enrichOfficialArticlesForClassify(){return {enrichments:new Map(),fetchFailed:0,insufficient:0}};export function officialArticlePersistedMetadata(){return {}}")}`, shortCircuit: true }
-      if (specifier === "./local-codex.mjs") {
-        return { url: `data:text/javascript,${encodeURIComponent(`export async function localCodex(model,messages){
+      if (specifier === "./local-antigravity.mjs") {
+        return { url: `data:text/javascript,${encodeURIComponent(`export async function localAntigravity(model,messages){
         if(globalThis.titleTest.mode==='off')throw new Error('MODEL MUST NOT RUN');
         const inputs=JSON.parse(messages[1].content),screen=messages[0].content.includes('标题初筛员');
         (screen?globalThis.titleCalls:globalThis.bodyCalls).push(inputs.length);

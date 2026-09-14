@@ -35,3 +35,6 @@
 2026-09-14发布阶段：用户明确要求继续推进、完成发布上线。全库41文件465项与worker4项通过。独立审查发现同URL双标题跨轮覆盖导致重复AI；新增仅本地key/title的processedVersions集合，分页与候选共用多版本判重，四轮实际CLI隔离fixture前两轮各处理1、后两轮零AI且pending0。31项定向及真实CLI集成、lint通过，独立增量复核PASS，待固定SHA终核。AGY仍有工具隔离及真实正文留存阻断，当前生产Codex路径未切换。
 
 标题规则补充：用户要求保留来源原标题。标题初筛和正文提示词均明确禁止改写标题；现有文章构造只读取采集item.title，AI字段白名单不包含title。实际CLI隔离回归让AI故意返回替代标题，确认articles、decisions及PENDING输入仍逐字保留原标题；6项相关测试与lint通过。构建及7项发布安全检查通过。
+
+2026-09-14 AGY接入整改：上轮“无法工具隔离”的判断已由实测收敛为默认CLI Project未加载工作区hook。显式--new-project后，本机1.2.2真实write_to_file被PreToolUse deny拒绝；无需降级（1.1.28仅本地探针）。生产候选local-antigravity使用专用1.2.2副本与已核验SHA256，禁止自动回退Codex。正文仅父进程内存，通过0600 Unix socket在新UUID归属和childPid持久登记后注入；ephemeral本身仍落会话数据库，故结束后清理本任务新会话db/sidecar/brain/annotation/presence，fsync父目录并复验，清理失败保留恢复登记且拒绝下一轮。SIGKILL/断电只能在下次启动恢复，未宣称异常立即清除。
+真实合成探针：正常调用成功并清理；timeout返回错误且无待清理目录；crash-result.json验证canary进入会话db后强杀父进程，恢复先拒绝仍活动AGY，结束该写者后清理成功并延迟复查无残留。共享summary/jetbox/history/cache及本日日志的canary布尔检查均未命中，无旧会话正文输出。正式provider8个合成正文8/8收录/栏目匹配，调用会话3ebb301d-603e-4020-869d-6063fd877e8a已清理。中文socket跨UTF-8边界回归通过；独立复核三项安全问题已整改，最后UTF-8问题修复，待固定SHA终核。mac-worker/mac-batch已改AGY low，preflight验证binary和清理残留；未改调度及现有生产数据。

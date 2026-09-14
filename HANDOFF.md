@@ -1,12 +1,12 @@
-# Issue101：六个技术专栏、AI初筛与Antigravity评估
-目标：减少标题漏召回，新闻/会议/活动/政策/标准归六个技术专栏，整页已处理才停翻页。
-阶段：用户已确认预览并要求发布；AGY 3.8 Flash low标题/正文接入仍有隔离阻断，不能冒充完成。
-工作区：/Users/imac/Projects/newsnow-schedule-manual；codex/ai-title-screening；统计基线517a4d8。
-已完成：删除综合政策与标准栏目；不设建设要闻栏目；单篇单专项；同步标题/正文提示词。
-已完成：标题low及正文low均8/8收录/分类与high一致；正文low两批一次成功8.6–12.2秒，仅合成短文。
-验证：全库465项、worker4项通过；多版本整改31定向+实际CLI四轮恢复通过，独立增量复核PASS。
-预览：http://127.0.0.1:4199/；.local/antigravity/comparison-low-body.json为最新强度对比，真实正文未输入AGY。
-边界：AGY仅evaluation入口，未接mac-batch；工具列表限制未生效、正文历史留存控制待解决。
-生产：12篇当前公开文章均在六专栏，无policy文章需本次回填；既有05/12/16调度及Codex模型未改。
-未完成：正式AGY工具/历史隔离；固定候选审查、PR/CI及发布后核验。
-下一动作：固定候选并完成发布检查；未解决AGY前不得宣称模型已切换，不自动扩大生产或费用范围。
+# Issue101：六专栏、AI初筛及AGY正式接入
+目标：原标题保留，新闻/活动/政策按实质归六技术专栏，整页已处理才停翻页，AGY标题和正文均low。
+阶段：用户已确认待AGY接入后一并发布；当前AGY正式调用已实现，候选复核与发布中。
+工作区：/Users/imac/Projects/newsnow-schedule-manual；codex/ai-title-screening；PR102（发布状态以GitHub为准）。
+已完成：六专栏/语义初筛/候选队列/多版本去重/采集结果统计及原标题保护。
+已完成：AGY独立项目加载deny-all hook；正文仅父进程内存，通过本地socket在身份持久登记后注入。
+留存：成功、超时、SIGKILL恢复均按owned UUID清理；活AGY拒绝清理；SIGKILL/停机遗留由下次启动恢复。
+验证：正式provider 8合成正文8/8；中文跨块传输与隔离清理5项通过；全库/构建/固定提交终核进行中。
+运行：项目专用agy-1.2.2固定hash，位于~/Library/Application Support/CapxNewsNow/bin，不改全局AGY；无Codex回退。
+边界：不保存真实正文作证据，不删除其他AGY会话；PDF/附件/来源与05/12/16调度不变。
+未完成：固定候选独立终核、CI、合并部署、生产AGY采集及线上结果验证。
+下一动作：完成上述发布核验，明确任何真实生产失败，不将本地测试冒充上线。

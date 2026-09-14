@@ -4,8 +4,10 @@ import { resolve } from "node:path"
 import process from "node:process"
 import { pathToFileURL } from "node:url"
 
+import { agyModel } from "./antigravity-session.mjs"
+
 export const workerSources = ["all"]
-export const workerModel = "gpt-5.6-luna"
+export const workerModel = agyModel
 export function shouldRun(status, now = Date.now()) {
   return !status?.retryAfter || now >= status.retryAfter
 }
@@ -46,7 +48,7 @@ export function runWorker(root, run = command, now = Date.now()) {
       status.runtimeSourceTestError = error.message
     }
     save()
-    if (!/Logged in using ChatGPT/.test(call("codex", ["login", "status"]))) throw new Error("ChatGPT login required")
+    call("node", ["tools/ai-bridge/antigravity-preflight.mjs"])
     for (const source of workerSources) {
       call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/mac-batch.ts", "--source", source, "--limit", "12", "--model", workerModel], 1800000)
       status.completedSources.push(source)
@@ -70,7 +72,7 @@ export function runWorker(root, run = command, now = Date.now()) {
   } catch (error) {
     status.state = "error"
     status.error = error.message
-    // launchd already spaces attempts by 15 minutes; do not add an hour after wake.
+    // The existing calendar/manual dispatcher decides when to start the next run.
     status.retryAfter = 0
     status.finishedAt = Date.now()
   } finally {
@@ -82,8 +84,7 @@ export function runWorker(root, run = command, now = Date.now()) {
 function command(bin, args, cwd, timeout) {
   const result = spawnSync(bin, args, { cwd, encoding: "utf8", timeout, maxBuffer: 1048576, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } })
   if (result.error || result.status !== 0) throw new Error(`${bin.split("/").pop()} ${args[0]} failed (exit ${result.status ?? "timeout"}); check local login/network or checkout`)
-  // Login status is written to stderr by Codex; no authentication file is read.
-  return bin === "codex" ? result.stdout + result.stderr : result.stdout
+  return result.stdout
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const status = runWorker(resolve(process.argv[2] ?? import.meta.dirname, process.argv[2] ? "." : "../.."))

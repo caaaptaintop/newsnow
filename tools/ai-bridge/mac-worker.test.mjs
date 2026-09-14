@@ -6,20 +6,19 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runWorker, shouldRun, workerModel } from "./mac-worker.mjs"
 
-it("background worker uses Luna low and runs attachment backfill even when the normal batch is empty", () => {
+it("background worker uses AGY Flash low and runs attachment backfill even when the normal batch is empty", () => {
   const root = mkdtempSync(join(tmpdir(), "newsnow-worker-test-"))
   const calls = []
   const run = (bin, args) => {
     calls.push([bin, ...args])
     if (args[0] === "branch") return "main"
     if (args.includes("tools/ai-bridge/source-test-runner.ts")) return JSON.stringify({ pending: 0, completed: [] })
-    if (bin === "codex") return "Logged in using ChatGPT"
     return ""
   }
   try {
     const result = runWorker(root, run)
     assert.equal(result.state, "complete")
-    assert.equal(result.model, "gpt-5.6-luna")
+    assert.equal(result.model, "gemini-3.8-flash-low")
     assert.equal(result.reasoning, "low")
     const analyses = calls.filter(c => c.includes("tools/ai-bridge/mac-batch.ts"))
     assert.equal(analyses.length, 1)
@@ -49,7 +48,6 @@ it("a backfill-only result is applied and published even when mac-batch produced
     calls.push([bin, ...args])
     if (args[0] === "branch") return "main"
     if (args.includes("tools/ai-bridge/source-test-runner.ts")) return JSON.stringify({ pending: 0, completed: [] })
-    if (bin === "codex") return "Logged in using ChatGPT"
     if (args.includes("tools/ai-bridge/backfill-attachments.ts")) {
       const directory = join(root, ".data/mac-batch")
       mkdirSync(directory, { recursive: true })

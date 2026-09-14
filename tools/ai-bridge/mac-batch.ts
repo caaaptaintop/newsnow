@@ -9,7 +9,8 @@ import { collectSource } from "./collect-source"
 import { classifyEvidence, classifyThenPending } from "./classify-batch"
 import { verifyPublicationDate } from "./publication-date"
 import { enrichOfficialArticlesForClassify, officialArticlePersistedMetadata } from "./enrich-article"
-import { localCodex } from "./local-codex.mjs"
+import { localAntigravity } from "./local-antigravity.mjs"
+import { agyModel } from "./antigravity-session.mjs"
 import { batchArticleKeys, pageHasUnprocessed } from "./article-keys"
 import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
 import { queuedCandidate, saveBatchResult } from "./candidate-queue"
@@ -19,7 +20,7 @@ const args = process.argv.slice(2)
 const option = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback
 const sourceId = option("--source", "official-shanghai")
 const selectedSources = intelligenceSources.filter(s => isPublishedSource(s) && (sourceId === "all" || sourceId.split(",").includes(s.id)))
-const model = option("--model", "gpt-5.6-luna")
+const model = option("--model", agyModel)
 const limit = Number(option("--limit", "12"))
 if (!selectedSources.length || !Number.isInteger(limit) || limit < 1 || limit > 30) throw new Error("Choose a configured source and limit 1–30")
 const root = resolve(import.meta.dirname, "../..")
@@ -135,7 +136,7 @@ try {
       const ai = { model, run: async (_model: string, params: any) => {
         if (modelFailure) throw new Error(`模型请求暂停，留待下轮：${modelFailure}`)
         try {
-          return await localCodex(model, params.messages, (u: any) => usage.push(u))
+          return await localAntigravity(model, params.messages, (u: any) => usage.push(u))
         } catch (error: any) {
           modelFailure = error.message
           throw error
