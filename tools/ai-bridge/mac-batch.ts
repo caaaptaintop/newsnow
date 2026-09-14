@@ -77,6 +77,9 @@ try {
   for (const source of configuredSources) {
     let state: any = { id: source.id, checkedAt: Date.now(), status: "error" }
     let warnings: string[] = []
+    let selectedCount = 0
+    let processed = false
+    state.collectionCounts = { discovered: 0, duplicates: 0, failed: 0 }
     try {
       const snapshot = JSON.parse(await readFile(resolve(root, ".data/mac-batch/published.json"), "utf8"))
       let previous: any = { articles: [], decisions: [] }
@@ -100,13 +103,16 @@ try {
           if (!item.title || !intelligenceCanonicalUrl(item.url)) continue
           const aliases = batchArticleKeys(source.topic, source.id, item.url)
           const key = aliases[0]
-          if (!aliases.some(alias => known.get(alias) === item.title || candidates.get(alias)?.title === item.title)) candidates.set(key, { ...item, key })
+          if (aliases.some(alias => known.get(alias) === item.title || candidates.get(alias)?.title === item.title)) state.collectionCounts.duplicates++
+          else candidates.set(key, { ...item, key })
         }
       }
+      state.collectionCounts.discovered = candidates.size
       const recalled = [...candidates.values()]
         .filter(item => source.topic !== "building" || buildingRecallScore(item) > 0)
         .sort((a, b) => source.topic === "building" ? buildingRecallScore(b) - buildingRecallScore(a) : 0)
       const selected = recalled.slice(0, limit)
+      selectedCount = selected.length
       if (recalled.length > limit) warnings.push(`${recalled.length - limit} 条候选待后续批次分析`)
       console.log(JSON.stringify({ source: source.name, model, newCandidates: candidates.size, selected: selected.map(i => ({ title: i.title, url: i.url })) }))
       if (!selected.length) {
@@ -153,9 +159,11 @@ try {
         await import("node:fs/promises").then(fs => fs.rename(pending, resolve(outputDir, "result.json")))
         console.log(JSON.stringify({ completed: selected.length, accepted: articles.length, elapsedMs: result.elapsedMs, usage, result: resolve(outputDir, "result.json") }))
       }
+      processed = true
       state.status = warnings.length ? "partial" : "ok"
       if (!warnings.length) state.lastSuccessAt = Date.now()
     } catch (error: any) {
+      state.collectionCounts.failed = processed ? 0 : selectedCount
       state.status = state.fetched ? "partial" : "error"
       warnings.push(error.message)
     }

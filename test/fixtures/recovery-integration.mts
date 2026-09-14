@@ -11,6 +11,15 @@ const pair = JSON.parse(await readFile(new URL("./fujian-protocol-pair.json", im
 const disk = new Map<string, string>()
 const identity = generateKeyPairSync("ed25519")
 const requests: any[] = []
+const summaries: any[] = []
+const log = console.log
+console.log = (...args) => {
+  try {
+    const value = JSON.parse(args[0])
+    if (value.storage === "D1" && "publishedArticles" in value) summaries.push(value)
+  } catch {}
+  log(...args)
+}
 const fs = {
   async readFile(path: string) {
     const value = disk.get(basename(path))
@@ -68,6 +77,8 @@ for (const withAttachments of [false, true]) {
   const staleItems = [normalizeBatchItem({ kind: "article", key: pair.pending.key, data: pair.pending })]
   disk.set("publish-outbox.json", JSON.stringify({ hash: await buildingHash(JSON.stringify(staleItems)), batchId: "stale_alias", baseRevision: 16, items: staleItems }))
   await import(`../../tools/ai-bridge/apply-batch.ts?attachments=${withAttachments}`)
+  assert.equal(summaries.at(-1).publishedArticles, 0)
+  assert.equal(summaries.at(-1).updatedArticles, withAttachments ? 1 : 0)
   const published = requests.filter(r => r.action === "publish").flatMap(r => r.items)
   assert.deepEqual(published.filter(item => item.kind === "article").map(item => item.key), withAttachments ? [pair.retained.key] : [])
   assert(!requests.some(r => r.batchId === "stale_alias"))
@@ -75,9 +86,20 @@ for (const withAttachments of [false, true]) {
   console.log(JSON.stringify({ scenario: "apply-publisher", withAttachments, requests }))
   const count = requests.length
   await import(`../../tools/ai-bridge/apply-batch.ts?replay=${withAttachments}`)
+  assert.equal(summaries.at(-1).publishedArticles, 0)
+  assert.equal(summaries.at(-1).updatedArticles, 0)
   assert.deepEqual(requests.slice(count).map(r => r.action), ["maintain"])
   assert.equal(JSON.parse(disk.get("publish-outbox.json")!), null)
 }
+reset()
+disk.set("published.json", JSON.stringify({ articles: [], generatedAt: 1 }))
+disk.set("result.json", JSON.stringify({ articles: [pair.pending], decisions: [{ key: pair.pending.key, sourceId: pair.pending.sourceId, title: pair.pending.title, keep: true, at: 1789002200000 }], states: [] }))
+await import("../../tools/ai-bridge/apply-batch.ts?counts=new")
+assert.equal(summaries.at(-1).publishedArticles, 1)
+assert.equal(summaries.at(-1).updatedArticles, 0)
+await import("../../tools/ai-bridge/apply-batch.ts?counts=replay")
+assert.equal(summaries.at(-1).publishedArticles, 0)
+assert.equal(summaries.at(-1).updatedArticles, 0)
 // R1: inspect actual signed publish requests, not just the outbox state.
 const observeOnly = process.argv.includes("--observe-r1")
 const A = { title: "A.pdf", url: "https://zjt.fujian.gov.cn/files/A.pdf" }
@@ -134,6 +156,7 @@ assert.deepEqual(new Set(known.keys), new Set([pair.pending.key, pair.retained.k
 const collected = JSON.parse(disk.get("result.json")!)
 assert.equal(collected.states[0].status, "ok")
 assert.equal(collected.states[0].accepted, 0)
+assert.deepEqual(collected.states[0].collectionCounts, { discovered: 0, duplicates: 1, failed: 0 })
 assert.equal(collected.articles.length, 0)
 console.log(JSON.stringify({ scenario: "collector-known", requests, state: collected.states[0] }))
 console.log("RECOVERY_INTEGRATION_PASS")

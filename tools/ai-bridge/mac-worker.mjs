@@ -56,7 +56,12 @@ export function runWorker(root, run = command, now = Date.now()) {
     // create result.json itself when a parser upgrade restores old attachments.
     call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/backfill-attachments.ts", "--limit", "24"], 600000)
     if (existsSync(resolve(directory, "result.json"))) {
-      call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/apply-batch.ts"])
+      const publicationOutput = call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/apply-batch.ts"])
+      try {
+        status.publication = JSON.parse(publicationOutput)
+      } catch {
+        status.publication = null
+      }
     }
     // Metadata publication is independent of code deployments.
     status.state = "complete"
