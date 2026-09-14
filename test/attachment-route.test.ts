@@ -17,11 +17,13 @@ vi.mock("h3", () => ({
   },
   sendStream: (_event: any, body: unknown) => body,
 }))
-vi.mock("../server/building/store", () => ({ buildingDB: vi.fn(() => ({})), buildingEnv: () => ({ BUILDING_RATE_SALT: "test-salt" }), articleById: vi.fn(async (_db, key) => key === "known" ? { topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] } : undefined) }))
+vi.mock("../server/building/store", () => ({ buildingDB: vi.fn(() => ({})), buildingEnv: () => ({ BUILDING_RATE_SALT: "test-salt" }), articleById: vi.fn(async (_db, key) => key === "known" ? { topic: "building", key: "known", sourceId: "official-mohurd", column: "政策发布", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] } : undefined) }))
 vi.mock("../server/building/relay-budget", () => ({ reserveRelay: vi.fn(async () => "lease"), settleRelay: vi.fn(async () => {}) }))
-vi.mock("../shared/intelligence-snapshot", () => ({ intelligenceSnapshot: { pipeline: "mac", articles: [{ topic: "building", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] }, { topic: "health", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }] }] } }))
+vi.mock("../shared/intelligence-snapshot", () => ({ intelligenceSnapshot: { pipeline: "mac", articles: [{ topic: "building", key: "known", sourceId: "official-mohurd", column: "政策发布", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }, { title: "中文.doc", url: "https://demo.gov.cn/中文.doc" }] }, { topic: "health", key: "known", url: "https://demo.gov.cn/article", attachments: [{ title: "附件.doc", url: "https://demo.gov.cn/download?id=1" }] }] } }))
+vi.mock("../server/utils/source-config-store", () => ({ publishedBuildingSourceOverrides: vi.fn(async () => [{ id: "official-mohurd", enabled: true, collectionApproved: true, endpoints: [{ name: "政策发布", enabled: true }] }]) }))
 vi.mock("../server/utils/attachment-relay", async original => ({ ...await original<typeof import("../server/utils/attachment-relay")>(), relayAttachment: vi.fn(async () => new Response("document bytes")) }))
 vi.mock("../server/utils/attachment-backup", () => ({ backupAttachment: vi.fn(async () => new Response("backup bytes")) }))
+
 const body = { topic: "building", articleKey: "known", url: "https://demo.gov.cn/download?id=1" }
 const event = (data: unknown = body, headers = {}) => ({ body: JSON.stringify(data), headers: { "content-type": "application/json", "origin": "https://news.example.com", ...headers }, context: {}, responseHeaders: {} })
 beforeEach(() => vi.clearAllMocks())
@@ -113,8 +115,9 @@ describe("attachment failure and cache authorization", () => {
 describe("diagnosed cloud origin fallback", () => {
   it.each([530, 403, 429, 500])("only uses backup for the diagnosed 530 origin failure (%s)", async (status) => {
     const url = "https://www.mohurd.gov.cn/api-gateway/jpaas-web-server/front/document/download?fileName=a.docx"
-    vi.mocked(articleById).mockResolvedValueOnce({ key: "known", url: "https://www.mohurd.gov.cn/article", attachments: [{ title: "a.docx", url }] } as any)
+    vi.mocked(articleById).mockResolvedValueOnce({ key: "known", sourceId: "official-mohurd", column: "政策发布", url: "https://www.mohurd.gov.cn/article", attachments: [{ title: "a.docx", url }] } as any)
     vi.mocked(relayAttachment).mockRejectedValueOnce(new AttachmentRelayError(502, "origin", status))
+
     if (status === 530) {
       const response = await handler(event({ ...body, url }) as any) as Response
       expect(await response.text()).toBe("backup bytes")

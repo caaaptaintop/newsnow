@@ -1,23 +1,30 @@
-import { buildingDB, buildingEnv, articleById } from "../../building/store"
-import { reserveRelay, settleRelay } from "../../building/relay-budget"
 import { BuildingError } from "@shared/building-contract"
 import { attachmentPreviewPolicy } from "@shared/attachment-preview"
 import { createError, defineEventHandler, getHeader, getRequestURL, getRequestWebStream, setHeaders } from "h3"
 import { isPublishedTopic } from "@shared/public-site"
-import { intelligenceTopics, intelligenceHttpUrl, type IntelligenceTopic } from "@shared/intelligence"
+import { type IntelligenceTopic, intelligenceHttpUrl, intelligenceTopics } from "@shared/intelligence"
 import { intelligenceSources } from "@shared/official-sources"
+import { extractApprovedSourceScope, isArticlePubliclyApproved } from "@shared/source-collection-approval"
+import { articleById, buildingDB, buildingEnv } from "../../building/store"
+import { reserveRelay, settleRelay } from "../../building/relay-budget"
 import { attachmentDeadline } from "../../utils/attachment-deadline"
 import { attachmentDelivery } from "../../utils/attachment-delivery"
 import { backupAttachment } from "../../utils/attachment-backup"
 import { readAttachmentResponse } from "../../../shared/attachment-fetch"
 import { type AttachmentCache, attachmentCacheKey, cacheAttachment, cachedAttachment, privateAttachmentResponse } from "../../utils/attachment-cache"
 import { AttachmentRelayError, attachmentNoStoreHeaders, relayAttachment, validateAttachmentUrl } from "../../utils/attachment-relay"
+import { publishedBuildingSourceOverrides } from "../../utils/source-config-store"
 
 // Per-isolate protection for bounded 20 MiB buffers; the D1 limit applies globally.
+
 let activeReads = 0
 
-const sourceHosts = new Set(intelligenceSources.flatMap(source => [source.home, ...(source.columns ?? []).map(column => column.url)]).flatMap(value => {
-  try { return [new URL(value).hostname.toLowerCase()] } catch { return [] }
+const sourceHosts = new Set(intelligenceSources.flatMap(source => [source.home, ...(source.columns ?? []).map(column => column.url)]).flatMap((value) => {
+  try {
+    return [new URL(value).hostname.toLowerCase()]
+  } catch {
+    return []
+  }
 }))
 
 export default defineEventHandler(async (event) => {
@@ -29,19 +36,29 @@ export default defineEventHandler(async (event) => {
   if (!stream) throw createError({ statusCode: 400, message: "缺少附件定位信息" })
   const reader = stream.getReader()
   const decoder = new TextDecoder()
-  let json = "", length = 0
+  let json = ""
+  let length = 0
   try {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
       length += value.byteLength
-      if (length > 8192) { await reader.cancel(); throw createError({ statusCode: 413, message: "请求过大" }) }
+      if (length > 8192) {
+        await reader.cancel()
+        throw createError({ statusCode: 413, message: "请求过大" })
+      }
       json += decoder.decode(value, { stream: true })
     }
     json += decoder.decode()
-  } finally { reader.releaseLock() }
+  } finally {
+    reader.releaseLock()
+  }
   let body: { topic?: unknown, articleKey?: unknown, url?: unknown }
-  try { body = JSON.parse(json) } catch { throw createError({ statusCode: 400, message: "附件定位信息无效" }) }
+  try {
+    body = JSON.parse(json)
+  } catch {
+    throw createError({ statusCode: 400, message: "附件定位信息无效" })
+  }
   if (!body || typeof body.topic !== "string" || !Object.prototype.hasOwnProperty.call(intelligenceTopics, body.topic) || typeof body.articleKey !== "string" || body.articleKey.length > 200 || typeof body.url !== "string" || body.url.length > 4096) throw createError({ statusCode: 400, message: "附件定位信息无效" })
   const topic = body.topic as IntelligenceTopic
   if (!isPublishedTopic(topic)) throw createError({ statusCode: 404, message: "该主题暂未开放" })
@@ -49,7 +66,14 @@ export default defineEventHandler(async (event) => {
   const article = await articleById(db, body.articleKey)
   const attachment = article?.attachments?.find(item => intelligenceHttpUrl(item.url) === body.url)
   if (!article || !attachment) throw createError({ statusCode: 404, message: "附件不在已收录记录中，请刷新信息流后重试" })
+  const configs = await publishedBuildingSourceOverrides(event)
+  const approvedScope = extractApprovedSourceScope(configs)
+  if (!isArticlePubliclyApproved(article, approvedScope)) {
+    throw createError({ statusCode: 404, message: "附件不在已收录记录中，请刷新信息流后重试" })
+  }
+
   const env = event.context.cloudflare?.env ?? event.context.env ?? {}
+
   const extra = String(env.ATTACHMENT_ALLOWED_HOSTS ?? "").split(",").map(value => value.trim().toLowerCase()).filter(value => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(value))
   let lease: string | undefined
   let settled = false
@@ -148,7 +172,10 @@ export default defineEventHandler(async (event) => {
     return deliver(bytes, response.headers, "relay")
   } catch (error) {
     release(true)
-    if (error instanceof BuildingError) { if (error.statusCode === 429) setHeaders(event, { "Retry-After": "60" }); throw createError({ statusCode: error.statusCode, message: error.message }) }
+    if (error instanceof BuildingError) {
+      if (error.statusCode === 429) setHeaders(event, { "Retry-After": "60" })
+      throw createError({ statusCode: error.statusCode, message: error.message })
+    }
     if (error instanceof AttachmentRelayError) throw createError({ statusCode: error.statusCode === 502 ? 424 : error.statusCode, message: error.message })
     throw createError({ statusCode: 424, message: "暂时无法读取原站附件，请打开原网页查看或下载原文件" })
   }

@@ -26,7 +26,7 @@ export async function cachedBuildingPage(event: any) {
     if (index >= 0) catalog[index] = source
     else catalog.push(source)
   }
-  const key = await buildingHash(JSON.stringify(["building-v3.2", state.revision, q, await sourceCatalogRevision(configs)]))
+  const key = await buildingHash(JSON.stringify(["building-v3.3-approved", state.revision, q, await sourceCatalogRevision(configs)]))
   const previous = entries.get(key)
   if (previous && previous.expires > Date.now()) {
     setHeader(event, "X-Intelligence-Cache", "memory")
@@ -43,7 +43,7 @@ export async function cachedBuildingPage(event: any) {
       }
     } catch { /* Cache is disposable. */ }
   }
-  const pending = readPage(db, params, Date.now(), catalog)
+  const pending = readPage(db, params, Date.now(), catalog, configs)
   entries.set(key, { expires: Date.now() + 60000, value: pending })
   while (entries.size > 64)entries.delete(entries.keys().next().value!)
   try {
@@ -62,5 +62,6 @@ export async function cachedBuildingPage(event: any) {
   }
 }
 export async function currentBuildingVersion(event: any) {
-  return readVersion(buildingDB(event))
+  const configs = await publishedBuildingSourceOverrides(event)
+  return readVersion(buildingDB(event), configs)
 }

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import process from "node:process"
+
 const base = process.env.BUILDING_SMOKE_URL || "https://news.capx-ai.com"
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function request(path, options) {
@@ -9,20 +11,29 @@ for (let i = 0; i < 6; i++) {
   const response = await request("/api/intelligence?topic=building")
   if (response.ok) {
     const candidate = await response.json()
-    if (candidate.topic === "building" && /^\d+$/.test(candidate.version ?? "")) { data = candidate; break }
+    if (candidate.topic === "building" && /^\d+\.[a-f0-9]{8}$/.test(candidate.version ?? "")) {
+      data = candidate
+      break
+    }
   }
   await sleep(5000)
 }
 assert(data, "building-only deployment did not become ready")
-assert(data.articles.length <= 50, "real server-side page size");
-assert(data.totalPublished >= data.articles.length, "database total");
+assert(data.articles.length <= 50, "real server-side page size")
+assert(data.totalPublished >= data.articles.length, "database total")
 assert(data.articles.length > 0, "existing building metadata must not disappear")
-assert.equal(data.sources.length, 54)
+const catalogResponse = await request("/api/intelligence/building/source-config")
+assert.equal(catalogResponse.status, 200)
+const catalog = await catalogResponse.json()
+const approved = catalog.sources.filter(source => source.enabled && source.collectionApproved === true)
+assert.deepEqual(data.sources.map(source => source.id).sort(), approved.map(source => source.id).sort())
+assert(data.articles.every(article => approved.some(source => source.id === article.sourceId && source.endpoints.some(endpoint => endpoint.enabled && endpoint.name === article.column))), "only approved source columns may be public")
 assert(data.articles.every(article => article.topic === "building"))
 for (const field of ["states", "model", "aiEnabled", "persistent", "pipeline"]) assert(!(field in data), `internal field returned: ${field}`)
 assert(data.articles.every(article => !("model" in article) && !("analysisVersion" in article) && !("body" in article) && !("html" in article)))
 // These checks exercise the deployed D1 reader, not browser fixtures or local SQLite.
-let checkedNextPage = false, checkedHistoricalSearch = false
+let checkedNextPage = false
+let checkedHistoricalSearch = false
 if (data.nextCursor) {
   const nextResponse = await request(`/api/intelligence?topic=building&cursor=${encodeURIComponent(data.nextCursor)}`)
   assert.equal(nextResponse.status, 200, "next cursor must read from D1")
@@ -43,7 +54,7 @@ if (data.nextCursor) {
   assert.equal((await request(`/api/intelligence?topic=building&limit=1&cursor=${encodeURIComponent(data.nextCursor)}`)).status, 409, "a cursor must not be reused with a different page contract")
 }
 assert.equal((await request("/api/intelligence?topic=building&limit=101")).status, 400)
-const unauthorized = await request("/api/internal/building", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"action":"status"}' })
+const unauthorized = await request("/api/internal/building", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{\"action\":\"status\"}" })
 assert.equal(unauthorized.status, 401, "machine operations must reject anonymous requests")
 const version = await (await request("/api/intelligence/version?topic=building")).json()
 assert.equal(version.version, data.version)
@@ -54,11 +65,18 @@ for (const topic of ["health", "ai", "finance"]) {
 }
 assert.equal((await request("/api/intelligence?topic=building&topic=health")).status, 400)
 for (const [path, method] of [
-  ["/api/topics/health/status", "GET"], ["/api/topics/health/classify", "POST"],
-  ["/api/intelligence/refresh", "POST"], ["/api/intelligence/ai/test", "POST"],
-  ["/api/intelligence/ai/settings", "GET"], ["/api/intelligence/storage", "GET"],
-  ["/api/login", "GET"], ["/api/oauth/github", "GET"], ["/api/me", "GET"],
-  ["/api/enable-login", "GET"], ["/api/s", "GET"], ["/api/s/entire", "POST"],
+  ["/api/topics/health/status", "GET"],
+  ["/api/topics/health/classify", "POST"],
+  ["/api/intelligence/refresh", "POST"],
+  ["/api/intelligence/ai/test", "POST"],
+  ["/api/intelligence/ai/settings", "GET"],
+  ["/api/intelligence/storage", "GET"],
+  ["/api/login", "GET"],
+  ["/api/oauth/github", "GET"],
+  ["/api/me", "GET"],
+  ["/api/enable-login", "GET"],
+  ["/api/s", "GET"],
+  ["/api/s/entire", "POST"],
 ]) {
   const response = await request(path, { method, ...(method === "POST" ? { headers: { "Content-Type": "application/json" }, body: "{}" } : {}) })
   assert.equal(response.status, 404, `${method} ${path} must be closed`)
