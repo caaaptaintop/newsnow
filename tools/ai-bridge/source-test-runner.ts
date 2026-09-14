@@ -23,7 +23,7 @@ interface RuntimeTestJob {
   requestedAt: number
 }
 
-export async function runPendingSourceTests({ limit = 1, request = publisherRequest, tester = testSourceConfig, allowed = (_job: RuntimeTestJob) => true } = {}) {
+export async function runPendingSourceTests({ limit = 1, request = publisherRequest, tester = testSourceConfig, allowed = (_job: RuntimeTestJob): boolean => true } = {}) {
   const pending = await request({ action: "source-tests", limit }) as { jobs?: RuntimeTestJob[] }
   const jobs = Array.isArray(pending.jobs) ? pending.jobs.slice(0, Math.max(1, Math.min(4, limit))) : []
   const completed: Array<{ sourceId: string, publishable: boolean, testedAt: number }> = []
