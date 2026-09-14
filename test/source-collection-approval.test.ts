@@ -1,6 +1,8 @@
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { intelligenceSources } from "../shared/official-sources"
-import { intelligenceSourceSeedConfig, sourceConfigEnvelope } from "../shared/source-config"
+import { type PublishedSourceConfig, intelligenceSourceSeedConfig, sourceConfigEnvelope } from "../shared/source-config"
 import { sourceCollectionApproved } from "../shared/source-collection-approval"
 import { resetPublishedSourceConfigForTests, resolveCollectionSource } from "../tools/ai-bridge/source-config-client"
 import { publishSourceDraft, publishedBuildingSourceOverrides, saveSourceDraft, saveSourceTest } from "../server/utils/source-config-store"
@@ -32,11 +34,12 @@ it("draft/test alone never enables collection; explicit tested publication does"
 })
 it("collection is closed for seeds and old or disabled catalogs", async () => {
   vi.stubEnv("CAPX_SOURCE_CONFIG_URL", "https://example.test/config")
-  vi.stubEnv("CAPX_SOURCE_CONFIG_FILE", `/private/tmp/newsnow-approval-${crypto.randomUUID()}/config.json`)
+  vi.stubEnv("CAPX_SOURCE_CONFIG_FILE", join(tmpdir(), `newsnow-approval-${crypto.randomUUID()}`, "config.json"))
   const config = { ...intelligenceSourceSeedConfig(seed), collectionMode: "explicit" as const, endpoints: syntheticSourceConfig().endpoints }
-  for (const sources of [[], [config], [{ ...config, collectionApproved: false }], [{ ...config, collectionApproved: true, enabled: false }], [{ ...config, collectionApproved: true }]]) {
+  const scenarios: PublishedSourceConfig[][] = [[], [config], [{ ...config, collectionApproved: false }], [{ ...config, collectionApproved: true, enabled: false }], [{ ...config, collectionApproved: true }]]
+  for (const sources of scenarios) {
     resetPublishedSourceConfigForTests()
-    vi.stubEnv("CAPX_SOURCE_CONFIG_FILE", `/private/tmp/newsnow-approval-${crypto.randomUUID()}/config.json`)
+    vi.stubEnv("CAPX_SOURCE_CONFIG_FILE", join(tmpdir(), `newsnow-approval-${crypto.randomUUID()}`, "config.json"))
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(await sourceConfigEnvelope(sources)))
     expect((await resolveCollectionSource(seed)).enabled).toBe(sources[0]?.collectionApproved === true && sources[0]?.enabled === true)
   }

@@ -3,6 +3,7 @@ import { type H3Event, createError } from "h3"
 import { intelligenceSources } from "../../shared/official-sources"
 import {
   type IntelligenceSourceConfig,
+  type PublishedSourceConfig,
   type SourceDraftBase,
   customSourceSeed,
   intelligenceSourceConfigHash,
@@ -311,10 +312,10 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
   const topics = Object.entries(labels).map(([id, name]) => ({ id, name, count: id === topic ? sources.length : intelligenceSources.filter(source => source.topic === id).length, enabled: id === "building" }))
   return { topics, topic, sources, healthError: health.error }
 }
-export async function publishedBuildingSourceOverrides(event: H3Event) {
+export async function publishedBuildingSourceOverrides(event: H3Event): Promise<PublishedSourceConfig[]> {
   const db = sourceConfigDatabase(event)
   try {
-    if (!await configTablesExist(db)) return [] as IntelligenceSourceConfig[]
+    if (!await configTablesExist(db)) return [] as PublishedSourceConfig[]
     const result = await rows(db.prepare(`SELECT entry.source_id, revision.config_json, revision.config_hash, revision.reason
       FROM intelligence_source_config_entry entry LEFT JOIN intelligence_source_config_revision revision
       ON revision.topic = entry.topic AND revision.source_id = entry.source_id AND revision.revision = entry.active_revision

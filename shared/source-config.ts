@@ -186,7 +186,7 @@ export function sourceCatalogRevision(sources: IntelligenceSourceConfig[]) {
   const sorted = [...sources].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   return digest(JSON.stringify(stable(sorted)))
 }
-export async function sourceConfigEnvelope(sources: IntelligenceSourceConfig[]): Promise<PublishedSourceConfigEnvelope> {
+export async function sourceConfigEnvelope(sources: PublishedSourceConfig[]): Promise<PublishedSourceConfigEnvelope> {
   return { schemaVersion: 1, topic: "building", revision: await sourceCatalogRevision(sources), generatedAt: Date.now(), sources }
 }
 export function applyIntelligenceSourceConfig(seed: IntelligenceSource, config: IntelligenceSourceConfig): IntelligenceSource & { collectionMode: IntelligenceCollectionMode } {
