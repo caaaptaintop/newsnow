@@ -5,10 +5,63 @@ import { intelligenceCanonicalUrl, intelligenceDate } from "../../shared/intelli
 import { type OfficialCandidate, intelligenceDiscoverColumns, intelligenceFetchHtml, intelligenceParseList } from "../../server/utils/intelligence-parser"
 import { intelligenceFetchList } from "../../server/utils/intelligence-dynamic-list"
 import { resolvePublishedSource } from "./source-config-client"
+import { publicationFromHtml } from "./publication-date"
+import { getCachedDetail, setCachedDetail } from "./detail-html-cache"
 
 export interface CollectSourceOptions {
   maxPages?: number | null
   shouldContinuePage?: (items: OfficialCandidate[], pageNumber: number) => boolean | Promise<boolean>
+}
+
+async function populateOfficialMissingDates(
+  source: IntelligenceSource,
+  columnName: string,
+  items: OfficialCandidate[],
+  attempted: Set<string>,
+  deadline: number,
+  columnErrors: string[],
+  columnMissingDates: number[],
+): Promise<void> {
+  // Only official MOHURD approved columns need detail date resolution when missing from list
+  if (source.id !== "official-mohurd" || source.newsnowId) return
+  for (const item of items) {
+    if (Number.isFinite(item.publishedAt) && item.publishedAt! > 0) continue
+    const canonical = intelligenceCanonicalUrl(item.url) || item.url
+    if (attempted.has(canonical)) continue
+    attempted.add(canonical)
+
+    if (Date.now() >= deadline) {
+      columnErrors.push(`${columnName}：采集时间预算耗尽，停止请求详情日期`)
+      columnMissingDates[0]++
+      break
+    }
+
+    try {
+      let html: string
+      let pageUrl: string
+      const cached = getCachedDetail(source.id, item.url)
+      if (cached) {
+        html = cached.html
+        pageUrl = cached.url
+      } else {
+        const page = await intelligenceFetchHtml(item.url, source)
+        html = page.html
+        pageUrl = page.url
+        setCachedDetail(source.id, item.url, { html, url: pageUrl })
+      }
+      const officialDate = publicationFromHtml(html, pageUrl)
+      if (officialDate) {
+        item.publishedAt = officialDate
+        const c = getCachedDetail(source.id, item.url)
+        if (c) c.publishedAt = officialDate
+      } else {
+        columnMissingDates[0]++
+      }
+    } catch (err: any) {
+      columnErrors.push(`${columnName}：详情时间获取失败（${item.title.slice(0, 20)}...: ${err.message}）`)
+      columnMissingDates[0]++
+    }
+  }
 }
 
 /** An unreadable column must not become an empty success. */
@@ -42,16 +95,36 @@ async function collect(source: IntelligenceSource & { collectionMode?: string },
     columns = intelligenceDiscoverColumns(homepage.html, source, homepage.url)
   }
   const items: any[] = []
+  const attempted = new Set<string>()
+
   for (const column of columns.slice(0, collectionMode === "explicit" ? 12 : 4)) {
     try {
       const deadline = Date.now() + 120000
+      const columnErrors: string[] = []
+      const columnMissingDates = [0]
+
       const page = await intelligenceFetchList(column.url, source, column, {
         maxPages: options.maxPages,
         shouldContinue: async (items, pageNumber) => {
           if (options.maxPages === null && Date.now() >= deadline) throw new Error("本栏目采集超时，已保留读到的文章；日期范围尚未采集完整")
+          await populateOfficialMissingDates(source, column.name, items, attempted, deadline, columnErrors, columnMissingDates)
           return options.shouldContinuePage ? options.shouldContinuePage(items, pageNumber) : true
         },
       })
+
+      if (Date.now() < deadline) {
+        await populateOfficialMissingDates(source, column.name, page.items, attempted, deadline, columnErrors, columnMissingDates)
+      } else {
+        columnErrors.push(`${column.name}：采集时间预算耗尽，跳过最终详情时间补全`)
+      }
+
+      if (columnMissingDates[0] > 0) {
+        warnings.push(`${column.name}：共 ${columnMissingDates[0]} 篇未取得官方有效发布日期，如实保留缺口`)
+      }
+      if (columnErrors.length) {
+        warnings.push(...columnErrors)
+      }
+
       const parsed = page.items
       if (!parsed.length) warnings.push(`${column.name}：栏目未解析到文章`)
       if ("paginationStalled" in page && page.paginationStalled) warnings.push(`${column.name}：分页返回了重复列表，已停止继续请求`)

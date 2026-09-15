@@ -2,6 +2,7 @@ import * as cheerio from "cheerio"
 import type { IntelligenceArticle, IntelligenceSource } from "../../shared/intelligence"
 import { intelligenceCanonicalUrl, intelligenceDate, intelligenceHttpUrl } from "../../shared/intelligence"
 import { intelligenceFetchHtml } from "../../server/utils/intelligence-parser"
+import { getCachedDetail } from "./detail-html-cache"
 
 /** Only explicit publication fields; never dateModified, crawledAt, or a headline date. */
 export function publicationTimestamp(value: unknown): number | undefined {
@@ -104,8 +105,8 @@ export async function verifyPublicationDate(source: IntelligenceSource, item: { 
     }
     // Public article URLs only. The existing reader rejects cross-host redirects.
     if (!url.hostname.includes(".") || /^[\d.]+$/.test(url.hostname) || /[:[\]]|(?:^|\.)(?:localhost|local|internal)$/.test(url.hostname)) return unknown("unavailable")
-    const allowed = source.newsnowId ? { ...source, home: url.origin } : source
-    const page = await intelligenceFetchHtml(item.url, allowed)
+    const cached = getCachedDetail(source.id, item.url)
+    const page = cached ? { html: cached.html, url: cached.url } : await intelligenceFetchHtml(item.url, source.newsnowId ? { ...source, home: url.origin } : source)
     const date = publicationFromHtml(page.html, page.url)
     if (date) return proof(date, "article", page.url)
   } catch {
