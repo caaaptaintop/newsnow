@@ -217,8 +217,8 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const url = intelligenceAllowedUrl(a.attr("href") ?? "", source, column.url)
     if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(?:首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
     const path = new URL(url).pathname
-    const datedArticleIndex = /\/\d{14,22}\/index\.shtml$/i.test(path)
-    if (attachmentExtension(path, url) || (!datedArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
+    const numericArticleIndex = /\/\d{9,22}\/index\.shtml$/i.test(path)
+    if (attachmentExtension(path, url) || (!numericArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
     if (!/\.[sj]?html?$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
     if (url === column.url || url === source.home) return
     // A date inside this link belongs to this article. Never read dates from
