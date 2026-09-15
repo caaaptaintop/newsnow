@@ -125,6 +125,15 @@ assert.equal(summaries.at(-1).updatedArticles, 0)
 await importFresh("../../tools/ai-bridge/apply-batch.ts?counts=replay")
 assert.equal(summaries.at(-1).publishedArticles, 0)
 assert.equal(summaries.at(-1).updatedArticles, 0)
+reset()
+const outsideWindow = { ...pair.pending, publishedAt: Date.parse("2020-01-01T00:00:00+08:00") }
+disk.set("published.json", JSON.stringify({ articles: [], generatedAt: 1 }))
+disk.set("result.json", JSON.stringify({ articles: [outsideWindow], decisions: [{ key: outsideWindow.key, sourceId: outsideWindow.sourceId, title: outsideWindow.title, keep: true, at: 1789002200000 }], states: [] }))
+await importFresh("../../tools/ai-bridge/apply-batch.ts?counts=outside-window")
+assert.equal(summaries.at(-1).publishedArticles, 0)
+const outsidePublished = requests.filter(r => r.action === "publish").flatMap(r => r.items)
+assert(!outsidePublished.some(item => item.kind === "article" && item.key === outsideWindow.key))
+assert.deepEqual(JSON.parse(disk.get("published.json")!).articles, [])
 // R1: inspect actual signed publish requests, not just the outbox state.
 const observeOnly = process.argv.includes("--observe-r1")
 const A = { title: "A.pdf", url: "https://zjt.fujian.gov.cn/files/A.pdf" }

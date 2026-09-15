@@ -6,13 +6,18 @@ import { atomicJson, publisherRequest } from "./publisher.mjs"
 import { mergeBatch } from "./merge-batch"
 import { collectionSourceCatalog, resolveCollectionSource } from "./source-config-client"
 import { collectionScopeKey, scopedPublicationBatch } from "./collection-scope"
+import { collectionCutoff, publicationArticleAllowed } from "./collection-window"
 
 const root = resolve(import.meta.dirname, "../..")
 const dir = resolve(root, ".data/mac-batch")
 const path = resolve(dir, "published.json")
 const snapshot = JSON.parse(await readFile(path, "utf8"))
 const configuredSources = await Promise.all((await collectionSourceCatalog()).filter(isPublishedSource).map(source => resolveCollectionSource(source)))
-const batch = scopedPublicationBatch(snapshot, JSON.parse(await readFile(resolve(dir, "result.json"), "utf8")), configuredSources)
+const scopedBatch = scopedPublicationBatch(snapshot, JSON.parse(await readFile(resolve(dir, "result.json"), "utf8")), configuredSources)
+const publicationNow = Date.now()
+const publicationCutoff = collectionCutoff(publicationNow)
+const existingKeys = new Set<string>(snapshot.articles.map((a: any) => a.key))
+const batch = { ...scopedBatch, articles: scopedBatch.articles.filter((article: any) => publicationArticleAllowed(article, existingKeys, publicationCutoff, publicationNow)) }
 const result = mergeBatch(snapshot, batch, configuredSources)
 const sources = new Set(configuredSources.filter(isPublishedSource).map(s => s.id))
 const ledgerPath = resolve(dir, "published-ledger.json")

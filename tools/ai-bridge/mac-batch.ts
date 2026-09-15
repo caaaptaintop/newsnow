@@ -144,7 +144,7 @@ try {
       await saveBatchResult(resolve(outputDir, "result.json"), previous)
       const activeQueue = prioritizeCandidates(collectionCandidates(sourceQueue.filter(item => collectionItemAllowed(item, configuredSources) && item.collectionScope === scope), cutoff, collectionNow))
       const outsideWindow = sourceQueue.length - activeQueue.length
-      if (outsideWindow) warnings.push(`${outsideWindow} 条候选超出当前确认配置或日期超过一年、未知或无效，本轮不分析；原记录保留`)
+      if (outsideWindow) warnings.push(`${outsideWindow} 条候选超出当前确认配置或发布日期超出近三个月范围、未知或无效，本轮不分析；原记录保留`)
       const titleItems = activeQueue.filter(item => !item.titleScreened).slice(0, titleScreenLimit)
       const usage: any[] = []
       const ai = { model, run: async (_model: string, params: any) => {
@@ -208,7 +208,7 @@ try {
         for (let i = 0; i < articles.length; i += 5) {
           await Promise.all(articles.slice(i, i + 5).map(async (article) => {
             Object.assign(article, await verifyPublicationDate(source, article, true))
-            if (!inCollectionWindow(article, cutoff, collectionNow)) throw new Error("正文发布日期不在最近一年内或无法确认，本批保留待核对，未发布")
+            if (!inCollectionWindow(article, cutoff, collectionNow)) throw new Error("正文发布日期不在近三个月内或无法确认，本批保留待核对，未发布")
           }))
         }
         state.accepted = articles.length

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import { intelligenceSources } from "../shared/official-sources"
 import { intelligenceFetchList } from "../server/utils/intelligence-dynamic-list"
 import { batchArticleKeys, pageHasUnprocessed } from "../tools/ai-bridge/article-keys"
-import { pageEntirelyBeforeWindow } from "../tools/ai-bridge/collection-window"
+import { collectionCutoff, pageEntirelyBeforeWindow } from "../tools/ai-bridge/collection-window"
 
 const source = intelligenceSources.find(s => s.id === "official-mohurd")!
 const column = { name: "政策发布", url: new URL("zhengcefabu/index.html", source.home).href }
@@ -33,7 +33,7 @@ it.each(["static", "dynamic"])("%s uses the date boundary even beyond 100 pages"
     if (pageNumber === 102) fragment = fragment.replaceAll("2026-09-08", "2024-09-08")
     return mode === "dynamic" ? Response.json({ data: { html: `${fragment}<a data-page="${pageNumber + 1}">下一页</a>` } }) : new Response(fragment, { headers: { "content-type": "text/html" } })
   })
-  const page = await intelligenceFetchList(column.url, source, column, { maxPages: null, shouldContinue: items => !pageEntirelyBeforeWindow(items, Date.parse("2025-09-14T00:00:00+08:00")) })
+  const page = await intelligenceFetchList(column.url, source, column, { maxPages: null, shouldContinue: items => !pageEntirelyBeforeWindow(items, collectionCutoff(Date.parse("2026-09-15T00:00:00+08:00"))) })
   expect(page.pages).toBe(102)
   expect(page.capped).toBe(false)
   expect(pageNumber).toBe(102)
