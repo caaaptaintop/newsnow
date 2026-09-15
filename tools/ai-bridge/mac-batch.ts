@@ -10,12 +10,13 @@ import { verifyPublicationDate } from "./publication-date"
 import { enrichOfficialArticlesForClassify, officialArticlePersistedMetadata } from "./enrich-article"
 import { localAntigravity } from "./local-antigravity.mjs"
 import { agyModel } from "./antigravity-session.mjs"
-import { batchArticleKeys, pageHasUnprocessed } from "./article-keys"
+import { batchArticleKeys } from "./article-keys"
 import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
 import { prioritizeCandidates, queuedCandidate, saveBatchResult } from "./candidate-queue"
-import { collectionCandidates, collectionCutoff, inCollectionWindow, pageEntirelyBeforeWindow } from "./collection-window"
+import { collectionCandidates, collectionCutoff, inCollectionWindow } from "./collection-window"
 import { collectionSourceCatalog, resolveCollectionSource, sourceConfigProvenance } from "./source-config-client"
 import { collectionItemAllowed, collectionScopeKey } from "./collection-scope"
+import { evaluatePageNeedsMore } from "./collection-pagination"
 
 const collectionNow = Date.now()
 const cutoff = collectionCutoff(collectionNow)
@@ -57,12 +58,17 @@ try {
     if (error.code !== "ENOENT") throw error
   }
   const pageNeedsMore = async (source: any, items: any[]) => {
-    if (pageEntirelyBeforeWindow(items, cutoff)) return false
-    const relevant = items
-    if (!relevant.length) return false
-    const keys = [...new Set<string>(relevant.flatMap(item => batchArticleKeys(source.topic, source.id, item.url)))]
-    if (!keys.length) return false
-    return pageHasUnprocessed(source.topic, source.id, relevant, [...await publisherKnown(keys), ...(priorBatch.processedVersions ?? []), ...(priorBatch.decisions ?? [])])
+    if (!items.length) return false
+    const keys = [...new Set<string>(items.flatMap(item => batchArticleKeys(source.topic, source.id, item.url)))]
+    const knownRecords = [...await publisherKnown(keys), ...(priorBatch.processedVersions ?? []), ...(priorBatch.decisions ?? [])]
+    return evaluatePageNeedsMore({
+      source,
+      items,
+      cutoff,
+      now: collectionNow,
+      priorPendingCandidates: priorBatch.pendingCandidates ?? [],
+      knownRecords,
+    })
   }
   const queue = [...configuredSources]
   await Promise.all(Array.from({ length: 5 }, async () => {

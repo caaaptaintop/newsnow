@@ -1,6 +1,7 @@
 import "./custom-source-http"
 import type { IntelligenceArticle, IntelligenceSource } from "../../shared/intelligence"
 import { type OfficialCandidate, intelligenceFetchHtml, intelligenceParseArticle } from "../../server/utils/intelligence-parser"
+import { getCachedDetail } from "./detail-html-cache"
 
 export type OfficialArticleEnrichment = Pick<IntelligenceArticle, "publisher" | "documentNo" | "attachments"> & {
   text?: string
@@ -24,7 +25,8 @@ export async function enrichOfficialArticle(
   candidate: OfficialCandidate,
 ): Promise<OfficialArticleEnrichment> {
   if (source.newsnowId) return { publisher: undefined, documentNo: undefined, attachments: [] }
-  const page = await intelligenceFetchHtml(article.url, source)
+  const cached = getCachedDetail(source.id, article.url)
+  const page = cached ? { html: cached.html, url: cached.url } : await intelligenceFetchHtml(article.url, source)
   const parsed = intelligenceParseArticle(page.html, candidate, source)
   return {
     publisher: parsed.publisher,
