@@ -173,7 +173,7 @@ describe("mohurd year completion and pagination integration", () => {
       }),
     })
 
-    expect(result.items.map(i => i.title)).toContain(staleItem.title)
+    expect(result.items.map((i: { title: string }) => i.title)).toContain(staleItem.title)
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
@@ -295,15 +295,15 @@ describe("mohurd year completion and pagination integration", () => {
     expect(result.warnings.some(w => w.includes("详情时间获取失败"))).toBe(true)
 
     // HTTP 失败项保留 undefined
-    const failItem = result.items.find(i => i.url === failUrl)!
+    const failItem = result.items.find((i: { url: string }) => i.url === failUrl)!
     expect(failItem.publishedAt).toBeUndefined()
 
     // 仅有修改时间和截止日期的条目保留 undefined，绝不篡改
-    const noPubItem = result.items.find(i => i.url === noPubDateUrl)!
+    const noPubItem = result.items.find((i: { url: string }) => i.url === noPubDateUrl)!
     expect(noPubItem.publishedAt).toBeUndefined()
 
     // 旧 PubDate 成功解析出三年前真实日期，但被 inCollectionWindow 排除
-    const oldItem = result.items.find(i => i.url === oldPubDateUrl)!
+    const oldItem = result.items.find((i: { url: string }) => i.url === oldPubDateUrl)!
     expect(oldItem.publishedAt).toBe(Date.parse("2021-05-01T09:00:00+08:00"))
     const now = Date.parse("2026-09-15T00:00:00+08:00")
     const cutoff = collectionCutoff(now)
