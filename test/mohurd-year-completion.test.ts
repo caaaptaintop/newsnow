@@ -6,7 +6,7 @@ import { collectionScopeKey } from "../tools/ai-bridge/collection-scope"
 import { clearDetailCache } from "../tools/ai-bridge/detail-html-cache"
 import { enrichOfficialArticle } from "../tools/ai-bridge/enrich-article"
 import { verifyPublicationDate } from "../tools/ai-bridge/publication-date"
-import { inCollectionWindow } from "../tools/ai-bridge/collection-window"
+import { collectionCutoff, inCollectionWindow } from "../tools/ai-bridge/collection-window"
 import { batchArticleKeys } from "../tools/ai-bridge/article-keys"
 
 const rawMohurd = officialIntelligenceSources.find(s => s.id === "official-mohurd")!
@@ -38,8 +38,8 @@ describe("mohurd year completion and pagination integration", () => {
     }
 
     const currentScope = collectionScopeKey(testSource)
-    const cutoff = Date.parse("2025-09-15T00:00:00+08:00")
     const now = Date.parse("2026-09-15T00:00:00+08:00")
+    const cutoff = collectionCutoff(now)
 
     const staleUrl = "https://www.mohurd.gov.cn/zhengcefabu/art/2026/art_stale.html"
     const staleKey = batchArticleKeys("building", "official-mohurd", staleUrl)[0]
@@ -50,14 +50,14 @@ describe("mohurd year completion and pagination integration", () => {
       key: staleKey,
       title: "待恢复Scope的政策通知",
       column: approvedColumn,
-      publishedAt: Date.parse("2026-06-01T00:00:00+08:00"),
+      publishedAt: Date.parse("2026-06-15T00:00:00+08:00"),
       collectionScope: undefined, // stale scope
     }
 
     const knownRecords = [{ key: knownKey, title: "已知通知" }]
     const knownPageItems = [{ url: "https://www.mohurd.gov.cn/zhengcefabu/art/2026/art_known.html", title: "已知通知", column: approvedColumn, publishedAt: Date.parse("2026-08-01T00:00:00+08:00") }]
 
-    // 1. 本栏目有未处理、在近一年、collectionScope != 当前scope的批准候选时，允许继续
+    // 1. 本栏目有未处理、在近三个月、collectionScope != 当前scope的批准候选时，允许继续
     expect(evaluatePageNeedsMore({
       source: testSource,
       items: knownPageItems,
@@ -97,13 +97,13 @@ describe("mohurd year completion and pagination integration", () => {
       knownRecords,
     })).toBe(false)
 
-    // 5. 候选发布时间超出一年前（已过期），不触发穿透
+    // 5. 候选发布时间早于三个月边界（已过期），不触发穿透
     expect(evaluatePageNeedsMore({
       source: testSource,
       items: knownPageItems,
       cutoff,
       now,
-      priorPendingCandidates: [{ ...baseStaleItem, publishedAt: Date.parse("2024-01-01T00:00:00+08:00") }],
+      priorPendingCandidates: [{ ...baseStaleItem, publishedAt: Date.parse("2026-06-14T23:59:59+08:00") }],
       knownRecords,
     })).toBe(false)
 
@@ -119,8 +119,8 @@ describe("mohurd year completion and pagination integration", () => {
   })
 
   it("paginates past all-known page 1 to reach stale candidate on page 3 using evaluatePageNeedsMore", async () => {
-    const cutoff = Date.now() - 366 * 86400000
-    const now = Date.now()
+    const now = Date.parse("2026-09-15T00:00:00+08:00")
+    const cutoff = collectionCutoff(now)
     const staleUrl = "https://www.mohurd.gov.cn/zhengcefabu/art/2026/art_stale_3.html"
     const staleItem = {
       key: batchArticleKeys("building", "official-mohurd", staleUrl)[0],
@@ -128,7 +128,7 @@ describe("mohurd year completion and pagination integration", () => {
       title: "关于印发第三批绿色低碳建筑试点通知",
       url: staleUrl,
       column: "政策发布",
-      publishedAt: Date.parse("2026-06-01T00:00:00+08:00"),
+      publishedAt: Date.parse("2026-06-15T00:00:00+08:00"),
     }
 
     const priorPendingCandidates = [staleItem]
@@ -153,7 +153,7 @@ describe("mohurd year completion and pagination integration", () => {
         return new Response(html([{ title: "关于印发保障性住房建设标准的通知", url: "https://www.mohurd.gov.cn/zhengcefabu/art/2026/art_p2_1.html", date: "2026-07-01" }], p3Url), { headers: { "content-type": "text/html" } })
       }
       if (url === p3Url) {
-        return new Response(html([{ title: staleItem.title, url: staleItem.url, date: "2026-06-01" }]), { headers: { "content-type": "text/html" } })
+        return new Response(html([{ title: staleItem.title, url: staleItem.url, date: "2026-06-15" }]), { headers: { "content-type": "text/html" } })
       }
       return new Response("Not found", { status: 404 })
     })
@@ -178,8 +178,8 @@ describe("mohurd year completion and pagination integration", () => {
   })
 
   it("stops at page 1 when all items on page 1 are known and no stale candidates exist", async () => {
-    const cutoff = Date.now() - 366 * 86400000
-    const now = Date.now()
+    const now = Date.parse("2026-09-15T00:00:00+08:00")
+    const cutoff = collectionCutoff(now)
     const p1Url = "https://www.mohurd.gov.cn/zhengcefabu/index.html"
     const p2Url = "https://www.mohurd.gov.cn/zhengcefabu/index_2.html"
 
@@ -305,8 +305,8 @@ describe("mohurd year completion and pagination integration", () => {
     // 旧 PubDate 成功解析出三年前真实日期，但被 inCollectionWindow 排除
     const oldItem = result.items.find(i => i.url === oldPubDateUrl)!
     expect(oldItem.publishedAt).toBe(Date.parse("2021-05-01T09:00:00+08:00"))
-    const cutoff = Date.parse("2025-09-15T00:00:00+08:00")
     const now = Date.parse("2026-09-15T00:00:00+08:00")
+    const cutoff = collectionCutoff(now)
     expect(inCollectionWindow(oldItem, cutoff, now)).toBe(false)
   })
 })
