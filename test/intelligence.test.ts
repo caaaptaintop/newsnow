@@ -228,6 +228,23 @@ it("keeps Liaoning date-ID article indexes while excluding directory indexes", (
   expect(items[0].url).toContain("2026070710405193851")
 })
 
+it("keeps Beijing numeric-ID article indexes while excluding the policy directory index", () => {
+  const source = { id: "official-beijing", home: "https://zjw.beijing.gov.cn/" } as any
+  const column = { name: "政策文件", url: "https://zjw.beijing.gov.cn/bjjs/zwgk46/zcwj8/index.shtml" }
+  const html = `<ul>
+    <li><a href="/bjjs/zwgk46/zcwj8/index.shtml">北京市住房城乡建设政策文件栏目</a></li>
+    <li><a href="/bjjs/xxgk/zcwj2024/20260706/index.shtml">北京市住房城乡建设政策文件按日期归档页面</a></li>
+    <li>
+      <a href="/bjjs/xxgk/zcwj2024/gfxwj40/xxyx/744055110/index.shtml">北京市住房和城乡建设委员会关于调整《北京市住房城乡建设系统行政处罚裁量基准》部分条款的通知</a>
+      <span>2026-07-06</span>
+    </li>
+  </ul>`
+  const items = intelligenceParseList(html, source, column)
+  expect(items).toHaveLength(1)
+  expect(items[0].url).toBe("https://zjw.beijing.gov.cn/bjjs/xxgk/zcwj2024/gfxwj40/xxyx/744055110/index.shtml")
+  expect(items[0].publishedAt).toBe(intelligenceDate("2026-07-06"))
+})
+
 it("keeps publication dates scoped to their article rather than the shared list", () => {
   const html = `<div><a href="/news/1.jhtml"><span>关于最新城市更新试点工作的通知</span><em>2026-09-08</em></a><a href="/news/2.jhtml"><span>关于公布智能工厂第三批名单的通知</span><em>2026-08-31</em></a><a href="/news/3.jhtml">关于调整城市更新项目库的通知</a></div>`
   const items = intelligenceParseList(html, source, { name: "通知公告", url: source.home })
