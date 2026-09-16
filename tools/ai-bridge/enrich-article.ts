@@ -5,6 +5,7 @@ import { getCachedDetail } from "./detail-html-cache"
 
 export type OfficialArticleEnrichment = Pick<IntelligenceArticle, "publisher" | "documentNo" | "attachments"> & {
   text?: string
+  mediaOnly?: boolean
 }
 
 function persistedMetadata(enrichment: OfficialArticleEnrichment): Pick<IntelligenceArticle, "publisher" | "documentNo" | "attachments"> {
@@ -33,6 +34,7 @@ export async function enrichOfficialArticle(
     documentNo: parsed.documentNo,
     attachments: parsed.attachments,
     ...(parsed.text ? { text: parsed.text } : {}),
+    ...(parsed.mediaOnly ? { mediaOnly: true } : {}),
   }
 }
 
@@ -52,9 +54,9 @@ export async function enrichOfficialArticlesForClassify<T extends {
   source: IntelligenceSource,
   items: T[],
   concurrency = 5,
-): Promise<{ enrichments: Map<string, OfficialArticleEnrichment>, fetchFailed: number, insufficient: number }> {
+): Promise<{ enrichments: Map<string, OfficialArticleEnrichment>, fetchFailed: number, insufficient: number, mediaOnly: number }> {
   const enrichments = new Map<string, OfficialArticleEnrichment>()
-  if (source.newsnowId || !items.length) return { enrichments, fetchFailed: 0, insufficient: 0 }
+  if (source.newsnowId || !items.length) return { enrichments, fetchFailed: 0, insufficient: 0, mediaOnly: 0 }
   const queue = [...items]
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (queue.length) {
@@ -73,7 +75,8 @@ export async function enrichOfficialArticlesForClassify<T extends {
   return {
     enrichments,
     fetchFailed: items.length - enrichments.size,
-    insufficient: [...enrichments.values()].filter(item => !item.text).length,
+    insufficient: [...enrichments.values()].filter(item => !item.text && !item.mediaOnly).length,
+    mediaOnly: [...enrichments.values()].filter(item => !item.text && item.mediaOnly).length,
   }
 }
 

@@ -188,9 +188,10 @@ try {
       } else {
         if (modelFailure) throw new Error(`模型请求暂停，留待下轮：${modelFailure}`)
         const startedAt = Date.now()
-        const { enrichments, fetchFailed, insufficient } = await enrichOfficialArticlesForClassify(source, selected)
+        const { enrichments, fetchFailed, insufficient, mediaOnly } = await enrichOfficialArticlesForClassify(source, selected)
         if (fetchFailed) warnings.push(`${fetchFailed} 篇正文获取失败，已按标题证据标记`)
         if (insufficient) warnings.push(`${insufficient} 篇正文不足，已按标题证据标记`)
+        if (mediaOnly) notices.push(`${mediaOnly} 篇为图片或图解内容，按标题证据分析`)
         const classifyItems = selected.map(item => ({
           key: item.key,
           title: item.title,

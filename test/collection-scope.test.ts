@@ -12,8 +12,10 @@ it("only the resolved enabled catalog controls the collection scope", () => {
   expect(collectionItemAllowed({ sourceId: source.id, column: "通知公告" }, [source])).toBe(true)
   expect(collectionItemAllowed({ sourceId: source.id, column: "其他栏目" }, [source])).toBe(false)
 })
-it("beijing runtime scope carries its parser revision without changing other source scopes", () => {
+it("source-specific parser revisions only affect their own runtime scopes", () => {
   expect(JSON.parse(collectionScopeKey(source))).toMatchObject({ runtimeRevision: "beijing-scripted-pagination-v1" })
+  const tianjin = intelligenceSources.find(item => item.id === "official-tianjin")!
+  expect(JSON.parse(collectionScopeKey(tianjin))).toMatchObject({ runtimeRevision: "tianjin-detail-body-v1" })
   const shanghai = intelligenceSources.find(item => item.id === "official-shanghai")!
   expect(JSON.parse(collectionScopeKey(shanghai))).not.toHaveProperty("runtimeRevision")
 })
