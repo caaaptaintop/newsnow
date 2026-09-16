@@ -9,6 +9,8 @@ import { ANALYSIS_FIELDS, assertBaselineUnchanged, assertNoPersistedBody, buildR
 import { buildingRecallScore } from "../shared/building-recall"
 import { intelligenceVersion } from "../shared/intelligence"
 import { batchArticleKeys } from "../tools/ai-bridge/article-keys"
+import { normalizeBatchItem } from "../shared/building-contract"
+import { safeDiagnostic } from "../tools/ai-bridge/diagnostic-message.mjs"
 
 const url = "https://zjw.sh.gov.cn/test/urban-renewal.html"
 const key = `building:${createHash("sha256").update(url).digest("hex")}`
@@ -101,6 +103,41 @@ it("publishes newer source failures even when no articles were accepted", () => 
   expect(merged.pipeline).toBe("mac")
   expect(mergeBatch(merged, { ...failed, states: snapshot.states }).states).toEqual(failed.states)
   expect(mergeBatch(merged, failed)).toEqual(merged)
+})
+
+it("preserves bounded structured source diagnostics and informational notices", () => {
+  const item = normalizeBatchItem({
+    kind: "source",
+    key: "official-beijing",
+    data: {
+      status: "partial",
+      checkedAt: 20,
+      fetched: 48,
+      accepted: 0,
+      configScopeHash: "a".repeat(64),
+      diagnostic: { stage: "analysis", code: "source_degraded", message: "1 篇正文获取失败 token=super-secret-value https://example.com/a?signature=secret-query /Users/alice/private/file" },
+      notice: "47 条候选因近三个月范围而跳过；Authorization: Bearer another-secret",
+    },
+  })
+  expect(item.data.configScopeHash).toBe("a".repeat(64))
+  expect(item.data.diagnostic.message).toContain("1 篇正文获取失败")
+  expect(item.data.diagnostic.message).not.toContain("super-secret-value")
+  expect(item.data.diagnostic.message).not.toContain("secret-query")
+  expect(item.data.diagnostic.message).not.toContain("/Users/alice/")
+  expect(item.data.notice).not.toContain("another-secret")
+  expect(() => normalizeBatchItem({ kind: "source", key: "official-beijing", data: { status: "partial", checkedAt: 20, diagnostic: { stage: "bad stage", code: "x", message: "bad" } } })).toThrow("来源诊断无效")
+})
+
+it("redacts credentials and opaque secrets from worker-visible diagnostics", () => {
+  const raw = "Authorization: Bearer super-secret-value\nCookie: session=abc123; refresh=def456\nProxy-Authorization: Basic cHJveHk6c2VjcmV0\ntoken=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz https://user:pass@example.com /Users/alice/private/file"
+  const safe = safeDiagnostic(raw)
+  expect(safe).not.toContain("super-secret-value")
+  expect(safe).not.toContain("abc123")
+  expect(safe).not.toContain("def456")
+  expect(safe).not.toContain("cHJveHk6c2VjcmV0")
+  expect(safe).not.toContain("user:pass")
+  expect(safe).not.toContain("/Users/alice/")
+  expect(safe).toContain("[redacted]")
 })
 
 it("health batches preserve editorial rules and reject mismatched IDs", async () => {

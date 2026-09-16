@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import type { H3Event } from "h3"
+import { buildingHash } from "../../shared/building-contract"
 import { intelligenceSources } from "../../shared/official-sources"
-import { intelligenceSourceSeedConfig, intelligenceSourceConfigHash, intelligenceSourceConfigJson, sourceConfigEnvelope, validateIntelligenceSourceConfig, type SourceDraftBase, type IntelligenceSourceConfig } from "../../shared/source-config"
+import { applyIntelligenceSourceConfig, intelligenceSourceCollectionScope, intelligenceSourceSeedConfig, intelligenceSourceConfigHash, intelligenceSourceConfigJson, sourceConfigEnvelope, validateIntelligenceSourceConfig, type SourceDraftBase, type IntelligenceSourceConfig } from "../../shared/source-config"
 import { publishSourceDraft, publishedBuildingSourceOverrides, rollbackSourceConfig, saveSourceDraft, saveSourceTest, sourceAdminModel } from "../../server/utils/source-config-store"
 import { pendingRuntimeSourceTests, saveRuntimeSourceTest } from "../../server/source-admin/runtime-source-test"
 import { sourceTestAllowsPublish, testSourceConfig } from "../../server/source-admin/test-source-config"
@@ -76,6 +77,67 @@ const cases: [string, (f: ReturnType<typeof memorySourceDatabase>) => Promise<vo
     assert.equal(f.count("intelligence_source_config_revision"), 1)
     assert.equal(f.sqlite.prepare("SELECT data FROM building_docs_v3").get()!.data, "unchanged")
     assert.equal(f.count("intelligence_source_config_guard"), 0)
+  }],
+  ["newly enabled source hides pre-activation health until the first current run", async (f) => {
+    f.sqlite.exec("CREATE TABLE building_sources_v3(id TEXT PRIMARY KEY,data TEXT NOT NULL,checked_at INTEGER NOT NULL)")
+    f.sqlite.prepare("INSERT INTO building_sources_v3 VALUES(?,?,?)").run(id, JSON.stringify({ status: "error", checkedAt: 10, fetched: 0, accepted: 0, diagnostic: { stage: "collection", code: "source_failed", message: "旧配置解析失败" } }), 10)
+    const d = await ready(f)
+    await publishSourceDraft(f.event, topic, id, d.hash, owner, 0, d.testedAt)
+    const model = await sourceAdminModel(f.event, topic)
+    const source = model.sources.find(s => s.id === id)!
+    assert.equal(source.collectionEnabled, true)
+    assert.equal(source.runtime.status, "pending")
+    assert.match(source.runtime.message, /首次实际采集/)
+  }],
+  ["fresh matching runtime health exposes the structured diagnostic and notice", async (f) => {
+    f.sqlite.exec("CREATE TABLE building_sources_v3(id TEXT PRIMARY KEY,data TEXT NOT NULL,checked_at INTEGER NOT NULL)")
+    const d = await ready(f)
+    await publishSourceDraft(f.event, topic, id, d.hash, owner, 0, d.testedAt)
+    const configured = applyIntelligenceSourceConfig(sourceAdminSeed, d.config)
+    const configScopeHash = await buildingHash(intelligenceSourceCollectionScope(configured))
+    const checkedAt = Date.now() + 1000
+    f.sqlite.prepare("INSERT INTO building_sources_v3 VALUES(?,?,?)").run(id, JSON.stringify({
+      status: "partial",
+      checkedAt,
+      fetched: 12,
+      accepted: 1,
+      configScopeHash,
+      diagnostic: { stage: "analysis", code: "source_degraded", message: "1 篇正文获取失败，已按标题证据标记" },
+      notice: "30 条候选因近三个月范围而跳过",
+    }), checkedAt)
+    const source = (await sourceAdminModel(f.event, topic)).sources.find(s => s.id === id)!
+    assert.equal(source.runtime.status, "partial")
+    assert.equal(source.runtime.message, "1 篇正文获取失败，已按标题证据标记")
+    assert.equal(source.runtime.notice, "30 条候选因近三个月范围而跳过")
+  }],
+  ["fresh runtime from a different source configuration still waits for the current config", async (f) => {
+    f.sqlite.exec("CREATE TABLE building_sources_v3(id TEXT PRIMARY KEY,data TEXT NOT NULL,checked_at INTEGER NOT NULL)")
+    const d = await ready(f)
+    await publishSourceDraft(f.event, topic, id, d.hash, owner, 0, d.testedAt)
+    const checkedAt = Date.now() + 1000
+    f.sqlite.prepare("INSERT INTO building_sources_v3 VALUES(?,?,?)").run(id, JSON.stringify({ status: "ok", checkedAt, fetched: 12, accepted: 1, configScopeHash: "f".repeat(64) }), checkedAt)
+    const source = (await sourceAdminModel(f.event, topic)).sources.find(s => s.id === id)!
+    assert.equal(source.runtime.status, "pending")
+    assert.match(source.runtime.message, /当前配置尚未完成首次实际采集/)
+  }],
+  ["fresh legacy runtime without a config fingerprint cannot claim current health", async (f) => {
+    f.sqlite.exec("CREATE TABLE building_sources_v3(id TEXT PRIMARY KEY,data TEXT NOT NULL,checked_at INTEGER NOT NULL)")
+    const d = await ready(f)
+    await publishSourceDraft(f.event, topic, id, d.hash, owner, 0, d.testedAt)
+    const checkedAt = Date.now() + 1000
+    f.sqlite.prepare("INSERT INTO building_sources_v3 VALUES(?,?,?)").run(id, JSON.stringify({ status: "ok", checkedAt, fetched: 12, accepted: 1 }), checkedAt)
+    const source = (await sourceAdminModel(f.event, topic)).sources.find(s => s.id === id)!
+    assert.equal(source.runtime.status, "pending")
+    assert.match(source.runtime.message, /当前配置尚未完成首次实际采集/)
+  }],
+  ["corrupt current runtime remains unknown instead of looking like a first-run wait", async (f) => {
+    f.sqlite.exec("CREATE TABLE building_sources_v3(id TEXT PRIMARY KEY,data TEXT NOT NULL,checked_at INTEGER NOT NULL)")
+    const d = await ready(f)
+    await publishSourceDraft(f.event, topic, id, d.hash, owner, 0, d.testedAt)
+    f.sqlite.prepare("INSERT INTO building_sources_v3 VALUES(?,?,?)").run(id, "{broken", Date.now() + 1000)
+    const source = (await sourceAdminModel(f.event, topic)).sources.find(s => s.id === id)!
+    assert.equal(source.runtime.status, "unknown")
+    assert.equal(source.runtime.message, "来源运行记录损坏或状态无效")
   }],
   ["R1 concurrent edit after pre-read leaves no orphan revision", async (f) => {
     const d = await ready(f)

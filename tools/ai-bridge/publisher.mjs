@@ -3,6 +3,7 @@ import { chmod,mkdir,readFile,rename,writeFile } from "node:fs/promises"
 import { execFileSync } from "node:child_process"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { diagnosticFromError } from "./diagnostic-message.mjs"
 export const publisherRoot=resolve(import.meta.dirname,"../..")
 const directory=resolve(publisherRoot,".data/building-publisher"),privatePath=resolve(directory,"private-key.pem")
 export async function publisherRequest(body,{base=process.env.BUILDING_SITE_URL??"https://news.capx-ai.com",fetcher=fetch}={}){
@@ -25,7 +26,7 @@ export async function preparePublisher(){
   const jwk=createPublicKey(createPrivateKey(pem)).export({format:"jwk"}),id=`mac-${createHash("sha256").update(jwk.x).digest("hex").slice(0,20)}`
   const registryPath=resolve(publisherRoot,"shared/building-publisher-keys.json"),marker=resolve(directory,"registered.json")
   const registry=JSON.parse(await readFile(registryPath,"utf8"))
-  const git=args=>execFileSync("git",args,{cwd:publisherRoot,encoding:"utf8",env:{...process.env,GIT_TERMINAL_PROMPT:"0",SKIP_SIMPLE_GIT_HOOKS:"1"}}).trim()
+  const git=args=>{try{return execFileSync("git",args,{cwd:publisherRoot,encoding:"utf8",env:{...process.env,GIT_TERMINAL_PROMPT:"0",SKIP_SIMPLE_GIT_HOOKS:"1"}}).trim()}catch(error){const detail=diagnosticFromError(error);throw new Error(`GitHub ${args[0]} 失败${detail?`：${detail}`:""}`)}}
   if(!registry.keys.some(k=>k.id===id)){
     try{await readFile(marker);throw new Error("本机公钥已被移除；已停止自动注册，请由维护者确认后重新登记")}catch(error){if(error.code!=="ENOENT")throw error}
     if(git(["branch","--show-current"])!=="main"||git(["status","--porcelain"]))throw new Error("登记公钥需要干净的main工作副本")
@@ -53,5 +54,5 @@ export async function preparePublisher(){
 }
 export async function publisherKnown(keys){const records=[];for(let i=0;i<keys.length;i+=80){const r=await publisherRequest({action:"known",keys:keys.slice(i,i+80)});records.push(...r.records)}return records}
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
-  try{const action=process.argv[2]??"status";const result=action==="prepare"?await preparePublisher():action==="pause-relay"?await publisherRequest({action:"relay",enabled:false}):action==="resume-relay"?await publisherRequest({action:"relay",enabled:true}):action==="maintain"?await publisherRequest({action:"maintain"}):await publisherRequest({action:"status"});console.log(JSON.stringify(result,null,2))}catch(error){console.error(error.message);process.exitCode=1}
+  try{const action=process.argv[2]??"status";const result=action==="prepare"?await preparePublisher():action==="pause-relay"?await publisherRequest({action:"relay",enabled:false}):action==="resume-relay"?await publisherRequest({action:"relay",enabled:true}):action==="maintain"?await publisherRequest({action:"maintain"}):await publisherRequest({action:"status"});console.log(JSON.stringify(result,null,2))}catch(error){console.error(diagnosticFromError(error)||"发布通道失败");process.exitCode=1}
 }

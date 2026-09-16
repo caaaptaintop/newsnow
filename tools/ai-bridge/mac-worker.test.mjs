@@ -91,11 +91,14 @@ it("failed collection preserves its error and allows the next scheduled attempt"
     assert.equal(result.retryAfter, 0)
     assert.equal(shouldRun(result, result.retryAfter), true)
     const stored = JSON.parse(readFileSync(join(root, ".data/mac-batch/worker-status.json"), "utf8"))
-    assert.equal(stored.error, "offline")
+    assert.equal(stored.failureStage, "checkout")
+    assert.equal(stored.error, "同步运行版本失败：offline")
     writeFileSync(join(root, ".data/mac-batch/worker-status.json"), "{}")
-    assert.equal(runWorker(root, () => {
+    const retried = runWorker(root, () => {
       throw new Error("released lock")
-    }).error, "released lock")
+    })
+    assert.equal(retried.failureStage, "checkout")
+    assert.equal(retried.error, "同步运行版本失败：released lock")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

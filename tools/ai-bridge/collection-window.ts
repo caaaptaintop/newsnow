@@ -23,6 +23,11 @@ export function inCollectionWindow(item: { publishedAt?: number }, cutoff: numbe
   return Number.isFinite(item.publishedAt) && item.publishedAt! >= cutoff && item.publishedAt! <= now
 }
 
+export function publicationWindowDisposition(item: { publishedAt?: number, publicationDate?: { status?: string } }, cutoff: number, now: number): "publish" | "exclude" | "retry" {
+  if (item.publicationDate?.status !== "verified") return "retry"
+  return inCollectionWindow(item, cutoff, now) ? "publish" : "exclude"
+}
+
 export function collectionCandidates<T extends { key: string, publishedAt?: number }>(items: readonly T[], cutoff: number, now: number): T[] {
   const seen = new Set<string>()
   return items.filter((item) => {

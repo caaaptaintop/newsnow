@@ -249,7 +249,10 @@ titleTest.items = Array.from({ length: 31 }, (_, n) => ({ ...pair.pending, title
 process.argv = [process.argv[0], process.argv[1], "--source", "official-fujian", "--limit", "1"]
 disk.set("published.json", JSON.stringify({ articles: [] }))
 await importFresh("../../tools/ai-bridge/mac-batch.ts?title=queue-first")
-assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 30)
+const queueFirst = JSON.parse(disk.get("result.json")!)
+assert.equal(queueFirst.pendingCandidates.length, 30)
+assert.equal(queueFirst.states.find((state: any) => state.id === "official-fujian")?.status, "ok", "ordinary per-run backlog is informational, not partial")
+assert.match(queueFirst.states.find((state: any) => state.id === "official-fujian")?.notice ?? "", /待后续批次处理/)
 await importFresh("../../tools/ai-bridge/mac-batch.ts?title=queue-second")
 assert.equal(JSON.parse(disk.get("result.json")!).pendingCandidates.length, 29)
 assert.deepEqual(titleCalls, [30, 1], "screened queued titles do not require another title AI call")

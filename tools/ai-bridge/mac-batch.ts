@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import process from "node:process"
+import { buildingHash } from "../../shared/building-contract"
 import { isPublishedSource } from "../../shared/public-site"
 import { type IntelligenceArticle, intelligenceCanonicalUrl, intelligenceVersion } from "../../shared/intelligence"
 import { publisherKnown } from "./publisher.mjs"
@@ -13,10 +14,11 @@ import { agyModel } from "./antigravity-session.mjs"
 import { batchArticleKeys } from "./article-keys"
 import { screenBuildingTitles, titleScreenLimit } from "./title-screen"
 import { prioritizeCandidates, queuedCandidate, saveBatchResult } from "./candidate-queue"
-import { collectionCandidates, collectionCutoff, inCollectionWindow } from "./collection-window"
+import { collectionCandidates, collectionCutoff, publicationWindowDisposition } from "./collection-window"
 import { collectionSourceCatalog, resolveCollectionSource, sourceConfigProvenance } from "./source-config-client"
 import { collectionItemAllowed, collectionScopeKey } from "./collection-scope"
 import { evaluatePageNeedsMore } from "./collection-pagination"
+import { safeDiagnostic } from "./diagnostic-message.mjs"
 
 const collectionNow = Date.now()
 const cutoff = collectionCutoff(collectionNow)
@@ -87,8 +89,9 @@ try {
   let modelFailure = ""
   for (const source of configuredSources) {
     const scope = collectionScopeKey(source)
-    let state: any = { id: source.id, checkedAt: Date.now(), status: "error" }
+    let state: any = { id: source.id, checkedAt: Date.now(), status: "error", configScopeHash: await buildingHash(scope) }
     let warnings: string[] = []
+    const notices: string[] = []
     let selectedCount = 0
     let processed = false
     state.collectionCounts = { discovered: 0, duplicates: 0, failed: 0 }
@@ -144,7 +147,7 @@ try {
       await saveBatchResult(resolve(outputDir, "result.json"), previous)
       const activeQueue = prioritizeCandidates(collectionCandidates(sourceQueue.filter(item => collectionItemAllowed(item, configuredSources) && item.collectionScope === scope), cutoff, collectionNow))
       const outsideWindow = sourceQueue.length - activeQueue.length
-      if (outsideWindow) warnings.push(`${outsideWindow} 条候选超出当前确认配置或发布日期超出近三个月范围、未知或无效，本轮不分析；原记录保留`)
+      if (outsideWindow) notices.push(`${outsideWindow} 条候选因当前确认配置、近三个月发布日期范围或日期无法确认而跳过；原记录保留`)
       const titleItems = activeQueue.filter(item => !item.titleScreened).slice(0, titleScreenLimit)
       const usage: any[] = []
       const ai = { model, run: async (_model: string, params: any) => {
@@ -178,7 +181,7 @@ try {
       const selected = recalled.slice(0, limit)
       selectedCount = selected.length
       const waiting = activeQueue.length - rejected.size - selected.length
-      if (waiting > 0) warnings.push(`${waiting} 条候选已保留，待后续批次处理`)
+      if (waiting > 0) notices.push(`${waiting} 条候选已保留，待后续批次处理`)
       console.log(JSON.stringify({ source: source.name, model, newCandidates: candidates.size, selected: selected.map(i => ({ title: i.title, url: i.url })) }))
       if (!selected.length) {
         console.log("No new titles; no model request made")
@@ -205,18 +208,28 @@ try {
           const evidence = classifyEvidence(enrichment?.text)
           return [{ collectionScope: scope, key: item.key, topic: source.topic, title: item.title, url: item.url, sourceId: source.id, sourceName: source.name, sourceGroup: source.group, sourceLevel: source.level, region: source.region, city: source.city, column: item.column, publishedAt: item.publishedAt, collectedAt: startedAt, attachments: [], ...(enrichment ? officialArticlePersistedMetadata(enrichment) : {}), category: decision.category, relatedCategories: decision.relatedCategories, tags: decision.tags, contentType: decision.contentType, importance: decision.importance, summary: decision.summary, reason: decision.reason, evidence, model, analysisVersion: intelligenceVersion }]
         })
+        const publishableArticles: IntelligenceArticle[] = []
+        const retryDateKeys = new Set<string>()
+        let verifiedOutsideWindow = 0
         for (let i = 0; i < articles.length; i += 5) {
-          await Promise.all(articles.slice(i, i + 5).map(async (article) => {
+          const verified = await Promise.all(articles.slice(i, i + 5).map(async (article) => {
             Object.assign(article, await verifyPublicationDate(source, article, true))
-            if (!inCollectionWindow(article, cutoff, collectionNow)) throw new Error("正文发布日期不在近三个月内或无法确认，本批保留待核对，未发布")
+            const disposition = publicationWindowDisposition(article, cutoff, collectionNow)
+            if (disposition === "retry") retryDateKeys.add(article.key)
+            if (disposition === "exclude") verifiedOutsideWindow++
+            return disposition === "publish" ? article : undefined
           }))
+          publishableArticles.push(...verified.filter((article): article is IntelligenceArticle => !!article))
         }
-        state.accepted = articles.length
-        for (const item of selected) processedVersions.set(JSON.stringify([item.key, item.title]), { key: item.key, title: item.title })
+        if (verifiedOutsideWindow) notices.push(`${verifiedOutsideWindow} 篇正文核验后确认超出近三个月范围，未发布；候选版本已记录`)
+        if (retryDateKeys.size) warnings.push(`${retryDateKeys.size} 篇正文发布日期仍无法确认，保留待后续复核`)
+        state.accepted = publishableArticles.length
+        const finalizedSelected = selected.filter(item => !retryDateKeys.has(item.key))
+        for (const item of finalizedSelected) processedVersions.set(JSON.stringify([item.key, item.title]), { key: item.key, title: item.title })
         previous.processedVersions = [...processedVersions.values()]
-        const result = { ...previous, pendingCandidates: previous.pendingCandidates.filter((i: any) => !selected.some(item => item.key === i.key && item.title === i.title)), generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...articles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...selected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
+        const result = { ...previous, pendingCandidates: previous.pendingCandidates.filter((i: any) => !finalizedSelected.some(item => item.key === i.key && item.title === i.title)), generatedAt: Date.now(), sourceId: source.id, model, elapsedMs: Date.now() - startedAt, usage, articles: [...previous.articles.filter((a: any) => !decisions.has(a.key)), ...publishableArticles], decisions: [...previous.decisions.filter((d: any) => !decisions.has(d.key)), ...finalizedSelected.map(item => ({ ...decisions.get(item.key), sourceId: source.id, at: startedAt, title: item.title, url: item.url }))] }
         await saveBatchResult(resolve(outputDir, "result.json"), result)
-        console.log(JSON.stringify({ completed: selected.length, accepted: articles.length, elapsedMs: result.elapsedMs, usage, result: resolve(outputDir, "result.json") }))
+        console.log(JSON.stringify({ completed: selected.length, accepted: publishableArticles.length, elapsedMs: result.elapsedMs, usage, result: resolve(outputDir, "result.json") }))
       }
       processed = true
       state.status = warnings.length ? "partial" : "ok"
@@ -226,7 +239,15 @@ try {
       state.status = state.fetched ? "partial" : "error"
       warnings.push(error.message)
     }
-    if (warnings.length) state.error = warnings.join("；").slice(0, 700)
+    if (warnings.length) {
+      state.error = safeDiagnostic(warnings.join("；"), 700)
+      state.diagnostic = {
+        stage: state.fetched ? "analysis" : "collection",
+        code: state.status === "error" ? "source_failed" : "source_degraded",
+        message: state.error,
+      }
+    }
+    if (notices.length) state.notice = safeDiagnostic(notices.join("；"), 700)
     let saved: any = { articles: [], decisions: [], states: [] }
     try {
       saved = JSON.parse(await readFile(resolve(outputDir, "result.json"), "utf8"))

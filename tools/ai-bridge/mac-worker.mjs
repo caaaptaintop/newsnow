@@ -5,9 +5,19 @@ import process from "node:process"
 import { pathToFileURL } from "node:url"
 
 import { agyModel } from "./antigravity-session.mjs"
+import { diagnosticFromError, safeDiagnostic } from "./diagnostic-message.mjs"
 
 export const workerSources = ["all"]
 export const workerModel = agyModel
+const stageLabels = Object.freeze({
+  checkout: "同步运行版本",
+  publisher_prepare: "准备发布通道",
+  source_test: "来源运行复核",
+  ai_preflight: "AI 运行预检",
+  collection: "采集与分析",
+  attachment_backfill: "附件元数据补查",
+  publication: "发布结果",
+})
 export function shouldRun(status, now = Date.now()) {
   return !status?.retryAfter || now >= status.retryAfter
 }
@@ -32,23 +42,28 @@ export function runWorker(root, run = command, now = Date.now()) {
   }
   writeFileSync(lockFile, String(process.pid), { flag: "wx" })
   const status = { startedAt: now, model: workerModel, reasoning: "low", state: "running", completedSources: [], retryAfter: 0 }
+  let stage = "checkout"
   const save = () => {
-    writeFileSync(`${stateFile}.pending`, `${JSON.stringify(status, null, 2)}\n`)
+    writeFileSync(`${stateFile}.pending`, `${JSON.stringify(status, null, 2)}\n`, { mode: 0o600 })
     renameSync(`${stateFile}.pending`, stateFile)
   }
-  const call = (bin, args, timeout = 180000) => run(bin, args, root, timeout)
+  const call = (bin, args, timeout = 180000, captureDiagnostic = false) => run(bin, args, root, timeout, captureDiagnostic)
   try {
     save()
-    if (call("git", ["branch", "--show-current"]).trim() !== "main" || call("git", ["status", "--porcelain"]).trim()) throw new Error("Checkout must be clean and on main")
+    if (call("git", ["branch", "--show-current"]).trim() !== "main" || call("git", ["status", "--porcelain"]).trim()) throw new Error("运行副本必须是干净的 main")
     call("git", ["pull", "--ff-only", "origin", "main"])
-    call("node", ["tools/ai-bridge/publisher.mjs", "prepare"], 300000)
+    stage = "publisher_prepare"
+    call("node", ["tools/ai-bridge/publisher.mjs", "prepare"], 300000, true)
+    stage = "source_test"
     try {
       status.runtimeSourceTests = JSON.parse(call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/source-test-runner.ts", "1"], 180000))
     } catch (error) {
-      status.runtimeSourceTestError = error.message
+      status.runtimeSourceTestError = safeDiagnostic(error.message)
     }
     save()
+    stage = "ai_preflight"
     call("node", ["tools/ai-bridge/antigravity-preflight.mjs"])
+    stage = "collection"
     for (const source of workerSources) {
       call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/mac-batch.ts", "--source", source, "--limit", "12", "--model", workerModel], 1800000)
       status.completedSources.push(source)
@@ -56,8 +71,10 @@ export function runWorker(root, run = command, now = Date.now()) {
     }
     // Run even when the normal collection batch is empty. The backfill can
     // create result.json itself when a parser upgrade restores old attachments.
+    stage = "attachment_backfill"
     call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/backfill-attachments.ts", "--limit", "24"], 600000)
     if (existsSync(resolve(directory, "result.json"))) {
+      stage = "publication"
       const publicationOutput = call(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/apply-batch.ts"])
       try {
         status.publication = JSON.parse(publicationOutput)
@@ -71,7 +88,10 @@ export function runWorker(root, run = command, now = Date.now()) {
     status.head = call("git", ["rev-parse", "HEAD"]).trim()
   } catch (error) {
     status.state = "error"
-    status.error = error.message
+    status.failureStage = stage
+    const detail = safeDiagnostic(error.message) || "未取得可安全展示的错误详情"
+    status.errorDetail = detail
+    status.error = `${stageLabels[stage] ?? "执行"}失败：${detail}`
     // The existing calendar/manual dispatcher decides when to start the next run.
     status.retryAfter = 0
     status.finishedAt = Date.now()
@@ -81,9 +101,12 @@ export function runWorker(root, run = command, now = Date.now()) {
   }
   return status
 }
-function command(bin, args, cwd, timeout) {
+function command(bin, args, cwd, timeout, captureDiagnostic = false) {
   const result = spawnSync(bin, args, { cwd, encoding: "utf8", timeout, maxBuffer: 1048576, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } })
-  if (result.error || result.status !== 0) throw new Error(`${bin.split("/").pop()} ${args[0]} failed (exit ${result.status ?? "timeout"}); check local login/network or checkout`)
+  if (result.error || result.status !== 0) {
+    const detail = captureDiagnostic ? diagnosticFromError({ message: result.error?.message, stderr: result.stderr, stdout: result.stdout }) : ""
+    throw new Error(detail || `${bin.split("/").pop()} ${args[0]} 退出 ${result.status ?? "timeout"}`)
+  }
   return result.stdout
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
