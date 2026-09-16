@@ -103,7 +103,9 @@ describe("human-readable column test results", () => {
   it("explains queued Mac verification without treating DNS failure as a bad URL", () => {
     const html = sourceTestResultView({ ...result, executor: "cloud", runtimePending: true })
     expect(html).toContain("等待本机复核")
-    expect(html).toContain("已排队等待 Mac 后台自然周期复核")
+    expect(html).toContain("已排队等待 Mac 后台复核")
+    expect(html).toContain("无法解析该站点 DNS")
+    expect(html).toContain("通常约一分钟内开始复核")
     expect(html).toContain("无需重复点击测试")
   })
   it("labels a signed Mac result distinctly from a cloud test", () => {

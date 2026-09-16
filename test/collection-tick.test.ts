@@ -31,6 +31,66 @@ it("polling does not collect except scheduled slot, once only", async () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+it("polling handles pending source tests even when collection is not due", async () => {
+  const root = mkdtempSync(join(tmpdir(), "newsnow-source-test-tick-"))
+  let sourceCalls = 0
+  let workerCalls = 0
+  try {
+    const result = await collectionTick(root, {
+      now: new Date("2026-09-14T01:00Z"),
+      request: async body => body.action === "source-tests" ? { jobs: [{ sourceId: "official-tianjin" }] } : { job: null },
+      worker: () => {
+        workerCalls++
+        return { state: "complete" }
+      },
+      sourceTests: async () => {
+        sourceCalls++
+        return { pending: 1, completed: [{ sourceId: "official-tianjin", publishable: true, testedAt: 1 }] }
+      },
+    })
+    assert.equal(result.skipped, "not-due")
+    assert.equal(sourceCalls, 1)
+    assert.equal(workerCalls, 0)
+    assert.equal(result.runtimeSourceTests.completed[0].sourceId, "official-tianjin")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+it("source-test polling failure does not start collection or leak raw details", async () => {
+  const root = mkdtempSync(join(tmpdir(), "newsnow-source-test-tick-error-"))
+  try {
+    const result = await collectionTick(root, {
+      now: new Date("2026-09-14T01:00Z"),
+      request: async body => body.action === "source-tests" ? { jobs: [{ sourceId: "official-tianjin" }] } : { job: null },
+      sourceTests: async () => {
+        throw new Error("SECRET_RUNTIME_DETAIL")
+      },
+    })
+    assert.equal(result.skipped, "not-due")
+    assert.equal(result.runtimeSourceTestError, "来源运行复核未完成")
+    assert.doesNotMatch(JSON.stringify(result), /SECRET_RUNTIME_DETAIL/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+it("idle polling does not spawn the source-test runner when no review is pending", async () => {
+  const root = mkdtempSync(join(tmpdir(), "newsnow-source-test-empty-"))
+  let sourceCalls = 0
+  try {
+    const result = await collectionTick(root, {
+      now: new Date("2026-09-14T01:00Z"),
+      request: async body => body.action === "source-tests" ? { jobs: [] } : { job: null },
+      sourceTests: async () => {
+        sourceCalls++
+        return { pending: 0, completed: [] }
+      },
+    })
+    assert.equal(result.skipped, "not-due")
+    assert.equal(sourceCalls, 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 it("manual claim is required and completion reported", async () => {
   const root = mkdtempSync(join(tmpdir(), "newsnow-manual-"))
   let calls = 0

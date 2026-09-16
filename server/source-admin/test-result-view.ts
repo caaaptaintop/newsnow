@@ -28,8 +28,17 @@ function renderSourceTestView(input) {
     const preview = Array.isArray(item.preview) ? item.preview.slice(0,5).map(article => '<li>'+link(article?.url, article?.title)+'</li>').join('') : ''
     return '<section class="source-test-card '+state+'" data-test-endpoint="'+esc(item.id)+'"><div class="source-test-title"><b>'+esc(item.name)+'</b><span>'+label+'</span></div><div class="source-test-url">'+link(item.url)+'</div>'+(item.finalUrl && item.finalUrl !== item.url ? '<div>最终地址：'+link(item.finalUrl)+'</div>' : '')+(details ? '<div class="source-test-code">'+esc(details)+'</div>' : '')+'<p>'+esc(item.message)+'</p>'+(item.ok === true ? '<div>识别到 '+esc(item.count)+' 篇候选；请确认是否属于目标栏目。</div>' : '')+(preview ? '<ul>'+preview+'</ul>' : '')+'</section>'
   }).join('')
+  const pendingCategories = new Set(endpoints.map(item => item.diagnostic?.category).filter(Boolean))
+  const hasCloudflareDns = pendingCategories.has('cloudflare_dns') || endpoints.some(item => item.diagnostic?.cloudflareCode === '1016')
+  const pendingReason = !endpoints.length
+    ? '当前来源按安全策略需要在 Mac 安全网络通道完成测试'
+    : pendingCategories.has('access_denied')
+      ? '云端测试收到站点访问限制（HTTP 403/412）'
+      : hasCloudflareDns
+        ? '云端测试环境无法解析该站点 DNS'
+        : '云端测试环境与生产 Mac 网络存在差异'
   const runtimeNote = result.runtimePending === true
-    ? '<p class="muted">Cloudflare 云端 DNS 无法读取该站点，已排队等待 Mac 后台自然周期复核；无需重复点击测试。自然周期完成后刷新管理页即可看到本机结果，Mac 结果返回前不能发布。</p>'
+    ? '<p class="muted">'+esc(pendingReason)+'，已排队等待 Mac 后台复核；无需重复点击测试。Mac 在线且空闲时通常约一分钟内开始复核，结果返回前不能发布。</p>'
     : result.executor === 'mac'
       ? '<p class="muted">本结果来自已登记签名身份的 Mac 运行环境；请人工确认标题样本后再发布。</p>'
       : '<p class="muted">当前为云端测试，生产采集运行在 Mac；网络失败不等于栏目地址错误。打开原页也不能替代测试通过。</p>'
