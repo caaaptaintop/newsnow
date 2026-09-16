@@ -1,10 +1,10 @@
 /** Only bounded, allowlisted metadata survives an upstream error. No response HTML is retained. */
 export interface SourceFetchDiagnostic {
   stage: "fetch"
-  httpStatus: number
-  category: "cloudflare_dns" | "http_530" | "access_denied" | "rate_limited" | "not_found" | "http_error"
+  httpStatus?: number
+  category: "cloudflare_dns" | "network_timeout" | "http_530" | "access_denied" | "rate_limited" | "not_found" | "http_error"
   cloudflareCode?: string
-  evidence: "header" | "body" | "status"
+  evidence: "header" | "body" | "status" | "transport"
 }
 export class SourceFetchError extends Error {
   readonly diagnostic: SourceFetchDiagnostic
@@ -13,6 +13,19 @@ export class SourceFetchError extends Error {
     this.name = "SourceFetchError"
     this.diagnostic = diagnostic
   }
+}
+/**
+ * Only recognize the timeout type emitted by AbortSignal.timeout().  A generic
+ * network error or a message that merely contains the word "timeout" is not
+ * enough to enter the Mac fallback path.
+ */
+export function sourceTransportError(error: unknown) {
+  if (!error || typeof error !== "object" || !("name" in error) || String(error.name) !== "TimeoutError") return
+  return new SourceFetchError("访问目标站点超时；尚未读取栏目页，不能据此判定栏目地址错误", {
+    stage: "fetch",
+    category: "network_timeout",
+    evidence: "transport",
+  })
 }
 const maxErrorBytes = 8192
 async function errorPrefix(response: Response) {

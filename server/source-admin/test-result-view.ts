@@ -36,7 +36,9 @@ function renderSourceTestView(input) {
       ? '云端测试收到站点访问限制（HTTP 403/412）'
       : hasCloudflareDns
         ? '云端测试环境无法解析该站点 DNS'
-        : '云端测试环境与生产 Mac 网络存在差异'
+        : pendingCategories.has('network_timeout')
+          ? '云端测试访问目标站点超时'
+          : '云端测试环境与生产 Mac 网络存在差异'
   const runtimeNote = result.runtimePending === true
     ? '<p class="muted">'+esc(pendingReason)+'，已排队等待 Mac 后台复核；无需重复点击测试。Mac 在线且空闲时通常约一分钟内开始复核，结果返回前不能发布。</p>'
     : result.executor === 'mac'

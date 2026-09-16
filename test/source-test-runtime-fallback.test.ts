@@ -2,7 +2,7 @@ import { expect, it } from "vitest"
 
 import { type SourceConfigTestResult, sourceTestNeedsRuntimeFallback } from "../server/source-admin/test-source-config"
 
-function result(categories: Array<{ category?: "cloudflare_dns" | "access_denied" | "not_found" | "rate_limited", status?: number, ok?: boolean, testStatus?: "passed" | "failed" | "untested" }>): SourceConfigTestResult {
+function result(categories: Array<{ category?: "cloudflare_dns" | "network_timeout" | "access_denied" | "not_found" | "rate_limited", status?: number, ok?: boolean, testStatus?: "passed" | "failed" | "untested" }>): SourceConfigTestResult {
   return {
     schemaVersion: 1,
     mode: "explicit",
@@ -18,17 +18,19 @@ function result(categories: Array<{ category?: "cloudflare_dns" | "access_denied
       count: 0,
       preview: [],
       message: "synthetic",
-      ...(item.category && item.status ? { diagnostic: { stage: "fetch" as const, httpStatus: item.status, category: item.category, evidence: "status" as const } } : {}),
+      ...(item.category ? { diagnostic: { stage: "fetch" as const, ...(item.status ? { httpStatus: item.status } : {}), category: item.category, evidence: item.status ? "status" as const : "transport" as const } } : {}),
     })),
   }
 }
 
 it("queues Mac verification for cloud DNS and cloud-only HTTP access denial", () => {
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "cloudflare_dns", status: 530 }]))).toBe(true)
+  expect(sourceTestNeedsRuntimeFallback(result([{ category: "network_timeout" }]))).toBe(true)
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "access_denied", status: 403 }]))).toBe(true)
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "access_denied", status: 412 }]))).toBe(true)
   expect(sourceTestNeedsRuntimeFallback(result([
     { category: "cloudflare_dns", status: 530 },
+    { category: "network_timeout" },
     { category: "access_denied", status: 403 },
   ]))).toBe(true)
 })
@@ -37,6 +39,9 @@ it("does not queue Mac verification for semantic failures or incomplete tests", 
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "access_denied", status: 401 }]))).toBe(false)
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "not_found", status: 404 }]))).toBe(false)
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "rate_limited", status: 429 }]))).toBe(false)
+  expect(sourceTestNeedsRuntimeFallback(result([{ category: "network_timeout" }, {}]))).toBe(false)
+  expect(sourceTestNeedsRuntimeFallback(result([{ category: "network_timeout" }, { testStatus: "untested" }]))).toBe(false)
+  expect(sourceTestNeedsRuntimeFallback(result([{ category: "network_timeout" }, { ok: true, testStatus: "passed" }]))).toBe(false)
   expect(sourceTestNeedsRuntimeFallback(result([{ testStatus: "untested" }]))).toBe(false)
   expect(sourceTestNeedsRuntimeFallback(result([{ category: "access_denied", status: 403, ok: true, testStatus: "passed" }]))).toBe(false)
   expect(sourceTestNeedsRuntimeFallback({ ...result([{ category: "access_denied", status: 403 }]), mode: "discover" })).toBe(false)

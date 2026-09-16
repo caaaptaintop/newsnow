@@ -4,7 +4,7 @@ import { applyIntelligenceSourceConfig, customSourceSeed, sourceConfigCanPublish
 import { intelligenceDiscoverColumns, intelligenceFetchHtml } from "../utils/intelligence-parser"
 import { intelligenceFetchList } from "../utils/intelligence-dynamic-list"
 
-import { type SourceFetchDiagnostic, SourceFetchError } from "../utils/source-fetch-diagnostic"
+import { type SourceFetchDiagnostic, SourceFetchError, sourceTransportError } from "../utils/source-fetch-diagnostic"
 
 export interface SourceEndpointTest {
   id: string
@@ -36,7 +36,8 @@ export function sourceTestNeedsRuntimeFallback(value: SourceConfigTestResult) {
       if (endpoint.ok || endpoint.status === "untested") return false
       const diagnostic = endpoint.diagnostic
       return diagnostic?.category === "cloudflare_dns"
-        || (diagnostic?.category === "access_denied" && [403, 412].includes(diagnostic.httpStatus))
+        || diagnostic?.category === "network_timeout"
+        || (diagnostic?.category === "access_denied" && (diagnostic.httpStatus === 403 || diagnostic.httpStatus === 412))
     })
 }
 /** Recheck the result contract, not a caller-provided ok flag or a discovery success. */
@@ -90,8 +91,9 @@ export async function testSourceConfig(value: IntelligenceSourceConfig): Promise
       Object.assign(record, { finalUrl: page.url, status: items.length ? "passed" : "failed", ok: items.length > 0, count: items.length, preview: items.slice(0, 5).map(item => ({ title: item.title, url: item.url, publishedAt: item.publishedAt })), message: items.length ? "请人工确认标题样本是否属于目标栏目；缺少日期不等于当天发布" : "栏目页未解析到文章" })
     } catch (error) {
       record.status ??= "failed"
-      record.message = error instanceof Error ? error.message.slice(0, 240) : "栏目测试失败"
-      if (error instanceof SourceFetchError) record.diagnostic = error.diagnostic
+      const fetchError = error instanceof SourceFetchError ? error : sourceTransportError(error)
+      record.message = fetchError?.message ?? (error instanceof Error ? error.message.slice(0, 240) : "栏目测试失败")
+      if (fetchError) record.diagnostic = fetchError.diagnostic
     }
     endpoints.push(record)
   }

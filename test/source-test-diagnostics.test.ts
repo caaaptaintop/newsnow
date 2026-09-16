@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { sourceFetchError } from "../server/utils/source-fetch-diagnostic"
+import { sourceFetchError, sourceTransportError } from "../server/utils/source-fetch-diagnostic"
 import { intelligenceFetchHtml } from "../server/utils/intelligence-parser"
 import { intelligenceFetchList, intelligenceJPaasUnitUrl } from "../server/utils/intelligence-dynamic-list"
 import { sourceTestResultScript } from "../server/source-admin/test-result-view"
@@ -76,12 +76,31 @@ describe("upstream diagnostics without body persistence or retries", () => {
     expect(mock).toHaveBeenCalledOnce()
     expect(mock.mock.calls[0][0]).toBe(config.endpoints[0].url)
   })
+  it("recognizes only a typed AbortSignal timeout as a transport diagnostic", () => {
+    expect(sourceTransportError(new DOMException("The operation was aborted due to timeout", "TimeoutError"))?.diagnostic).toEqual({
+      stage: "fetch",
+      category: "network_timeout",
+      evidence: "transport",
+    })
+    expect(sourceTransportError(new DOMException("The operation was aborted", "AbortError"))).toBeUndefined()
+    expect(sourceTransportError(new Error("The operation was aborted due to timeout"))).toBeUndefined()
+  })
   it("reports each failed column and retains the strict publication gate", async () => {
     const mock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("error code: 1016", { status: 530 }))
     const result = await testSourceConfig(config)
     expect(result.endpoints).toHaveLength(4)
     expect(result.endpoints.every(item => !item.ok && item.diagnostic?.cloudflareCode === "1016")).toBe(true)
     for (const endpoint of config.endpoints) expect(result.message).toContain(endpoint.name)
+    expect(sourceTestAllowsPublish(config, result)).toBe(false)
+    expect(mock).toHaveBeenCalledTimes(4)
+  })
+  it("queues a cloud transport timeout for Mac verification without opening the publication gate", async () => {
+    const mock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
+    const result = await testSourceConfig(config)
+    expect(result.endpoints).toHaveLength(4)
+    expect(result.endpoints.every(item => item.diagnostic?.category === "network_timeout")).toBe(true)
+    expect(result.endpoints.every(item => item.message.includes("尚未读取栏目页"))).toBe(true)
+    expect(sourceTestNeedsRuntimeFallback(result)).toBe(true)
     expect(sourceTestAllowsPublish(config, result)).toBe(false)
     expect(mock).toHaveBeenCalledTimes(4)
   })
@@ -107,6 +126,16 @@ describe("human-readable column test results", () => {
     expect(html).toContain("无法解析该站点 DNS")
     expect(html).toContain("通常约一分钟内开始复核")
     expect(html).toContain("无需重复点击测试")
+  })
+  it("explains a queued cloud timeout as a Mac network recheck", () => {
+    const timeout = { ...result, executor: "cloud", runtimePending: true, endpoints: result.endpoints.map(item => ({
+      ...item,
+      diagnostic: { stage: "fetch", category: "network_timeout", evidence: "transport" },
+    })) }
+    const html = sourceTestResultView(timeout)
+    expect(html).toContain("云端测试访问目标站点超时")
+    expect(html).toContain("已排队等待 Mac 后台复核")
+    expect(html).not.toContain("HTTP 0")
   })
   it("labels a signed Mac result distinctly from a cloud test", () => {
     const html = sourceTestResultView({ ...result, executor: "mac", runtimePending: false })
