@@ -1,5 +1,6 @@
 import { intelligenceContentTypes, intelligenceTopics, type IntelligenceArticle } from "./intelligence"
 import { intelligenceMetadataOnly } from "./intelligence-storage"
+import { safeDiagnostic } from "./runtime-diagnostic.mjs"
 
 export const buildingLimits = Object.freeze({ pageSize: 50, maxPageSize: 100, batchItems: 20, requestBytes: 512 * 1024, itemBytes: 24 * 1024 })
 export class BuildingError extends Error {
@@ -35,7 +36,16 @@ export function normalizeBatchItem(input: unknown): BatchItem {
   if (kind === "decision") data = { title: text(d.title, 1000, true), at: timestamp(d.at) }
   else if (kind === "source") {
     if (!/^[\w-]{1,100}$/.test(key) || !["ok", "partial", "error"].includes(d.status)) throw new BuildingError(400, "来源状态无效")
-    data = { status: d.status, checkedAt: timestamp(d.checkedAt), fetched: Math.max(0, Math.min(100000, Math.floor(Number(d.fetched) || 0))), accepted: Math.max(0, Math.min(100000, Math.floor(Number(d.accepted) || 0))) }
+    let diagnostic
+    if (d.diagnostic != null) {
+      if (!object(d.diagnostic) || typeof d.diagnostic.stage !== "string" || !/^[a-z0-9_-]{1,40}$/.test(d.diagnostic.stage)
+        || typeof d.diagnostic.code !== "string" || !/^[a-z0-9_-]{1,60}$/.test(d.diagnostic.code)) throw new BuildingError(400, "来源诊断无效")
+      diagnostic = { stage: d.diagnostic.stage, code: d.diagnostic.code, message: safeDiagnostic(text(d.diagnostic.message, 700, true), 700) }
+    }
+    const notice = d.notice == null ? undefined : safeDiagnostic(text(d.notice, 700, true), 700)
+    const configScopeHash = d.configScopeHash == null ? undefined : text(d.configScopeHash, 64, true)
+    if (configScopeHash && !/^[a-f0-9]{64}$/.test(configScopeHash)) throw new BuildingError(400, "来源配置指纹无效")
+    data = { status: d.status, checkedAt: timestamp(d.checkedAt), fetched: Math.max(0, Math.min(100000, Math.floor(Number(d.fetched) || 0))), accepted: Math.max(0, Math.min(100000, Math.floor(Number(d.accepted) || 0))), ...(diagnostic ? { diagnostic } : {}), ...(notice ? { notice } : {}), ...(configScopeHash ? { configScopeHash } : {}) }
   } else {
     if (d.topic !== "building" || d.key !== key) throw new BuildingError(400, "该主题暂未开放")
     if (!["title", "body"].includes(d.evidence) || !Object.prototype.hasOwnProperty.call(intelligenceTopics.building.categories, d.category) || !(intelligenceContentTypes as readonly string[]).includes(d.contentType)) throw new BuildingError(400, "资讯分类无效")

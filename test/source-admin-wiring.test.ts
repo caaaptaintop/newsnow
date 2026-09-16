@@ -79,7 +79,7 @@ describe("source administration integration boundaries", () => {
     }
   })
 
-  it("reads health from the existing v3 table and decodes its JSON data", async () => {
+  it("does not present stale health as current for a source that is not enabled", async () => {
     const { event, calls } = fixture({ states: [{
       id: "official-beijing",
       checked_at: 1789040100000,
@@ -87,19 +87,18 @@ describe("source administration integration boundaries", () => {
     }] })
     const model = await sourceAdminModel(event, "building")
     const source = model.sources.find(item => item.id === "official-beijing")!
-    expect(source.runtime).toMatchObject({ status: "partial", updatedAt: 1789040100000, candidateCount: 17, acceptedCount: 2 })
-    expect(source.runtime.message).toContain("未包含失败详情")
+    expect(source.runtime).toMatchObject({ status: "inactive", message: "未启用采集" })
     expect(calls.some(sql => sql.includes("FROM building_source_states"))).toBe(false)
   })
 
-  it("distinguishes a corrupt health row from a source with no history", async () => {
+  it("does not expose corrupt historical health for sources that are currently disabled", async () => {
     const { event } = fixture({ states: [{ id: "official-beijing", checked_at: 1789040100000, data: "{broken" }] })
     const model = await sourceAdminModel(event, "building")
     expect(model.sources.find(item => item.id === "official-beijing")?.runtime).toMatchObject({
-      status: "unknown",
-      message: "来源运行记录损坏或状态无效",
+      status: "inactive",
+      message: "未启用采集",
     })
-    expect(model.sources.find(item => item.id === "official-mohurd")?.runtime.message).toBe("尚无运行记录")
+    expect(model.sources.find(item => item.id === "official-mohurd")?.runtime.message).toBe("未启用采集")
   })
 
   it("does not pretend an unavailable D1 binding is an empty published catalog", async () => {

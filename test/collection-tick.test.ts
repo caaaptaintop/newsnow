@@ -166,3 +166,49 @@ it("run summary separates articles, updates, duplicates and source failures", ()
   assert.match(resultMessage(states, { state: "error", publication: { publishedArticles: 8, updatedArticles: 2 } }), /发布条数未确认/)
   assert.match(resultMessage([{ status: "ok" }], { state: "complete" }), /本轮采集条数未记录/)
 })
+
+it("manual worker failure keeps its concrete phase before generic count uncertainty", () => {
+  const root = mkdtempSync(join(tmpdir(), "newsnow-stage-result-"))
+  try {
+    const result = completion(root, { state: "error", startedAt: 10, failureStage: "publisher_prepare", errorDetail: "发布网络不可用；保留待发布结果，下轮重试" })
+    assert.equal(result.state, "error")
+    assert.match(result.message, /^准备发布通道失败：发布网络不可用/)
+    assert.match(result.message, /本轮采集条数未记录/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it("all-source failures name the collection stage and keep a safe source reason", () => {
+  const root = mkdtempSync(join(tmpdir(), "newsnow-all-source-error-"))
+  const dir = join(root, ".data/mac-batch")
+  mkdirSync(dir, { recursive: true })
+  try {
+    writeFileSync(join(dir, "result.json"), JSON.stringify({ states: [{ checkedAt: 20, status: "error", collectionCounts: { discovered: 0, duplicates: 0, failed: 0 }, diagnostic: { message: "栏目 HTTP 503 token=do-not-persist" } }] }))
+    const result = completion(root, { state: "complete", startedAt: 10, publication: { publishedArticles: 0, updatedArticles: 0 } })
+    assert.equal(result.state, "error")
+    assert.match(result.message, /^采集与分析失败：栏目 HTTP 503/)
+    assert.doesNotMatch(result.message, /do-not-persist/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it("unexpected worker exceptions report a generic collection-stage failure without raw exception text", async () => {
+  const root = mkdtempSync(join(tmpdir(), "newsnow-worker-throw-"))
+  const events: Record<string, any>[] = []
+  try {
+    await collectionTick(root, { now: new Date("2026-09-14T01:00Z"), worker: () => {
+      throw new Error("SECRET_RAW_EXCEPTION")
+    }, request: async (body) => {
+      events.push(body)
+      return body.action === "collection-poll" ? { job: { id: "test" } } : { claimed: true }
+    } })
+    const finish = events.at(-1)!
+    assert.equal(finish.state, "error")
+    assert.match(finish.message, /^采集与分析失败：采集进程异常退出/)
+    assert.doesNotMatch(finish.message, /SECRET_RAW_EXCEPTION/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

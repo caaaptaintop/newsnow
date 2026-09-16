@@ -4,6 +4,17 @@ import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { runWorker } from "./mac-worker.mjs"
 import { publisherRequest } from "./publisher.mjs"
+import { safeDiagnostic } from "./diagnostic-message.mjs"
+
+const failureStageLabels = Object.freeze({
+  checkout: "同步运行版本",
+  publisher_prepare: "准备发布通道",
+  source_test: "来源运行复核",
+  ai_preflight: "AI 运行预检",
+  collection: "采集与分析",
+  attachment_backfill: "附件元数据补查",
+  publication: "发布结果",
+})
 
 export function scheduledSlot(now = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now).map(p => [p.type, p.value]))
@@ -56,8 +67,16 @@ export function completion(root, result) {
   const path = resolve(root, ".data/mac-batch/result.json")
   const states = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")).states ?? []).filter(s => s.checkedAt >= result.startedAt) : []
   const message = resultMessage(states, result)
-  if (result.state !== "complete" || result.skipped) return { state: "error", message: `${message}；流程未完成，请检查后重试` }
-  if (states.length && states.every(s => s.status === "error")) return { state: "error", message }
+  if (result.state !== "complete" || result.skipped) {
+    const stage = failureStageLabels[result.failureStage] ?? "执行"
+    const detail = safeDiagnostic(result.errorDetail || result.error || "")
+    const failure = detail ? `${stage}失败：${detail}；` : ""
+    return { state: "error", message: `${failure}${message}；流程未完成，请检查后重试`.slice(0, 500) }
+  }
+  if (states.length && states.every(s => s.status === "error")) {
+    const detail = safeDiagnostic(states.map(state => state.diagnostic?.message || state.error).find(Boolean) || "所有启用来源均失败")
+    return { state: "error", message: `采集与分析失败：${detail}；${message}`.slice(0, 500) }
+  }
   return { state: "complete", message }
 }
 export async function collectionTick(root, { request = publisherRequest, worker = runWorker, now = new Date() } = {}) {
@@ -106,7 +125,7 @@ export async function collectionTick(root, { request = publisherRequest, worker 
     try {
       result = await worker(root)
     } catch {
-      result = { state: "error", startedAt }
+      result = { state: "error", startedAt, failureStage: "collection", errorDetail: "采集进程异常退出" }
     }
     if (job) {
       const receipt = { id: job.id, ...completion(root, result) }

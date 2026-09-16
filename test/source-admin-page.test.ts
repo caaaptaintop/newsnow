@@ -8,10 +8,22 @@ describe("source administration page", () => {
     expect(html).toContain("信息源管理中心")
     expect(html).toContain("配置状态")
     expect(html).toContain("运行状态")
+    expect(html).toContain("待首次采集")
+    expect(html).toContain("运行说明")
+    expect(html).toContain("enabled=sources.filter(i=>i.collectionEnabled)")
+    expect(html).toContain("['已启用来源',enabled.length]")
+    expect(html).not.toContain("['来源',sources.length]")
     expect(html).toContain("建筑")
     expect(html).toContain("健康")
     expect(html).toContain("owner+&lt;test&gt;@example.com")
     expect(html).not.toContain("owner+<test>@example.com")
+  })
+
+  it("shows manual collection failures using the server-provided stage detail", () => {
+    const html = sourceAdminPage("owner@example.com")
+    expect(html).toContain("error:'本轮未完成'")
+    expect(html).toContain("+(j.message?' · '+j.message:'')")
+    expect(html).not.toContain("error:'更新失败，请检查 Mac 后重试'")
   })
 
   it("keeps configured endpoint drafts in explicit mode and preserves save feedback", () => {

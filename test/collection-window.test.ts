@@ -1,5 +1,5 @@
 import { expect, it } from "vitest"
-import { collectionCandidates, collectionCutoff, inCollectionWindow, pageEntirelyBeforeWindow, publicationArticleAllowed } from "../tools/ai-bridge/collection-window"
+import { collectionCandidates, collectionCutoff, inCollectionWindow, pageEntirelyBeforeWindow, publicationArticleAllowed, publicationWindowDisposition } from "../tools/ai-bridge/collection-window"
 
 const now = Date.parse("2026-09-15T00:00:00+08:00")
 const cutoff = collectionCutoff(now)
@@ -18,6 +18,14 @@ it("仅接受自然月窗口内有日期的条目，包含边界并排除未来�
   expect(cutoff).toBe(Date.parse("2026-06-15T00:00:00+08:00"))
   for (const publishedAt of [cutoff, now]) expect(inCollectionWindow({ publishedAt }, cutoff, now)).toBe(true)
   for (const publishedAt of [cutoff - 1, now + 1, undefined, Number.NaN, 0]) expect(inCollectionWindow({ publishedAt }, cutoff, now)).toBe(false)
+})
+
+it("distinguishes verified old articles from dates that still need retry", () => {
+  const now = Date.parse("2026-09-16T00:00:00+08:00")
+  const cutoff = collectionCutoff(now)
+  expect(publicationWindowDisposition({ publishedAt: now, publicationDate: { status: "verified" } }, cutoff, now)).toBe("publish")
+  expect(publicationWindowDisposition({ publishedAt: cutoff - 1, publicationDate: { status: "verified" } }, cutoff, now)).toBe("exclude")
+  expect(publicationWindowDisposition({ publicationDate: { status: "unknown" } }, cutoff, now)).toBe("retry")
 })
 
 it("月末回退自然月时正确 clamp 到目标月最后一天", () => {

@@ -1,11 +1,14 @@
 import process from "node:process"
 import { type H3Event, createError } from "h3"
 import { intelligenceSources } from "../../shared/official-sources"
+import { buildingHash } from "../../shared/building-contract"
 import {
   type IntelligenceSourceConfig,
   type PublishedSourceConfig,
   type SourceDraftBase,
+  applyIntelligenceSourceConfig,
   customSourceSeed,
+  intelligenceSourceCollectionScope,
   intelligenceSourceConfigHash,
   intelligenceSourceConfigJson,
   intelligenceSourceSeedConfig,
@@ -252,16 +255,32 @@ async function sourceHealth(db: D1DatabaseLike, topic: string) {
   }
 }
 
-function runtimeStatus(row: Record<string, unknown> | undefined, readError?: string) {
-  if (!row) return { status: "unknown", message: readError ?? "尚无运行记录" }
+function runtimeStatus(row: Record<string, unknown> | undefined, readError: string | undefined, collectionEnabled: boolean, activatedAt?: number, scopeHash?: string) {
+  if (!collectionEnabled) return { status: "inactive", message: "未启用采集" }
+  if (readError) return { status: "unknown", message: readError }
+  if (!row) return { status: "pending", message: "已启用，等待首次实际采集" }
   const status = String(row.status ?? "unknown")
   const checkedAt = Number(row.checkedAt)
+  const updatedAt = Number.isFinite(checkedAt) && checkedAt > 0 ? checkedAt : undefined
+  if (status === "unknown") return { status: "unknown", message: String(row.message ?? "来源运行记录损坏或状态无效"), updatedAt }
+  const rowScopeHash = typeof row.configScopeHash === "string" && /^[a-f0-9]{64}$/.test(row.configScopeHash) ? row.configScopeHash : undefined
+  if (scopeHash && rowScopeHash !== scopeHash) {
+    return { status: "pending", message: "当前配置尚未完成首次实际采集", updatedAt }
+  }
+  if (activatedAt && (!updatedAt || updatedAt < activatedAt)) {
+    return { status: "pending", message: "配置已启用或更新，等待首次实际采集", updatedAt }
+  }
+  const diagnostic = row.diagnostic && typeof row.diagnostic === "object" && !Array.isArray(row.diagnostic)
+    ? row.diagnostic as Record<string, unknown>
+    : undefined
   return {
     status,
-    message: String(row.message ?? row.error ?? (["partial", "error"].includes(status)
+    message: String(diagnostic?.message ?? row.message ?? row.error ?? (["partial", "error"].includes(status)
       ? "本次发布记录未包含失败详情，需核对采集日志"
       : "")),
-    updatedAt: Number.isFinite(checkedAt) && checkedAt > 0 ? checkedAt : undefined,
+    notice: typeof row.notice === "string" ? row.notice : undefined,
+    diagnostic: diagnostic ? { stage: String(diagnostic.stage ?? ""), code: String(diagnostic.code ?? ""), message: String(diagnostic.message ?? "") } : undefined,
+    updatedAt,
     candidateCount: Number(row.fetched ?? 0) || 0,
     acceptedCount: Number(row.accepted ?? 0) || 0,
   }
@@ -306,7 +325,12 @@ export async function sourceAdminModel(event: H3Event, topic: string) {
     const effective = active ? await checkedConfig(topic, source.id, active.config_json, active.config_hash) : intelligenceSourceSeedConfig(source)
     const draft = entry?.draft_json ? await checkedConfig(topic, source.id, entry.draft_json, entry.draft_hash) : undefined
     const test = tests.find(row => row.source_id === source.id)
-    return { id: source.id, topic, effective, draft, draftHash: entry?.draft_hash ?? null, activeRevision, collectionEnabled: !!active && effective.enabled && sourceCollectionApproved(effective, active.reason), configStatus: draft && entry?.draft_hash !== active?.config_hash ? "draft" : active ? "published" : effective.collectionMode === "discover" ? "unconfigured" : "seed", runtime: runtimeStatus(health.records.get(source.id), health.error), lastTest: test ? { hash: test.config_hash, testedAt: test.tested_at, result: parseJson(test.result_json) } : undefined, history: history.map(row => ({ revision: Number(row.revision), createdAt: Number(row.created_at), createdBy: String(row.created_by), reason: String(row.reason) })) }
+    const collectionEnabled = !!active && effective.enabled && sourceCollectionApproved(effective, active.reason)
+    const activatedAt = active ? Number(active.created_at) : undefined
+    const scopeHash = collectionEnabled
+      ? await buildingHash(intelligenceSourceCollectionScope(applyIntelligenceSourceConfig(source, effective)))
+      : undefined
+    return { id: source.id, topic, effective, draft, draftHash: entry?.draft_hash ?? null, activeRevision, collectionEnabled, configStatus: draft && entry?.draft_hash !== active?.config_hash ? "draft" : active ? "published" : effective.collectionMode === "discover" ? "unconfigured" : "seed", runtime: runtimeStatus(health.records.get(source.id), health.error, collectionEnabled, Number.isFinite(activatedAt) ? activatedAt : undefined, scopeHash), lastTest: test ? { hash: test.config_hash, testedAt: test.tested_at, result: parseJson(test.result_json) } : undefined, history: history.map(row => ({ revision: Number(row.revision), createdAt: Number(row.created_at), createdBy: String(row.created_by), reason: String(row.reason) })) }
   }))
   const labels: Record<string, string> = { building: "建筑", ai: "AI", finance: "财经", health: "健康" }
   const topics = Object.entries(labels).map(([id, name]) => ({ id, name, count: id === topic ? sources.length : intelligenceSources.filter(source => source.topic === id).length, enabled: id === "building" }))
