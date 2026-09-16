@@ -12,6 +12,11 @@ it("only the resolved enabled catalog controls the collection scope", () => {
   expect(collectionItemAllowed({ sourceId: source.id, column: "通知公告" }, [source])).toBe(true)
   expect(collectionItemAllowed({ sourceId: source.id, column: "其他栏目" }, [source])).toBe(false)
 })
+it("beijing runtime scope carries its parser revision without changing other source scopes", () => {
+  expect(JSON.parse(collectionScopeKey(source))).toMatchObject({ runtimeRevision: "beijing-scripted-pagination-v1" })
+  const shanghai = intelligenceSources.find(item => item.id === "official-shanghai")!
+  expect(JSON.parse(collectionScopeKey(shanghai))).not.toHaveProperty("runtimeRevision")
+})
 it("old results cannot publish excluded sources or stale configuration candidates", () => {
   const other = { key: "old", sourceId: "official-shanghai", column: "通知公告" }
   const valid = { key: "new", sourceId: source.id, column: "通知公告", collectionScope: collectionScopeKey(source) }
