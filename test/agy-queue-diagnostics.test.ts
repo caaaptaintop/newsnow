@@ -10,7 +10,7 @@ it("prioritizes recent articles across columns without dropping or mutating cand
   expect(new Set(ordered)).toEqual(new Set(items))
 })
 it("reports only an error category without provider content", () => {
-  for (const [input, expected] of [["UNAUTHENTICATED", "authentication"], ["RESOURCE_EXHAUSTED", "quota_or_rate_limit"], ["DEADLINE_EXCEEDED", "timeout"], ["503", "service_or_network"], ["arbitrary article body", "unspecified"]]) {
+  for (const [input, expected] of [["UNAUTHENTICATED", "authentication"], ["reason=authentication", "authentication"], ["AGY account pool unavailable: account-a:authentication", "authentication"], ["AGY account activation failed: account-a", "unspecified"], ["AGY startup timed out before initialization", "timeout"], ["RESOURCE_EXHAUSTED", "quota_or_rate_limit"], ["reason=quota_or_rate_limit", "quota_or_rate_limit"], ["AGY account pool unavailable: account-a:quota_or_rate_limit", "quota_or_rate_limit"], ["DEADLINE_EXCEEDED", "timeout"], ["503", "service_or_network"], ["arbitrary article body", "unspecified"]]) {
     expect(agyFailureReason(input)).toBe(expected)
   }
 })
