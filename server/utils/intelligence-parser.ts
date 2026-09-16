@@ -9,6 +9,7 @@ export interface OfficialCandidate {
   column: string
   publishedAt?: number
   text?: string
+  mediaOnly?: boolean
   publisher?: string
   documentNo?: string
   attachments: { title: string, url: string }[]
@@ -260,19 +261,23 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
   $("script,style,nav,header,footer,form,iframe,noscript").remove()
   let text = ""
   let articleRoot: ReturnType<typeof $> | undefined
+  let mediaRoot: ReturnType<typeof $> | undefined
   const editorSelector = ".editorContent-box > .editor-content"
   const hasEditorTemplate = $(editorSelector).length > 0
   // A recognized template must not fall back to a broader page wrapper.
-  const selectors = hasEditorTemplate ? [editorSelector] : ["#UCAP-CONTENT", ".TRS_Editor", "#zoom", "#zoomcon", ".article-content", ".article_content", ".view.TRS_UEDITOR", ".Custom_UnionStyle", ".content-detail", "article", ".news_content", "#contentText"]
+  const selectors = hasEditorTemplate ? [editorSelector] : [...(source.id === "official-tianjin" ? [".detail-content"] : []), "#UCAP-CONTENT", ".TRS_Editor", "#zoom", "#zoomcon", ".article-content", ".article_content", ".view.TRS_UEDITOR", ".Custom_UnionStyle", ".content-detail", "article", ".news_content", "#contentText"]
   for (const selector of selectors) {
     const root = $(selector).first()
+    if (!root.length) continue
     const value = root.text().replace(/\s+/g, " ").trim()
+    if (!mediaRoot && value.length < 80 && root.find("img,picture,video").length) mediaRoot = root
     if (value.length >= 80 && value.length <= 100000) {
       text = value
       articleRoot = root
       break
     }
   }
+  const mediaOnly = source.id === "official-tianjin" && !text && !!mediaRoot
   // Do not treat the entire site navigation as article text when a template is unknown.
   const foundAttachments = new Map<string, { title: string, url: string }>()
   const attachmentLinks = [
@@ -315,6 +320,7 @@ export function intelligenceParseArticle(html: string, candidate: OfficialCandid
     ...candidate,
     title: fullTitle.length >= 9 && fullTitle.length <= 240 && !intelligenceLooksGarbled(fullTitle) ? fullTitle : candidate.title,
     text: text && !intelligenceLooksGarbled(text.slice(0, 500)) ? text : undefined,
+    mediaOnly: mediaOnly || undefined,
     publishedAt: intelligenceDate(dateText) ?? candidate.publishedAt,
     publisher: publisher && !intelligenceLooksGarbled(publisher) ? publisher : undefined,
     documentNo,

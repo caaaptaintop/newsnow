@@ -193,7 +193,11 @@ export function applyIntelligenceSourceConfig(seed: IntelligenceSource, config: 
   return { ...seed, name: config.name, home: config.home, group: config.group, level: config.level, region: config.region, city: config.city, priority: config.priority, enabled: config.enabled, columns: config.endpoints.filter(endpoint => endpoint.enabled).map(endpoint => ({ name: endpoint.name, url: endpoint.url })), collectionMode: config.collectionMode }
 }
 export function intelligenceSourceCollectionScope(source: IntelligenceSource) {
-  const runtimeRevision = source.id === "official-beijing" ? "beijing-scripted-pagination-v1" : undefined
+  const runtimeRevision = source.id === "official-beijing"
+    ? "beijing-scripted-pagination-v1"
+    : source.id === "official-tianjin"
+      ? "tianjin-detail-body-v1"
+      : undefined
   return JSON.stringify({ id: source.id, home: source.home, columns: source.columns, runtimeRevision })
 }
 
