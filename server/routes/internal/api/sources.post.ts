@@ -61,7 +61,7 @@ export default defineEventHandler(async (event) => {
           ? { schemaVersion: 1 as const, ok: false, publishable: false, mode: draft.config.collectionMode, endpoints: [], message: "新增来源等待 Mac 安全网络通道测试" }
           : await testSourceConfig(draft.config)
         const result = (draft.config.id.startsWith("custom-") && draft.config.enabled) || sourceTestNeedsRuntimeFallback(cloudResult)
-          ? { ...cloudResult, executor: "cloud" as const, runtimePending: true, message: `${cloudResult.message}；已等待 Mac 后台按自然周期复核` }
+          ? { ...cloudResult, executor: "cloud" as const, runtimePending: true, message: `${cloudResult.message}；已排队等待 Mac 后台复核` }
           : { ...cloudResult, executor: "cloud" as const }
         const saved = await saveSourceTest(event, topic, sourceId, draft.config, result, principal.email, { draftHash: draft.hash, activeRevision: draft.activeRevision }, startedAt)
         return { ...draft, ...saved, result }

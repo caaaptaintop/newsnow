@@ -1,4 +1,5 @@
 import process from "node:process"
+import { execFileSync } from "node:child_process"
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -19,6 +20,18 @@ const failureStageLabels = Object.freeze({
 export function scheduledSlot(now = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now).map(p => [p.type, p.value]))
   return ["05", "12", "16"].includes(parts.hour) ? `${parts.year}-${parts.month}-${parts.day}T${parts.hour}` : null
+}
+export function runRuntimeSourceTests(root, execute = execFileSync) {
+  const output = execute(resolve(root, "node_modules/.bin/tsx"), ["--tsconfig", "tsconfig.node.json", "tools/ai-bridge/source-test-runner.ts", "1"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 180000,
+    maxBuffer: 1048576,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  })
+  const result = JSON.parse(String(output))
+  if (!result || !Number.isSafeInteger(result.pending) || !Array.isArray(result.completed)) throw new Error("来源运行复核返回无效")
+  return result
 }
 export function blockedByLock(path) {
   if (!existsSync(path)) return false
@@ -79,7 +92,11 @@ export function completion(root, result) {
   }
   return { state: "complete", message }
 }
-export async function collectionTick(root, { request = publisherRequest, worker = runWorker, now = new Date() } = {}) {
+/**
+ * @param {string} root
+ * @param {{ request?: typeof publisherRequest, worker?: typeof runWorker, sourceTests?: (root: string) => any, now?: Date }} [options]
+ */
+export async function collectionTick(root, { request = publisherRequest, worker = runWorker, sourceTests, now = new Date() } = {}) {
   const dir = resolve(root, ".data/mac-batch")
   mkdirSync(dir, { recursive: true })
   const lock = resolve(dir, "collection-tick.lock")
@@ -106,7 +123,20 @@ export async function collectionTick(root, { request = publisherRequest, worker 
     } catch { /* A control-plane failure must not stop scheduled collection. */ }
     const slot = scheduledSlot(now)
     const due = slot && state.lastSlot !== slot
-    if (!job && !due) return { skipped: "not-due" }
+    if (!job && !due) {
+      let pendingTests
+      try {
+        pendingTests = await request({ action: "source-tests", limit: 1 })
+      } catch {
+        return { skipped: "not-due", runtimeSourceTestError: "来源运行复核未完成" }
+      }
+      if (!Array.isArray(pendingTests?.jobs) || !pendingTests.jobs.length || !sourceTests) return { skipped: "not-due" }
+      try {
+        return { skipped: "not-due", runtimeSourceTests: await sourceTests(root) }
+      } catch {
+        return { skipped: "not-due", runtimeSourceTestError: "来源运行复核未完成" }
+      }
+    }
     if (job) {
       saveJson(receiptPath, { id: job.id, state: "error", message: "上次执行中断，结果未确认；未自动重复采集，请检查后手动重试" })
       const claimed = await request({ action: "collection-claim", id: job.id })
@@ -144,7 +174,7 @@ export async function collectionTick(root, { request = publisherRequest, worker 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const root = resolve(process.argv[2] ?? resolve(import.meta.dirname, "../.."))
   try {
-    console.log(JSON.stringify(await collectionTick(root)))
+    console.log(JSON.stringify(await collectionTick(root, { sourceTests: runRuntimeSourceTests })))
   } catch {
     console.error("采集调度检查失败；未自动重试任务")
     process.exitCode = 1
