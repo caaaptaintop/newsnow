@@ -155,16 +155,23 @@ function mergeItems(target: Map<string, OfficialCandidate>, items: OfficialCandi
   }
 }
 
-function staticNextPage(html: string, source: IntelligenceSource, base: string) {
+function staticNextPages(html: string, source: IntelligenceSource, base: string) {
   const $ = load(html)
-  for (const anchor of $("a[href]").toArray()) {
+  const targets: string[] = []
+  for (const anchor of $("a[href],a[tagname],a[onclick]").toArray()) {
     const a = $(anchor)
-    if (!/\bnext\b/i.test(a.attr("rel") ?? "") && !/^(?:下一页|下页|next|›|»)$/i.test(a.text().trim())) continue
+    const label = a.attr("title")?.trim() || a.text().replace(/\s+/g, "").replace(/[>›»]+$/g, "")
+    if (!/\bnext\b/i.test(a.attr("rel") ?? "") && !/^(?:下一页|下页|next|›|»)$/i.test(label)) continue
     const href = a.attr("href")?.trim()
-    if (!href || /^(?:javascript:|#)/i.test(href)) continue
-    const target = intelligenceAllowedUrl(href, source, base)
-    if (target && new URL(target).origin === new URL(base).origin && target !== base) return target
+    const tagname = a.attr("tagname")?.trim()
+    const onclick = a.attr("onclick") ?? ""
+    const scripted = /\bqueryArticleByCondition\s*\(\s*this\s*,\s*(['"])([^'"<>\s]{1,1000})\1/i.exec(onclick)?.[2]
+    const raw = href && !/^(?:javascript:|#)/i.test(href) ? href : tagname || scripted
+    if (!raw || /^(?:javascript:|#)/i.test(raw)) continue
+    const target = intelligenceAllowedUrl(raw, source, base)
+    if (target && new URL(target).origin === new URL(base).origin && target !== base && !targets.includes(target)) targets.push(target)
   }
+  return targets
 }
 
 async function staticPages(page: Awaited<ReturnType<typeof intelligenceFetchHtml>>, initial: OfficialCandidate[], source: IntelligenceSource, column: { name: string, url: string }, options: IntelligenceFetchListOptions) {
@@ -172,53 +179,69 @@ async function staticPages(page: Awaited<ReturnType<typeof intelligenceFetchHtml
   const collected = new Map<string, OfficialCandidate>()
   mergeItems(collected, initial)
   const visited = new Set([page.url])
+  const queued = new Set<string>()
   const signatures = new Set([pageSignature(initial)])
-  let current = page
-  let currentItems = initial
   let pages = 1
+  let attempts = 1
   let paginationError: string | undefined
-  const allowNext = async () => {
+  const allowNext = async (items: OfficialCandidate[], pageNumber: number) => {
     try {
-      return options.shouldContinue ? await options.shouldContinue(currentItems, pages) : true
+      return options.shouldContinue ? await options.shouldContinue(items, pageNumber) : true
     } catch (error: any) {
       paginationError = error.message
       return false
     }
   }
-  let next = staticNextPage(current.html, source, current.url)
-  let wanted = !!next && maxPages > 1 && await allowNext()
-  let paginationStalled = false
-  while (next && wanted && pages < maxPages) {
-    if (visited.has(next)) {
-      paginationStalled = true
-      break
+  const marker = /createPageHTML|pageCount|queryArticleByCondition|下一页/.test(page.html)
+  const firstTargets = staticNextPages(page.html, source, page.url)
+  let recognizedPagination = firstTargets.length > 0
+  const queue: string[] = []
+  if (firstTargets.length && maxPages > 1 && await allowNext(initial, pages)) {
+    for (const target of firstTargets) {
+      queued.add(target)
+      queue.push(target)
     }
+  }
+  let paginationStalled = false
+  while (queue.length && attempts < maxPages) {
+    const next = queue.shift()!
+    queued.delete(next)
+    if (visited.has(next)) continue
     visited.add(next)
+    attempts++
+    let current
     try {
       current = await intelligenceFetchHtml(next, source)
     } catch (error: any) {
-      paginationError = error.message
-      break
+      paginationError ??= error.message
+      continue
     }
-    currentItems = intelligenceParseList(current.html, source, { ...column, url: current.url })
+    const currentItems = intelligenceParseList(current.html, source, { ...column, url: current.url })
     pages++
-    if (!currentItems.length) {
-      next = undefined
-      break
-    }
+    if (!currentItems.length) continue
     const signature = pageSignature(currentItems)
     if (signatures.has(signature)) {
       paginationStalled = true
-      next = undefined
-      break
+      continue
     }
     signatures.add(signature)
+    const novelItems = currentItems.filter((item) => {
+      const key = JSON.stringify([intelligenceCanonicalUrl(item.url), item.title])
+      return !collected.has(key)
+    })
     mergeItems(collected, currentItems)
-    next = staticNextPage(current.html, source, current.url)
-    wanted = !!next && await allowNext()
+    const targets = staticNextPages(current.html, source, current.url)
+    if (targets.length) recognizedPagination = true
+    if (!targets.length) continue
+    if (!await allowNext(novelItems, pages)) continue
+    for (const target of targets) {
+      if (visited.has(target) || queued.has(target)) continue
+      queued.add(target)
+      queue.push(target)
+    }
   }
-  const paginationUnverified = maxPages > 1 && !next && /createPageHTML|pageCount|下一页/.test(current.html)
-  return { ...page, items: [...collected.values()], dynamic: false, pages, capped: !!next && wanted && pages >= maxPages, paginationStalled, paginationError, paginationUnverified }
+  const paginationUnverified = maxPages > 1 && marker && !recognizedPagination
+  return { ...page, items: [...collected.values()], dynamic: false, pages, capped: queue.length > 0 && attempts >= maxPages, paginationStalled, paginationError, paginationUnverified }
 }
 
 /**
