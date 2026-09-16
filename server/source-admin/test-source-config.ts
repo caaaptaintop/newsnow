@@ -32,8 +32,12 @@ export interface SourceConfigTestResult {
 
 export function sourceTestNeedsRuntimeFallback(value: SourceConfigTestResult) {
   return value.mode === "explicit" && value.endpoints.length > 0
-    && value.endpoints.every(endpoint => !endpoint.ok && endpoint.status !== "untested"
-      && endpoint.diagnostic?.category === "cloudflare_dns")
+    && value.endpoints.every((endpoint) => {
+      if (endpoint.ok || endpoint.status === "untested") return false
+      const diagnostic = endpoint.diagnostic
+      return diagnostic?.category === "cloudflare_dns"
+        || (diagnostic?.category === "access_denied" && [403, 412].includes(diagnostic.httpStatus))
+    })
 }
 /** Recheck the result contract, not a caller-provided ok flag or a discovery success. */
 export function sourceTestAllowsPublish(config: IntelligenceSourceConfig, value: unknown): value is SourceConfigTestResult {
