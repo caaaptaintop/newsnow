@@ -1,19 +1,29 @@
 import { Buffer } from "node:buffer"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { chmod, mkdir, readFile, readdir } from "node:fs/promises"
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import process from "node:process"
 import { InputReceipt, inputParts } from "./antigravity-input.mjs"
 import { agyModel, agyRoot, cleanupSession, durableJson, jsonFile, pidAlive, recoverSessions, sessionSocket, verifyAgyBinary } from "./antigravity-session.mjs"
+import { materializeAgyProfileToken, runWithAgyAccountPool } from "./agy-account-pool.mjs"
+import { agyRuntimeEnvironment } from "./agy-runtime-env.mjs"
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`
 export async function localAntigravity(model, messages, onUsage = (_usage) => {}, options = {}) {
   if (model !== agyModel) throw new Error("Only verified AGY 3.8 Flash low is enabled")
   const payload = JSON.stringify(messages)
   if (!Array.isArray(messages) || messages.some(m => !["system", "user"].includes(m.role) || typeof m.content !== "string") || Buffer.byteLength(payload) > 1500000) throw new Error("Invalid or oversized AGY classification input")
+  const root = resolve(import.meta.dirname, "../..")
+  const pooled = await runWithAgyAccountPool(root, profile => localAntigravityOnce(model, payload, onUsage, options, profile), {
+    classify: error => agyFailureReason(String(error?.message ?? error)),
+  })
+  return pooled.profile ? { ...pooled.result, antigravity: { ...pooled.result.antigravity, profile: pooled.profile } } : pooled.result
+}
+
+async function localAntigravityOnce(model, payload, onUsage, options, profile) {
   const receipt = new InputReceipt(inputParts(payload).length + 1)
   const binary = join(homedir(), "Library/Application Support/CapxNewsNow/bin/agy-1.2.2")
   await verifyAgyBinary(binary)
@@ -21,6 +31,9 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
   await recoverSessions(base)
   const runDir = join(base, randomUUID())
   await mkdir(join(runDir, ".agents"), { recursive: true, mode: 0o700 })
+  const noBrowserDir = join(runDir, "no-browser")
+  await mkdir(noBrowserDir, { recursive: true, mode: 0o700 })
+  await writeFile(join(noBrowserDir, "open"), "#!/bin/sh\nexit 126\n", { mode: 0o700 })
   const config = { runDir, root: agyRoot, nonce: randomUUID(), parentPid: process.pid, childPid: null, existingIds: [...new Set((await Promise.all(["conversations", "brain", "annotations", "presence"].map(name => readdir(join(agyRoot, name))))).flat().map(name => name.slice(0, 36)))] }
   await durableJson(join(runDir, "config.json"), config)
   const socketPath = sessionSocket(config.nonce)
@@ -28,7 +41,9 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
   let delivered = false
   let outcome
   let failure
+  let authTokenPath
   try {
+    if (profile) authTokenPath = await materializeAgyProfileToken(profile, runDir)
     server = createServer((socket) => {
       let data = ""
       socket.setTimeout(5000, () => socket.destroy())
@@ -57,10 +72,16 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
     await chmod(socketPath, 0o600)
     const command = `${quote(process.execPath)} ${quote(resolve(import.meta.dirname, "antigravity-hook.mjs"))}`
     await durableJson(join(runDir, ".agents/hooks.json"), { "newsnow-text-only": { PreInvocation: [{ command: `${command} pre`, timeout: 10 }], PreToolUse: [{ matcher: ".*", hooks: [{ command: `${command} tool`, timeout: 10 }] }] } })
-    const env = { ...process.env, NEWSNOW_AGY_RUN_DIR: runDir, AGY_CLI_DISABLE_AUTO_UPDATE: "1" }
-    for (const key of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI", "AGY_ADC_AUTH", "OPENAI_API_KEY", "CODEX_API_KEY"]) delete env[key]
+    const runtime = agyRuntimeEnvironment(process.env)
+    const env = { ...runtime.env, NEWSNOW_AGY_RUN_DIR: runDir, AGY_CLI_DISABLE_AUTO_UPDATE: "true", BROWSER: "/usr/bin/false", PATH: `${noBrowserDir}:${runtime.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"}` }
+    for (const key of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI", "AGY_ADC_AUTH", "AGY_OAUTH_TOKEN_PATH", "GEMINI_FORCE_FILE_STORAGE", "OPENAI_API_KEY", "CODEX_API_KEY"]) delete env[key]
+    if (authTokenPath) {
+      env.AGY_OAUTH_TOKEN_PATH = authTokenPath
+      env.GEMINI_FORCE_FILE_STORAGE = "true"
+      env.TZ = "UTC"
+    }
     outcome = await new Promise((accept, reject) => {
-      const child = spawn(binary, ["--new-project", "--model", model, "--effort", "low", "--sandbox", "--mode", "plan", "--output-format", "stream-json", "--print-timeout", "120s", "--log-file", "/dev/null", "-p", "Perform the classification supplied by the NewsNow pre-invocation hook. No tools. Return only its requested JSON."], { cwd: runDir, env, detached: true, stdio: ["ignore", "pipe", "pipe"] })
+      const child = spawn(binary, ["--new-project", "--model", model, "--sandbox", "--mode", "plan", "--output-format", "stream-json", "--print-timeout", "120s", "--log-file", "/dev/stderr", "-p", "Perform the classification supplied by the NewsNow pre-invocation hook. No tools. Return only its requested JSON."], { cwd: runDir, env, detached: true, stdio: ["ignore", "pipe", "pipe"] })
       let pending = ""
       let bytes = 0
       let init
@@ -84,6 +105,13 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
       process.once("SIGTERM", signal)
       process.once("SIGINT", signal)
       const timer = setTimeout(() => stop(new Error("AGY classification timed out")), options.timeoutMs ?? 130000)
+      const startupTimer = setTimeout(() => {
+        if (!init) {
+          const reason = agyFailureReason(diagnosticText)
+          if (["authentication", "quota_or_rate_limit", "service_or_network"].includes(reason)) stop(new Error(`AGY startup failed before initialization: reason=${reason}`))
+          else stop(new Error("AGY startup timed out before initialization"))
+        }
+      }, options.startupTimeoutMs ?? 20000)
       child.on("spawn", async () => {
         try {
           config.childPid = child.pid
@@ -109,6 +137,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
             if (event.event === "init") {
               if (init || event.init?.model !== model || resolve(event.init.cwd) !== runDir) throw new Error("AGY initialization mismatch")
               init = event
+              clearTimeout(startupTimer)
             } else if (event.event === "step_update") {
               const step = event.step_update
               if (!["user_input", "agent_response"].includes(step.step_type) && !receipt.receive(step)) throw new Error("AGY attempted a forbidden or unknown operation")
@@ -132,6 +161,7 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
       })
       child.on("close", (code) => {
         clearTimeout(timer)
+        clearTimeout(startupTimer)
         clearTimeout(killTimer)
         process.removeListener("SIGTERM", signal)
         process.removeListener("SIGINT", signal)
@@ -152,6 +182,13 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
     failure = error
   }
   if (server) await new Promise(accept => server.close(accept))
+  if (authTokenPath) {
+    try {
+      await rm(authTokenPath, { force: true })
+    } catch (error) {
+      if (!failure) failure = error
+    }
+  }
   // A cleanup failure deliberately overrides success and keeps the durable recovery record.
   await cleanupSession(runDir)
   if (failure) throw failure
@@ -161,6 +198,8 @@ export async function localAntigravity(model, messages, onUsage = (_usage) => {}
 
 // Classify errors without persisting provider text, prompts or account details.
 export function agyFailureReason(text) {
+  if (/(?:reason=|:)authentication\b/i.test(text)) return "authentication"
+  if (/(?:reason=|:)quota_or_rate_limit\b/i.test(text)) return "quota_or_rate_limit"
   if (/unauthenticated|invalid_grant|not logged in|login required|authentication required|\b401\b/i.test(text)) return "authentication"
   if (/resource_exhausted|quota exceeded|rate.?limit|\b429\b/i.test(text)) return "quota_or_rate_limit"
   if (/deadline_exceeded|timed? ?out/i.test(text)) return "timeout"
