@@ -6,6 +6,6 @@
 - 安全：沿用 `sourceHttp`，manual redirect、12s timeout、同源 HTTPS、4 MiB/5000-row bound；不执行站点 JS、不绕 challenge。
 - 验证：full Vitest 60 files / 573 tests PASS；production build PASS；changed-file ESLint PASS。
 - 全库 typecheck/lint 均与 clean `origin/main` 历史 baseline 完全一致，本轮修改文件 0 新诊断。
-- 未完成：固定 Draft PR Head 与 fresh independent review。
+- Draft PR：#129 已建立；实现候选已 push，等待 final state commit 后固定 Head。
 - 边界：不启用辽宁/湖北/海南；不处理河北 #126；不 merge/deploy，等待用户明确授权。
-- 下一步：提交、push、Draft PR，固定 Head 后独立 review。
+- 下一步：固定 PR #129 Head 后启动 fresh independent review。
