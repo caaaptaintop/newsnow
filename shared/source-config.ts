@@ -197,7 +197,11 @@ export function intelligenceSourceCollectionScope(source: IntelligenceSource) {
     ? "beijing-scripted-pagination-v1"
     : source.id === "official-tianjin"
       ? "tianjin-detail-body-v1"
-      : undefined
+      : source.id === "official-liaoning"
+        ? "liaoning-column-scope-v1"
+        : source.id === "official-hubei"
+          ? "hubei-structured-json-v1"
+          : undefined
   return JSON.stringify({ id: source.id, home: source.home, columns: source.columns, runtimeRevision })
 }
 

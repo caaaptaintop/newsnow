@@ -1,55 +1,23 @@
-# Issue100：本轮采集统计预览
+# Issue #128：辽宁栏目范围收紧与湖北结构化列表适配
 
-本地候选显示新发现、新发布、已有文章更新、重复跳过、文章处理失败，另列来源异常及部分成功数。新发现指列表去重后的候选，不等于全部会被选入建筑内容；重复按本轮列表中跳过的记录计数。发布计数只统计已确认发布的article，排除decision/source元数据，并区分已有key更新。异常中断无法确认完整发布数量时显示未确认；旧任务不回填猜测数字。
+当前阶段：本地实现和候选验证完成，Draft PR #129 已建立；固定候选正在进行 independent review。基线为 `origin/main` `42395881e28f8d31971be73e8baf789b5a2d6df8`。
 
-采集/分析/发布行为、来源、模型、调度和费用不变；新增统计保存在本轮状态并通过现有任务message返回，不做D1迁移。38项相关Vitest与4项worker通过，含真实CLI隔离传输、新发布1条/附件更新1条/重复执行0条及来源别名去重1条。当前代码相关lint通过，既有全库类型诊断保留，本次修改路径无新增诊断。Tabbit实际演示按钮排队后显示条数。
+辽宁四个生产草稿栏目均有 2026-09-17 官网 HTML fixture。旧实现会优先返回各页面共同的公共区链接；failure-first 回归已复现。当前 parser 只有在页面存在至少两个与栏目目录具有稳定路径亲和的文章候选时才收紧到栏目簇，否则保留旧跨目录 CMS 行为。规范性文件实际使用 32 位十六进制 CMS article id，因此 article-index 识别扩展为受限的长数字或 24–64 位十六进制 id，普通目录 `index.shtml` 仍排除。四栏目真实 preview 已在 fixture/source-test 回归中相互区分，静态/JPaas 分页既有回归保持通过。
 
-可操作预览：http://127.0.0.1:4198/internal/sources，顶部标记本地未发布、模拟执行。尚未提交/发布生产；上一版05/12/16调度继续有效。用户截图已出现真实手动任务完成，但本轮未独立读取对应生产任务ID，不据此补记完整端到端验收。
+湖北已通过 Tabbit 独立确认两个错误栏目均使用官网结构化数据：`/zfxxgk/zc/gfxwj/zcwj.json` 与 `/zfxxgk/zc/qtzdgkwj/zcwj.json`。后者不是从规范性文件类推，而是从“其他公开文件”页面真实资源请求核验。adapter 通过同源静态 CMS 脚本模板识别，不依赖 sourceId 或栏目显示名；命中后在 HTML 假阳性之前读取同目录 JSON，错误 JSON、跳转、错误 MIME、非 UTF-8、超限响应或错误 schema 均 fail-closed，不退回机构侧栏。
 
-## Issue101 当前有效阶段（2026-09-14）
-用户要求以AI判断标题，并确认整页均已处理才停止翻页。当前分支codex/ai-title-screening从本地统计提交517a4d8继续，均未发布。已移除Mac采集及合并校验中的关键词门槛；标题不确定时进入正文复核，不凭标题生成最终摘要。复用现有gpt-5.6-luna，标题每来源每轮30条，正文默认12条，其余持久化保存，初筛成功者不重复初筛；AI调用或响应校验失败暂停本轮后续AI调用。
+结构化读取继续走既有 `sourceHttp`，manual redirect、12 秒 timeout；endpoint 要求同 origin、同协议。官网 JSON 中同 host 的旧 `http://` 文章链接只做 HTTPS 升级后再经过 allowlist 校验，不允许 HTTPS 降级或跨 host。响应上限 4 MiB、最多 5000 rows，只输出前 60 个有效同站候选；当前官网实测规范性文件约 138 KiB / 168 rows，其他公开文件约 1.19 MiB / 1560 rows。无任意 JavaScript 执行、无 challenge bypass。
 
-分页基于已处理key与原始标题匹配，置顶单条旧文章不停止；同URL标题变化继续处理。静态next链接、住建部JPaas支持继续翻页，空页、末页、重复页或访问错误停止；移除旧5页上限，100页仅安全上限并显示分页未完成；特殊分页格式仍需适配，不能宣称54来源历史全采。已读候选在去重查询或模型失败前落盘，故队列容量与翻页停止不导致丢弃；同key不同标题分别留队，每轮仅处理一个版本。
+为避免历史待处理候选继续沿用旧 parser 语义，collection scope 增加 `liaoning-column-scope-v1` 与 `hubei-structured-json-v1` runtime revision。它们只用于候选 scope 失效，不参与 parser 选择。
 
-8个住建部真实标题已完成AI初筛，其中6个原关键词得分0，现在进入正文复核（尚未正文分析，不能视为6篇确定漏收或已发布）。可操作预览4199已通过Tabbit实际显示和8/6筛选交互。相关30项单元测试与1项真实CLI隔离集成通过（含31条跨轮队列、去重查询故障后重启恢复、AI异常停止、同链接双标题成功/失败保留）；独立审查最后标题版本丢失阻断已整改PASS。最终构建和类型检查记录在.local/screening，全库既有类型问题不冒充通过。
+验证结果：
 
-最终验证补记：CF_PAGES构建及54文件公开边界检查通过，改动路径lint与diff检查通过。npm run typecheck仍被shared/types.ts等既有类型问题阻断，当前修改路径未报诊断。构建生成的shared快照/来源/pinyin变化已恢复，不纳入候选。
+- failure-first：辽宁原始 5 项全部失败；湖北原始 6 项全部失败，均准确复现当前后台错误。
+- focused + source config/admin/dynamic-list/collection-scope：24 files / 210 tests PASS。
+- full Vitest：60 files / 573 tests PASS。
+- production build：PASS，并通过 public-build boundary check；生成的 `shared/intelligence-snapshot.ts` 构建副作用已恢复，不进入候选。
+- changed-file ESLint：PASS；`git diff --check` PASS。
+- full typecheck：历史失败；clean `origin/main` 与当前标准化日志均 315 行且完全一致，本轮 0 新诊断。
+- full lint：历史 3585 problems（3573 errors / 12 warnings）；clean `origin/main` 与当前标准化日志完全一致，本轮修改文件 0 lint error。
 
-## 六技术专栏及 Antigravity 评估（2026-09-14 当前有效增量）
-用户纠正：建设要闻不是独立栏目，新闻、会议、活动和政策标准均归入六个技术专栏。已从shared/intelligence.ts删除policy目录，标题初筛及正文分类提示词同步强调按实质主题选择单个专栏，不按文种排除。未新增建设要闻。只读公开API返回12篇，分类均为六专栏之一，本轮无当前policy文章回填，未写生产。
-
-用户指定Antigravity CLI + 3.8 Flash high；实机agy1.2.2，models确认gemini-3.8-flash-high，实际init回读同型号，命令显式--effort high。两组各2批同时启动，每批4条：真实标题批次16.9/14.0秒，6保留2排除；合成正文批次15.8/15.7秒，六专栏与无关采购的8项收录/栏目预期全部匹配。不将合成正文冒充官网事实或原文分析，不推断串并行加速比或长期吞吐。
-
-新增tools/ai-bridge/antigravity-evaluation.mjs仅供评估，未接mac-batch/worker；无自动重试或模型回退、去除API环境变量，事件类型/输出/超时验证。测试发现临时agent配置tools:[]及[finish]均未缩减实际init工具列表，--mode plan时仍读回已有always-proceed权限模式；未更改全局权限。事件监测只能检测异常不能替代执行前隔离，故不得声称已具备生产纯文本安全边界。CLI真实正文会话留存控制尚未验证，本轮只输入人工核对的公开标题和明确合成正文，没有输入真实网页正文。仍需解决这两项后才能正式替换生产Codex。
-
-91项相关Vitest（含CLI恢复隔离集成）、构建及54文件公开边界通过；本轮相关lint、diff通过，全库历史类型错误保留，修改路径无诊断。4199已更新为本轮唯一有效预览，六栏可切换、真实标题与合成正文分开展示；Tabbit实际交互与截图通过。生产未push/merge/deploy，来源配置、PDF/附件与调度未改。
-
-## 推理强度对比（2026-09-14 当前增量）
-用户授权测试标题low+正文medium。evaluation入口新增显式low/medium/high选择、init型号严格匹配，未接生产。沿用同一8真实标题与8合成正文、4条/批、2批并行，high复用上一轮：low标题8/8判断一致（6留2弃），medium收录/栏目/类型8/8一致，合成样例人工对照未发现摘要新增无依据事实。low有效请求8.6–10.5秒（high14.0–16.9），medium13.0–13.1秒（high15.7–15.8），不推断长期吞吐、额度节省比例或真实长文效果。
-首轮low一批和medium一批解析失败；单独诊断确认结束代码块后换行导致intelligenceParseAI未去掉结束标记。修复先trim外部空白，再剥离代码块；无效JSON/额外文本仍拒绝，42定向测试及lint通过。保留原始失败记录，medium失败批用保存输出离线重放；low失败批原输出未保存，使用单独诊断请求的已保存输出重放，不冒充首轮无故障。比较记录.local/antigravity/comparison.json与各results/raw文件，4199展示最新结论及逐篇摘要。建议低强度方案具备小样本依据，生产模型/调度未改，AGY工具/正文留存隔离仍待验证。
-
-正文low增量（2026-09-14）：用户要求同样测试正文low，使用同一8个短篇合成正文、4条/批、2批并行，实际init为gemini-3.8-flash-low，两批一次成功，无重试。收录/栏目/类型8/8与既有medium/high一致，人工对照合成输入未发现摘要无依据新增；3篇重要度比high低3–5分，不能称所有输出相同。单批8.575/12.162秒，对medium13.006/13.131、high15.734/15.826；旧档复用历史数据，不据此推出长期吞吐或额度比例。结果.local/antigravity/results-low-body.json及comparison-low-body.json；4199/#body-low为最新对比。小样本支持标题+正文low作为候选，复杂真实长正文未测，生产未修改。此次仅运行已验证测试入口和更新预览/状态，未改产品代码。
-
-2026-09-14模型选择确认：用户明确选择agy 3.8flash low，标题与正文均low。antigravity-evaluation.mjs默认模型与默认effort已改gemini-3.8-flash-low/low；型号匹配仍严格，3项定向测试通过。旧high对比脚本显式固定high，避免默认改动污染复现实验。该入口仍为本地评估，mac-batch生产调用仍为Codex；AGY工具隔离、真实正文留存未解决，不将评估默认调整冒充正式采集模型已切换。未发布、未改全局AGY权限或生产运行副本。
-
-2026-09-14发布阶段：用户明确要求继续推进、完成发布上线。全库41文件465项与worker4项通过。独立审查发现同URL双标题跨轮覆盖导致重复AI；新增仅本地key/title的processedVersions集合，分页与候选共用多版本判重，四轮实际CLI隔离fixture前两轮各处理1、后两轮零AI且pending0。31项定向及真实CLI集成、lint通过，独立增量复核PASS，待固定SHA终核。AGY仍有工具隔离及真实正文留存阻断，当前生产Codex路径未切换。
-
-标题规则补充：用户要求保留来源原标题。标题初筛和正文提示词均明确禁止改写标题；现有文章构造只读取采集item.title，AI字段白名单不包含title。实际CLI隔离回归让AI故意返回替代标题，确认articles、decisions及PENDING输入仍逐字保留原标题；6项相关测试与lint通过。构建及7项发布安全检查通过。
-
-2026-09-14 AGY接入整改：上轮“无法工具隔离”的判断已由实测收敛为默认CLI Project未加载工作区hook。显式--new-project后，本机1.2.2真实write_to_file被PreToolUse deny拒绝；无需降级（1.1.28仅本地探针）。生产候选local-antigravity使用专用1.2.2副本与已核验SHA256，禁止自动回退Codex。正文仅父进程内存，通过0600 Unix socket在新UUID归属和childPid持久登记后注入；ephemeral本身仍落会话数据库，故结束后清理本任务新会话db/sidecar/brain/annotation/presence，fsync父目录并复验，清理失败保留恢复登记且拒绝下一轮。SIGKILL/断电只能在下次启动恢复，未宣称异常立即清除。
-真实合成探针：正常调用成功并清理；timeout返回错误且无待清理目录；crash-result.json验证canary进入会话db后强杀父进程，恢复先拒绝仍活动AGY，结束该写者后清理成功并延迟复查无残留。共享summary/jetbox/history/cache及本日日志的canary布尔检查均未命中，无旧会话正文输出。正式provider8个合成正文8/8收录/栏目匹配，调用会话3ebb301d-603e-4020-869d-6063fd877e8a已清理。中文socket跨UTF-8边界回归通过；独立复核三项安全问题已整改，最后UTF-8问题修复，待固定SHA终核。mac-worker/mac-batch已改AGY low，preflight验证binary和清理残留；未改调度及现有生产数据。
-
-## Issue107 当前有效阶段
-采集范围纠正为住建部政策发布、建设要闻、标准公告、标准征求意见。worker、CLI默认/all、历史候选及附件补查均受限；其他来源配置/历史数据保留。生产暂停等待修复发布，误发布72篇不删除。模型low、近365天及05/12/16时间保持。
-
-## Issue109 当前有效阶段
-动态来源确认机制本地实现。显式测试+确认发布写入collection-confirmed版本，目录传递collectionApproved并纳入指纹；无确认/旧目录/种子默认不采集，仅继承已核验住建部原四栏目。新增候选绑定配置范围，旧配置候选不自动分析；后台提供确认启用/停用与采集状态。4200为隔离模拟预览，尚未生产发布。
-
-2026-09-14 Issue109新增来源：新增来源登记、表单、默认关闭、既有草稿测试确认和客户端目录识别已本地实现。49项相关测试通过，浏览器4200新增演示来源并配置栏目、模拟测试可确认。未提交未发布。服务端building发布/读取接入命令被PreToolUse拒绝（禁止读取或复制凭据、密钥与敏感环境文件；仅允许元数据检查），未执行且未绕行。独立审查另发现任意域名DNS指向内网/重绑定缺口，须在实际请求层整改后才可作为发布候选。
-
-2026-09-14新增来源网络整改：专用Mac传输每连接lookup检查全量地址，拒绝非公网/混合结果、禁自动跳转与连接池，保留TLS主机验证；parser/动态分页/正文/日期使用安全通道。custom云端测试改等待Mac。压缩响应gzip/deflate/br输入输出均2M上限。19项定向测试通过，独立DNS与解压增量均PASS。真实custom来源格式测试住建部政策发布首屏20条，证据.local/source-enablement/custom-real-test.json；无AI与生产写入。被拒发布接入未重试，等待该次动作明确解除；未修改全局hook。
-
-2026-09-14 Issue109完成本地候选：用户明确允许重试源码修改后已接通custom服务端发布与公开来源catalog。独立审查发现客户端筛选至服务端读目录间范围变更窗口，修复为custom scope SHA随outbox及签名请求固定，服务端先对scope、事务对config hash；非custom批次沿用旧hash避免干扰恢复。新增竞争回归PASS，独立复核PASS。全库50文件495项PASS、生产构建PASS；修改路径无类型诊断，保留既有类型问题记录。4200预置真实住建部20条样本回放，后台确认启用实测成功；未提交未发布，等待用户最终预览确认。
-
-## Issue111 2026-09-15
-生产已删除用户指定未审批72篇，剩34篇且删除后worker无恢复；本次用户免独立审查。公开读取审批gate已自审，502测试及构建通过，待正常CI发布。AGY完成主体修改后服务503容量不足，主模型接手测试/缓存/冒烟断言修复。证据.local/public-approval/。
+生产边界未改变：辽宁、湖北和海南均未启用，本阶段未触发“立即采集并上线”；河北 #126 未处理。未 merge、未 deploy。固定候选独立 review 通过后，仍需用户明确授权 merge/deploy；部署新版后才可在生产后台重新测试辽宁/湖北草稿并把真实 preview 交用户确认。

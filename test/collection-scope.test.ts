@@ -16,6 +16,10 @@ it("source-specific parser revisions only affect their own runtime scopes", () =
   expect(JSON.parse(collectionScopeKey(source))).toMatchObject({ runtimeRevision: "beijing-scripted-pagination-v1" })
   const tianjin = intelligenceSources.find(item => item.id === "official-tianjin")!
   expect(JSON.parse(collectionScopeKey(tianjin))).toMatchObject({ runtimeRevision: "tianjin-detail-body-v1" })
+  const liaoning = intelligenceSources.find(item => item.id === "official-liaoning")!
+  expect(JSON.parse(collectionScopeKey(liaoning))).toMatchObject({ runtimeRevision: "liaoning-column-scope-v1" })
+  const hubei = intelligenceSources.find(item => item.id === "official-hubei")!
+  expect(JSON.parse(collectionScopeKey(hubei))).toMatchObject({ runtimeRevision: "hubei-structured-json-v1" })
   const shanghai = intelligenceSources.find(item => item.id === "official-shanghai")!
   expect(JSON.parse(collectionScopeKey(shanghai))).not.toHaveProperty("runtimeRevision")
 })
