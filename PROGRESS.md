@@ -1,6 +1,6 @@
 # Issue #128：辽宁栏目范围收紧与湖北结构化列表适配
 
-当前阶段：本地实现和候选验证完成，Draft PR #129 已建立；完成本状态提交并固定 Head 后进行独立 review。基线为 `origin/main` `42395881e28f8d31971be73e8baf789b5a2d6df8`。
+当前阶段：本地实现和候选验证完成，Draft PR #129 已建立；固定候选正在进行 independent review。基线为 `origin/main` `42395881e28f8d31971be73e8baf789b5a2d6df8`。
 
 辽宁四个生产草稿栏目均有 2026-09-17 官网 HTML fixture。旧实现会优先返回各页面共同的公共区链接；failure-first 回归已复现。当前 parser 只有在页面存在至少两个与栏目目录具有稳定路径亲和的文章候选时才收紧到栏目簇，否则保留旧跨目录 CMS 行为。规范性文件实际使用 32 位十六进制 CMS article id，因此 article-index 识别扩展为受限的长数字或 24–64 位十六进制 id，普通目录 `index.shtml` 仍排除。四栏目真实 preview 已在 fixture/source-test 回归中相互区分，静态/JPaas 分页既有回归保持通过。
 
