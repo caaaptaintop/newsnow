@@ -30,6 +30,7 @@ function renderSourceTestView(input) {
   }).join('')
   const pendingCategories = new Set(endpoints.map(item => item.diagnostic?.category).filter(Boolean))
   const hasCloudflareDns = pendingCategories.has('cloudflare_dns') || endpoints.some(item => item.diagnostic?.cloudflareCode === '1016')
+  const macBlockedBy412 = result.executor === 'mac' && endpoints.some(item => item.ok !== true && item.diagnostic?.category === 'access_denied' && item.diagnostic?.httpStatus === 412)
   const pendingReason = !endpoints.length
     ? '当前来源按安全策略需要在 Mac 安全网络通道完成测试'
     : pendingCategories.has('access_denied')
@@ -41,6 +42,8 @@ function renderSourceTestView(input) {
           : '云端测试环境与生产 Mac 网络存在差异'
   const runtimeNote = result.runtimePending === true
     ? '<p class="muted">'+esc(pendingReason)+'，已排队等待 Mac 后台复核；无需重复点击测试。Mac 在线且空闲时通常约一分钟内开始复核，结果返回前不能发布。</p>'
+    : macBlockedBy412
+      ? '<p class="muted">本结果来自已登记签名身份的 Mac 运行环境。Mac 生产网络访问至少一个栏目时收到 HTTP 412；站点要求额外访问验证或前置条件，普通 HTTP 未取得可解析栏目内容。当前配置不能启用采集；浏览器手动打开不能替代生产解析验证。</p>'
     : result.executor === 'mac'
       ? '<p class="muted">本结果来自已登记签名身份的 Mac 运行环境；请人工确认标题样本后再发布。</p>'
       : '<p class="muted">当前为云端测试，生产采集运行在 Mac；网络失败不等于栏目地址错误。打开原页也不能替代测试通过。</p>'

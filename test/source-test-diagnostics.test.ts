@@ -141,6 +141,18 @@ describe("human-readable column test results", () => {
     const html = sourceTestResultView({ ...result, executor: "mac", runtimePending: false })
     expect(html).toContain("已登记签名身份的 Mac 运行环境")
   })
+  it("explains a signed Mac HTTP 412 as a production collection blocker", () => {
+    const blocked = { ...result, executor: "mac", runtimePending: false, endpoints: result.endpoints.map(item => ({
+      ...item,
+      diagnostic: { stage: "fetch", httpStatus: 412, category: "access_denied", evidence: "status" },
+    })) }
+    const html = sourceTestResultView(blocked)
+    expect(html).toContain("Mac 生产网络访问至少一个栏目时收到 HTTP 412")
+    expect(html).toContain("普通 HTTP 未取得可解析栏目内容")
+    expect(html).toContain("当前配置不能启用采集")
+    expect(html).toContain("浏览器手动打开不能替代生产解析验证")
+    expect(html).not.toContain("请人工确认标题样本后再发布")
+  })
   it("distinguishes passed, failed and untested columns", () => {
     const html = sourceTestResultView({ ...result, endpoints: [
       { ...result.endpoints[0], ok: true, count: 1 }, result.endpoints[1], { ...result.endpoints[2], status: "untested" },
