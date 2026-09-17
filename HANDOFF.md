@@ -1,10 +1,11 @@
-# Issue111 公开来源审批修复
-- 目标：删除未确认来源72篇，公开读取受已确认来源栏目约束。
-- 用户已授权删除与同范围发布，并明确本次不做独立审查。
-- 生产D1已精确删除72，revision46,total34；住建部34篇hash不变。
-- 删除后正常worker complete，公开仍34，失败0，自有锁释放。
-- 当前分支codex/public-approved-sources，基线6ab1cb0。
-- 本地实现列表/统计/版本/分页/附件审批门，内部去重与配置保留。
-- 64相关测试与构建通过；AGY连续错误后主模型接手必要修正。
-- 证据.local/public-approval/deletion-verified.json和after-delete-worker.log。
-- 下一步：正常提交、CI、合并部署与公开验证。
+# Issue128 省级住建来源解析扩展
+- 目标：辽宁四栏目排除公共区候选；湖北规范性文件与其他公开文件读取官网结构化数据。
+- Issue #128；branch `codex/provincial-source-parsers-128`；base `42395881e28f8d31971be73e8baf789b5a2d6df8`。
+- 辽宁：四个真实页面 fixture；通用 current-column path cluster 收紧；支持数字/hex opaque CMS article index。
+- 湖北：`gfxwj` 与 `qtzdgkwj` 已独立确认各自加载同目录 `zcwj.json`；模板识别不依赖 sourceId/栏目名。
+- 安全：沿用 `sourceHttp`，manual redirect、12s timeout、同源 HTTPS、4 MiB/5000-row bound；不执行站点 JS、不绕 challenge。
+- 验证：full Vitest 60 files / 573 tests PASS；production build PASS；changed-file ESLint PASS。
+- 全库 typecheck/lint 均与 clean `origin/main` 历史 baseline 完全一致，本轮修改文件 0 新诊断。
+- 未完成：固定 Draft PR Head 与 fresh independent review。
+- 边界：不启用辽宁/湖北/海南；不处理河北 #126；不 merge/deploy，等待用户明确授权。
+- 下一步：提交、push、Draft PR，固定 Head 后独立 review。

@@ -198,6 +198,36 @@ function loadPage(html: string) {
   const staticWritten = staticDocumentWriteHtml(html)
   return cheerio.load(`${html}\n${extra}\n${staticWritten}`.replace(/<!--([\s\S]*?)-->/g, (_match, text: string) => /<a\s/i.test(text) ? text : ""))
 }
+
+function pathSegments(value: string, directory = false) {
+  try {
+    const url = new URL(value)
+    const segments = url.pathname.split("/").filter(Boolean)
+    if (directory && segments.length && /\.[a-z0-9]{1,8}$/i.test(segments[segments.length - 1])) segments.pop()
+    return segments
+  } catch {
+    return []
+  }
+}
+
+function currentColumnItems(items: OfficialCandidate[], columnUrl: string) {
+  const columnSegments = pathSegments(columnUrl, true)
+  if (columnSegments.length < 2 || items.length < 2) return items
+  const affinity = (item: OfficialCandidate) => {
+    const candidate = pathSegments(item.url)
+    let shared = 0
+    while (shared < columnSegments.length && shared < candidate.length && columnSegments[shared] === candidate[shared]) shared++
+    return shared
+  }
+  // Government portals often render global interaction/navigation links before
+  // the actual column list. Narrow only when the page itself supplies a real
+  // cluster (at least two article-shaped URLs) under the current column path.
+  // A lone coincidental link is not enough evidence to suppress cross-path CMS
+  // article URLs, which are valid on several existing sources.
+  const local = items.filter(item => affinity(item) >= 2)
+  return local.length >= 2 ? local : items
+}
+
 export function intelligenceDiscoverColumns(html: string, source: IntelligenceSource, base = source.home) {
   const $ = loadPage(html)
   const found = [...(source.columns ?? [])]
@@ -218,8 +248,8 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const url = intelligenceAllowedUrl(a.attr("href") ?? "", source, column.url)
     if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title) || /^(?:首页|更多|网站地图|联系我们|返回|下一页|上一页)/.test(title)) return
     const path = new URL(url).pathname
-    const numericArticleIndex = /\/\d{9,22}\/index\.shtml$/i.test(path)
-    if (attachmentExtension(path, url) || (!numericArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
+    const opaqueArticleIndex = /\/(?:\d{9,22}|[a-f0-9]{24,64})\/index\.shtml$/i.test(path)
+    if (attachmentExtension(path, url) || (!opaqueArticleIndex && /(?:^|\/)(?:index(?:_\d+)?|list)\.[sj]?html?$/i.test(path))) return
     if (!/\.[sj]?html?$|\/art\/|\/content\/|post_|\/t\d|\/c\d|content-\d/i.test(path)) return
     if (url === column.url || url === source.home) return
     // A date inside this link belongs to this article. Never read dates from
@@ -246,7 +276,7 @@ export function intelligenceParseList(html: string, source: IntelligenceSource, 
     const key = intelligenceCanonicalUrl(url)
     if (!found.has(key)) found.set(key, { title, url, column: column.name, publishedAt, attachments: [] })
   })
-  return [...found.values()].slice(0, 60)
+  return currentColumnItems([...found.values()], column.url).slice(0, 60)
 }
 export function intelligenceParseArticle(html: string, candidate: OfficialCandidate, source: IntelligenceSource): OfficialCandidate {
   const $ = loadPage(html)

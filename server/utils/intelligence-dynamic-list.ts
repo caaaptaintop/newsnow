@@ -1,14 +1,21 @@
 import { load } from "cheerio"
 import type { IntelligenceSource } from "../../shared/intelligence"
-import { intelligenceCanonicalUrl } from "../../shared/intelligence"
+import { intelligenceCanonicalUrl, intelligenceDate } from "../../shared/intelligence"
 import { sourceHttp } from "./source-http"
-import { type OfficialCandidate, intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceParseList } from "./intelligence-parser"
+import { type OfficialCandidate, intelligenceAllowedUrl, intelligenceFetchHtml, intelligenceLooksGarbled, intelligenceParseList } from "./intelligence-parser"
 import { sourceFetchError } from "./source-fetch-diagnostic"
 
 const jpaasUnitPath = "/api-gateway/jpaas-publish-server/front/page/build/unit"
 const jpaasPageSize = 20
 const jpaasMaxPages = 100
 const collectionHeaders = { "User-Agent": "CapxIntelligence/1.0 (official public information reader)" }
+const structuredJsonMaxBytes = 4 * 1024 * 1024
+const structuredJsonMaxRows = 5000
+const structuredJsonMaxItems = 60
+const structuredListTemplateScripts = new Set([
+  "/material/js/zjt_js/zcwjlil.js",
+  "/material/js/zjt_js/qtgk.js",
+])
 
 export interface IntelligenceFetchListOptions {
   maxPages?: number | null
@@ -84,9 +91,14 @@ function nextPageAvailable(fragment: string, pageNumber: number, items: Official
 function pageSignature(items: OfficialCandidate[]) {
   return items.map(item => JSON.stringify([intelligenceCanonicalUrl(item.url), item.title])).sort().join("\n")
 }
-async function readBounded(response: Response, maxBytes: number) {
+async function readBounded(response: Response, maxBytes: number, label = "动态栏目") {
+  const declared = Number(response.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel()
+    throw new Error(`${label}响应超过采集大小上限`)
+  }
   const reader = response.body?.getReader()
-  if (!reader) throw new Error("动态栏目接口响应为空")
+  if (!reader) throw new Error(`${label}接口响应为空`)
   const chunks: Uint8Array[] = []
   let length = 0
   try {
@@ -96,7 +108,7 @@ async function readBounded(response: Response, maxBytes: number) {
       length += value.byteLength
       if (length > maxBytes) {
         await reader.cancel()
-        throw new Error("动态栏目响应超过采集大小上限")
+        throw new Error(`${label}响应超过采集大小上限`)
       }
       chunks.push(value)
     }
@@ -110,6 +122,115 @@ async function readBounded(response: Response, maxBytes: number) {
     offset += chunk.byteLength
   }
   return bytes
+}
+
+/**
+ * Detect the government policy-list template that renders a sibling zcwj.json.
+ * This is a static CMS fingerprint: no site JavaScript is executed, and neither
+ * source id nor administrator-supplied endpoint name participates in selection.
+ */
+function structuredJsonListUrl(html: string, source: IntelligenceSource, base: string) {
+  const page = new URL(base)
+  const $ = load(html)
+  const recognized = $("script[src]").toArray().some((node) => {
+    const script = intelligenceAllowedUrl($(node).attr("src") ?? "", source, base)
+    if (!script) return false
+    const url = new URL(script)
+    return url.origin === page.origin && structuredListTemplateScripts.has(url.pathname)
+  })
+  if (!recognized) return
+  const endpoint = intelligenceAllowedUrl(new URL("zcwj.json", page).href, source, base)
+  if (!endpoint) return
+  const target = new URL(endpoint)
+  if (target.origin !== page.origin || target.protocol !== page.protocol) return
+  return endpoint
+}
+
+function structuredArticleUrl(value: unknown, source: IntelligenceSource, base: string) {
+  if (typeof value !== "string" || !value.trim()) return
+  try {
+    const page = new URL(base)
+    const candidate = new URL(value.trim(), base)
+    const host = (hostname: string) => hostname.toLowerCase().replace(/^www\./, "")
+    if (host(candidate.hostname) !== host(page.hostname) || candidate.username || candidate.password || (candidate.port && !["80", "443"].includes(candidate.port))) return
+    // The current Hubei JSON publishes legacy http:// article URLs even though
+    // the same documents are available over HTTPS. Upgrade them before normal
+    // allowlist validation instead of introducing an HTTPS -> HTTP downgrade.
+    if (page.protocol === "https:" && candidate.protocol === "http:") {
+      candidate.protocol = "https:"
+      candidate.port = ""
+    }
+    const allowed = intelligenceAllowedUrl(candidate.href, source, base)
+    if (!allowed) return
+    const safe = new URL(allowed)
+    return safe.origin === page.origin && safe.protocol === page.protocol ? allowed : undefined
+  } catch { }
+}
+
+function structuredItems(payload: unknown, source: IntelligenceSource, column: { name: string, url: string }, base: string) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("结构化栏目 JSON 格式无效")
+  const rows = (payload as { data?: unknown }).data
+  if (!Array.isArray(rows) || rows.length > structuredJsonMaxRows) throw new Error("结构化栏目 JSON 数据范围无效")
+  const items: OfficialCandidate[] = []
+  const seen = new Set<string>()
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue
+    const record = raw as Record<string, unknown>
+    const title = typeof record.FILENAME === "string" ? record.FILENAME.replace(/\s+/g, " ").trim() : ""
+    const url = structuredArticleUrl(record.URL, source, base)
+    if (!url || title.length < 9 || title.length > 240 || intelligenceLooksGarbled(title)) continue
+    const key = intelligenceCanonicalUrl(url)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    const publisher = typeof record.PUBLISHER === "string" ? record.PUBLISHER.replace(/\s+/g, " ").trim() : ""
+    const documentNo = typeof record.FILENUM === "string" ? record.FILENUM.replace(/\s+/g, " ").trim() : ""
+    const publishedAt = intelligenceDate(typeof record.PUBDATE === "string" ? record.PUBDATE : "")
+      ?? intelligenceDate(typeof record.DOCRELTIME === "string" ? record.DOCRELTIME : "")
+    items.push({
+      title,
+      url,
+      column: column.name,
+      publishedAt,
+      ...(publisher && publisher.length <= 160 && !intelligenceLooksGarbled(publisher) ? { publisher } : {}),
+      ...(documentNo && documentNo !== "*" && documentNo.length <= 120 ? { documentNo } : {}),
+      attachments: [],
+    })
+    if (items.length >= structuredJsonMaxItems) break
+  }
+  if (rows.length && !items.length) throw new Error("结构化栏目未返回可解析的同站文章")
+  return items
+}
+
+async function structuredList(endpoint: string, pageUrl: string, source: IntelligenceSource, column: { name: string, url: string }) {
+  const response = await sourceHttp(endpoint, source, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(12000),
+    headers: { ...collectionHeaders, Accept: "application/json,text/plain", Referer: pageUrl },
+  })
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel()
+    throw new Error("结构化栏目接口发生跳转，未自动跟随")
+  }
+  if (!response.ok) throw await sourceFetchError(response)
+  const type = response.headers.get("content-type") ?? ""
+  if (!/application\/json|text\/plain/i.test(type)) {
+    await response.body?.cancel()
+    throw new Error("结构化栏目接口未返回 JSON")
+  }
+  let raw: string
+  try {
+    raw = new TextDecoder("utf-8", { fatal: true }).decode(await readBounded(response, structuredJsonMaxBytes, "结构化栏目"))
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("结构化栏目接口不是有效 UTF-8")
+    throw error
+  }
+  let payload: unknown
+  try {
+    payload = JSON.parse(raw)
+  } catch {
+    throw new Error("结构化栏目接口 JSON 无效")
+  }
+  return structuredItems(payload, source, column, pageUrl)
 }
 async function dynamicFragment(endpoint: string, pageUrl: string, source: IntelligenceSource, pageNumber: number) {
   const requestUrl = pagedUnitUrl(endpoint, source, pageUrl, pageNumber)
@@ -252,6 +373,11 @@ async function staticPages(page: Awaited<ReturnType<typeof intelligenceFetchHtml
  */
 export async function intelligenceFetchList(url: string, source: IntelligenceSource, column: { name: string, url: string }, options: IntelligenceFetchListOptions = {}) {
   const page = await intelligenceFetchHtml(url, source)
+  const structuredEndpoint = structuredJsonListUrl(page.html, source, page.url)
+  if (structuredEndpoint) {
+    const items = await structuredList(structuredEndpoint, page.url, source, column)
+    return { ...page, items, dynamic: true, structured: true, pages: 1, capped: false }
+  }
   let items = intelligenceParseList(page.html, source, { ...column, url: page.url })
   if (items.length) return staticPages(page, items, source, column, options)
   const endpoint = intelligenceJPaasUnitUrl(page.html, source, page.url)
